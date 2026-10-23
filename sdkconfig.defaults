@@ -1,0 +1,13 @@
+# RetroBridge Chile — versioned configuration defaults (sdkconfig itself is not versioned).
+
+CONFIG_IDF_TARGET="esp32"
+
+# ADR-004: no C++ exceptions, no RTTI (already the ESP-IDF defaults; stated explicitly).
+# CONFIG_COMPILER_CXX_EXCEPTIONS is not set
+# CONFIG_COMPILER_CXX_RTTI is not set
+
+# 1 ms tick for non-critical waits (§1.3).
+CONFIG_FREERTOS_HZ=1000
+
+# Flash size, partition table and UART ISR placement are set once the board is
+# confirmed (Annex A, H3/H4/H5); the ESP-IDF defaults apply until then.

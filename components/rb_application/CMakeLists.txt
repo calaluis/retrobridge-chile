@@ -4,13 +4,19 @@
 # for the host tests.
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/rb_build_flags.cmake)
 
-set(rb_srcs "src/build_checks.cpp")
+set(rb_srcs
+    "src/build_checks.cpp"
+    "src/image_location.cpp"
+    "src/drive_bay.cpp"
+    "src/mount_disk_image.cpp"
+    "src/apply_drive_request.cpp")
 
 if(ESP_PLATFORM)
-    idf_component_register(SRCS ${rb_srcs} REQUIRES rb_domain)
+    idf_component_register(SRCS ${rb_srcs} INCLUDE_DIRS "include" REQUIRES rb_domain)
     rb_apply_build_flags(${COMPONENT_LIB})
 else()
     add_library(rb_application STATIC ${rb_srcs})
+    target_include_directories(rb_application PUBLIC include)
     target_link_libraries(rb_application PUBLIC rb_domain)
     rb_apply_build_flags(rb_application)
 endif()

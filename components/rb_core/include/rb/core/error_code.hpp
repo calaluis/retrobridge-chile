@@ -32,6 +32,13 @@ enum class ErrorCode : uint8_t {
     // Image byte sources
     OutOfBounds,
     IoError,
+
+    // Application: image repository, drive bay and drive mailbox (H2a)
+    InvalidLocation,
+    NotFound,
+    NoFreeSlot,
+    DriveNotConfigured,
+    MailboxBusy,
 };
 
 }  // namespace rb::core

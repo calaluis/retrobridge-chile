@@ -30,8 +30,19 @@ enable_testing()
 function(rb_add_host_test name)
     add_executable(${name} ${ARGN})
     target_link_libraries(${name} PRIVATE unity rb_sio)
+    target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
     rb_apply_build_flags(${name})
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
 rb_add_host_test(test_toolchain toolchain/test_toolchain.cpp)
+
+# rb_core
+rb_add_host_test(test_result core/test_result.cpp)
+rb_add_host_test(test_span core/test_span.cpp)
+
+# rb_domain
+rb_add_host_test(test_value_objects domain/test_value_objects.cpp)
+rb_add_host_test(test_atr_layout domain/test_atr_layout.cpp)
+rb_add_host_test(test_disk_image domain/test_disk_image.cpp)
+rb_add_host_test(test_virtual_drive domain/test_virtual_drive.cpp)

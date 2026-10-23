@@ -200,9 +200,41 @@ static void test_unmounted_source_is_never_read_again(void)
     TEST_ASSERT_EQUAL_UINT(reads_before, source.reads());
 }
 
+// --- In-memory queries used by the SIO dispatcher (H2b) ----------------------------
+
+static void test_validate_read_checks_without_reading(void)
+{
+    FakeByteSource source = dd_source();
+    VirtualDrive drive = make_d1();
+    TEST_ASSERT_TRUE(drive.validateRead(sector(1)).error() == ErrorCode::NoDiskMounted);
+
+    mount_ok(drive, open_ok(source));
+    const unsigned reads_before = source.reads();
+    TEST_ASSERT_EQUAL_UINT16(128, drive.validateRead(sector(3)).value());
+    TEST_ASSERT_EQUAL_UINT16(256, drive.validateRead(sector(4)).value());
+    TEST_ASSERT_EQUAL_UINT16(256, drive.validateRead(sector(720)).value());
+    TEST_ASSERT_TRUE(drive.validateRead(sector(721)).error() == ErrorCode::SectorOutOfRange);
+    TEST_ASSERT_EQUAL_UINT(reads_before, source.reads());          // no I/O
+    TEST_ASSERT_FALSE(drive.status().lastOperationFailed());      // a query, not an operation
+}
+
+static void test_geometry_of_the_mounted_disk(void)
+{
+    FakeByteSource source = dd_source();
+    VirtualDrive drive = make_d1();
+    TEST_ASSERT_NULL(drive.geometry());
+    mount_ok(drive, open_ok(source));
+    TEST_ASSERT_NOT_NULL(drive.geometry());
+    TEST_ASSERT_TRUE(drive.geometry()->sectorSize() == rb::domain::SectorSize::Bytes256);
+    (void)drive.unmount();
+    TEST_ASSERT_NULL(drive.geometry());
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_validate_read_checks_without_reading);
+    RUN_TEST(test_geometry_of_the_mounted_disk);
     RUN_TEST(test_new_drive_is_empty);
     RUN_TEST(test_read_on_empty_drive_fails_and_is_reported);
     RUN_TEST(test_mount_reports_disk_and_density);

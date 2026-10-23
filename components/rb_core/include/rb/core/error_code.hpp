@@ -39,6 +39,10 @@ enum class ErrorCode : uint8_t {
     NoFreeSlot,
     DriveNotConfigured,
     MailboxBusy,
+
+    // SIO protocol (H2b)
+    InvalidCommandFrame,
+    ChecksumMismatch,
 };
 
 }  // namespace rb::core

@@ -43,6 +43,13 @@ public:
 
     DriveStatus status() const noexcept;
 
+    // In-memory queries for the SIO dispatcher's first phase (ADR-005): no I/O,
+    // and they do not change lastOperationFailed.
+    // validateRead: size of `sector` on the current disk, or NoDiskMounted /
+    // SectorOutOfRange. geometry: nullptr when the drive is empty.
+    rb::core::Result<uint16_t> validateRead(SectorNumber sector) const noexcept;
+    const DiskGeometry* geometry() const noexcept { return disk_ ? &disk_->geometry() : nullptr; }
+
 private:
     DriveNumber number_;
     std::optional<DiskImage> disk_;

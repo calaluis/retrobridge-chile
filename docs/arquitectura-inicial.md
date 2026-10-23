@@ -5,10 +5,11 @@
 > - **H0** (PR #1, fusionado en `main`, `6b18e41`): esqueleto ESP-IDF, componentes iniciales, pruebas de host y CI.
 > - **H1** (PR #2, fusionado en `main`, `81dc471`): `rb_core` y dominio Atari XL/XE (objetos de valor, `AtrLayout`,
 >   `DiskImage`, `VirtualDrive`), enmienda del ADR-002 y reglas de propiedad de §3.4.
-> - **H2a** (rama `h2a-aplicacion`, en revisión): capa de aplicación y recursos. Incluye `ImageLocation`,
+> - **H2a** (PR #3, fusionado en `main`, `5a9d45a`): capa de aplicación y recursos. Incluye `ImageLocation`,
 >   `ImageRepository` y `DriveMailbox`, `DriveBay` y los casos de uso en dos contextos (ADR-014).
-> - Aún **no** se han implementado el protocolo SIO (H2b), la sesión (H2c) ni adaptadores. No se ha realizado ningún
->   flasheo de hardware.
+> - **H2b** (rama `h2b-sio-puro`, en revisión): protocolo SIO puro. Incluye `sio_checksum`, `CommandFrame`,
+>   `StatusFrameEncoder`, `SioCommandDispatcher`, y `VirtualDrive::validateRead`/`geometry`.
+> - Aún **no** se han implementado la sesión (H2c) ni adaptadores. No se ha realizado ningún flasheo de hardware.
 > Fecha: 2026-10-23. Reemplaza a la v0.1 del mismo día.
 > Repositorio: `calaluis/retrobridge-chile` (privado por ahora). Licencia: GPL-3.0-only (ADR-013).
 > Las firmas de clases que aparecen aquí son **notación de diseño**, no implementación.
@@ -348,6 +349,11 @@ classDiagram
     la fuente desplazada, ya desvinculada, para que la capa de aplicación la cierre una sola vez (H1-8, §3.4).
   - `mount` y `unmount` reinician `lastOperationFailed`.
   - No es copiable ni movible: es una entidad con identidad fija.
+  - Consultas en memoria para la fase 1 del despachador (H2b). No hacen E/S ni modifican `lastOperationFailed`:
+    - `validateRead(n)` devuelve el tamaño del sector, `NoDiskMounted` o `SectorOutOfRange`;
+    - `geometry()` devuelve la geometría del disco montado, o `nullptr` con la unidad vacía.
+
+    Son adiciones compatibles: ninguna firma de H1 cambia.
 - No conoce bytes de protocolo, tiempos, UART ni archivos.
 
 **`DriveStatus`** (valor)
@@ -459,7 +465,7 @@ sequenceDiagram
   impedancia.
 - Comando no soportado para D1 (incluidos `W`, `P` y `!` en la v1) → `Nak`.
 - Parámetros inválidos detectables sin E/S (sector 0 o mayor que la geometría montada) → `Nak`, sin fase 2. Se
-  consulta con `VirtualDrive::validateRead`, un método const que se agrega en H2b.
+  consulta con `VirtualDrive::validateRead`, un método const agregado en H2b.
 - READ con la unidad vacía → `Accepted`, y en la fase 2 `Error` con 128 bytes en cero. Es una decisión de diseño
   parecida a las unidades tipo 1050 [ALT tabla 55]; la 810 no detecta la falta de disco.
 
@@ -501,10 +507,11 @@ en 4 bytes y se devuelve `Complete` + 4 bytes + CHK, también con la unidad vac�
 | Byte 1, operación anterior fallida | `$EF` ("record not found") | [DIS] sobre un valor [DOC] de la 810 |
 | Byte 1, sin disco | `$7F` ("not ready") | [DIS] al estilo de la 1050; la 810 no detecta la falta de disco |
 | Byte 2 | `$E0` (≈ 4 min NTSC) | [DOC] valor por defecto de la 810; solo se usa para el formateo |
-| D5 / D7 | Según la geometría; con la unidad vacía, 0 | [DOC] ALT |
+| D5 / D7 | D5 = 1 si los sectores son de 256 bytes, también en imágenes DD no estándar, porque ALT lo define como "256 byte sectors". D7 = 1 solo con 1040×128. Con la unidad vacía, 0. | [DOC] ALT |
 | D4 | 0 (no hay motor) | [DIS] |
-| D0 | 1 tras un NAK a D1 | [HIP] |
-| **D3** | **Por revisar antes de H2b:** indica una escritura fallida por protección, no "disco de solo lectura". No se activará de forma permanente sin justificación. | Pendiente |
+| D0 | 1 si el comando anterior dirigido a la unidad recibió NAK. Se borra al ser informado por STATUS o con cualquier comando aceptado. Los marcos ignorados (checksum malo) no lo activan, porque no se sabe a quién iban dirigidos. | [HIP] |
+| **D3** | **Resuelto en H2b: 0 en la v1.** ALT lo define como "Failed due to write protected disk", es decir, el resultado de una escritura fallida. La v1 nunca intenta escribir (los comandos de escritura reciben NAK), así que nunca se activa. El campo `DriveStatus::writeProtected` del dominio **no** se traduce a D3. **Discrepancia:** [ATARI] fig. 5-19 lo redacta como "the diskette is write protected"; se adopta la lectura de ALT y la redacción de Atari queda pendiente de validación física. | [DOC] ALT / [HIP] ATARI |
+| D1, D2, D4, D6 | 0: la v1 no recibe tramas de datos, no escribe, no tiene motor y no maneja doble cara | [DIS] |
 
 **Sin disco frente a error anterior:**
 

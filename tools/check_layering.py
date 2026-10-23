@@ -21,6 +21,7 @@ PURE_LAYERS = {
     "rb_domain": ("rb/core/", "rb/domain/"),
     "rb_application": ("rb/core/", "rb/domain/", "rb/app/"),
     "rb_sio": ("rb/core/", "rb/domain/", "rb/app/", "rb/sio/"),
+    "rb_board": ("rb/core/", "rb/board/"),
 }
 
 FORBIDDEN_PLATFORM = re.compile(

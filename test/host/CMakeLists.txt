@@ -21,6 +21,7 @@ add_subdirectory(${rb_root}/components/rb_domain rb_domain)
 add_subdirectory(${rb_root}/components/rb_application rb_application)
 add_subdirectory(${rb_root}/components/rb_sio rb_sio)
 add_subdirectory(${rb_root}/components/rb_file_storage rb_file_storage)
+add_subdirectory(${rb_root}/components/rb_board rb_board)
 
 # Unity v2.7.0, vendored (D-9). Third-party code: built with its own defaults.
 add_library(unity STATIC unity/src/unity.c)
@@ -92,5 +93,13 @@ set_tests_properties(generate_atr_images PROPERTIES FIXTURES_SETUP atr_images)
 rb_add_host_test(test_meta_a storage/test_meta_a.cpp)
 target_compile_definitions(test_meta_a PRIVATE RB_TEST_IMAGES_DIR="${rb_test_images}")
 set_tests_properties(test_meta_a PROPERTIES FIXTURES_REQUIRED atr_images)
+
+# Diagnostics (H3b)
+rb_add_host_test(test_latency_stats diagnostics/test_latency_stats.cpp)
+rb_add_host_test(test_diagnostics diagnostics/test_diagnostics.cpp)
+
+# rb_board (H3b)
+rb_add_host_test(test_board_profile board/test_board_profile.cpp)
+target_link_libraries(test_board_profile PRIVATE rb_board)
 rb_add_abort_test(test_repository_close_attached_aborts test_port_contracts --close-attached-source)
 rb_add_abort_test(test_mailbox_reply_without_request_aborts test_drive_mailbox --reply-without-request)

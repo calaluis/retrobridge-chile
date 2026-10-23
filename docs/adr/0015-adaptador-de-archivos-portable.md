@@ -60,6 +60,16 @@ H3 debe leer imágenes ATR de una microSD FAT32 en el ESP32 reutilizando los pue
   ADR-011).
 - Requiere Python 3 para las pruebas de host (generación de imágenes).
 
+## Precisión H3b: solo lectura
+
+ESP-IDF v6.1 **no ofrece montaje de solo lectura para tarjetas SD**. `esp_vfs_fat_spiflash_mount_ro` es solo para
+particiones de la flash interna, y `esp_vfs_fat_bdl_mount` detecta dispositivos de solo lectura a nivel de bloque.
+La lectura sin escritura se garantiza en nuestra capa:
+
+- `StdioByteSource` solo abre con `"rb"`;
+- ningún componente usa APIs de escritura sobre `/sd`;
+- `rb_esp_storage` monta siempre con `format_if_mount_failed = false` (H3-5), así que una tarjeta nunca se formatea.
+
 ## Fuentes
 
 - ESP-IDF v6.1, *FAT Filesystem Support* y *Virtual Filesystem Component*.

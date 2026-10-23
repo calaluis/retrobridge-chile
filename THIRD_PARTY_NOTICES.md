@@ -1,7 +1,9 @@
 # Avisos de terceros
 
 Este archivo enumera el software de terceros que usa RetroBridge Chile y sus licencias. Está **separado** de
-[`LICENSE`](LICENSE), que cubre únicamente el código propio (ADR-013).
+[`LICENSE`](LICENSE), que contiene la licencia GPL-3.0-only del código propio (ADR-013). Cada componente de
+terceros conserva su propia licencia; todas las listadas son compatibles con su incorporación a una obra
+GPL-3.0.
 
 Toda dependencia nueva, sea vendorizada o del gestor de componentes de ESP-IDF, se agrega aquí en el mismo PR.
 `tools/check_notices.py` lo verifica en CI.

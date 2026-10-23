@@ -1,9 +1,12 @@
 # RetroBridge Chile — Arquitectura inicial (propuesta v0.2)
 
 > Estado: **APROBADA** (2026-10-23): decisiones D-1 a D-13 aprobadas tal como se proponen en §12.
-> No hay código, commits ni flasheo asociados a este documento.
+> Implementación: el hito **H0** (PR #1, rama `h0-esqueleto`) incorpora el esqueleto ESP-IDF, los componentes
+> iniciales `rb_core`, `rb_domain`, `rb_application` y `rb_sio` (sin lógica), las pruebas de host y el CI.
+> Aún **no** se han implementado las funcionalidades SIO, ATR, dominio ni casos de uso.
+> No se ha realizado ningún flasheo de hardware.
 > Fecha: 2026-10-23. Reemplaza a la v0.1 del mismo día.
-> Repositorio: `calaluis/retrobridge-chile` (privado). Todos los derechos reservados.
+> Repositorio: `calaluis/retrobridge-chile` (privado por ahora). Licencia: GPL-3.0-only (ADR-013).
 > Las firmas de clases que aparecen aquí son **notación de diseño**, no implementación.
 
 ## Cambios respecto de v0.1
@@ -40,7 +43,8 @@ deja el punto de extensión (§5.3), pero no se implementa ningún adaptador de 
 
 ### 0.3 Licencias
 
-- `LICENSE`: derechos sobre **nuestro** código (todos los derechos reservados).
+- `LICENSE`: texto oficial completo de la **GNU GPL versión 3** para **nuestro** código (`GPL-3.0-only`). El
+  titular de los derechos está pendiente de confirmación.
 - `THIRD_PARTY_NOTICES.md`, **separado**: avisos de dependencias (ESP-IDF, Apache-2.0; FatFs; Unity, MIT; y las
   que se agreguen). Cada nueva dependencia actualiza este archivo en el mismo PR.
 - Recomendación: validar con asesoría legal la redacción de ambos archivos.
@@ -509,7 +513,7 @@ retrobridge-chile/
 │   ├── hardware/                     # pinout confirmado, mediciones (Anexo A)
 │   ├── mediciones/sio-tiempos.md     # presupuesto vs. medición real (§9.3)
 │   └── fuentes.md
-├── LICENSE                           # derechos propios
+├── LICENSE                           # GPL-3.0-only (código propio)
 ├── THIRD_PARTY_NOTICES.md            # avisos de dependencias, separado
 └── .github/workflows/                # build ESP-IDF fijado + host tests + check_layering
 ```
@@ -561,7 +565,7 @@ Cada ADR tendrá su archivo en `docs/adr/`. Resumen:
 | **010** | Pruebas de host con CMake + CTest + Unity, independientes de ESP-IDF. | Objetivo `linux` de ESP-IDF (en preview). | Más simple y estable. Las pruebas en el equipo reutilizan las suites de contrato. |
 | **011** | Memoria estática en la ruta SIO: búferes propiedad de `SioSession`, slots fijos en repositorios, sin `new`, `std::vector` ni `std::string` después de la inicialización. | Asignación por solicitud. | Determinismo y ausencia de fragmentación. Se verifica midiendo el heap (§9.2). |
 | **012** | Desarrollo independiente con trazabilidad de fuentes; **sin** afirmación de sala limpia. | Declarar sala limpia. | No podemos demostrarla dada la experiencia previa (§0.2). |
-| **013** | `LICENSE` (propio) y `THIRD_PARTY_NOTICES.md` (terceros) separados. | Un solo archivo. | Deja claros los derechos propios y las obligaciones de atribución. |
+| **013** | Código propio bajo GPL-3.0-only (`LICENSE`), con `THIRD_PARTY_NOTICES.md` (terceros) separado. | Licencia propietaria (versión inicial de este ADR); GPL-3.0 o posterior; un solo archivo. | Proyecto personal de afición y aprendizaje; dependencias compatibles con GPLv3; obligaciones de atribución claras. |
 
 **Justificación de las interfaces principales:**
 

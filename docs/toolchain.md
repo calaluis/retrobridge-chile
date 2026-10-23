@@ -11,7 +11,8 @@
 
 ## Compilación local
 
-Pruebas de host (sin ESP-IDF; requiere CMake, Ninja y GCC o Clang):
+Pruebas de host (sin ESP-IDF; requiere CMake, Ninja, GCC o Clang, y Python 3). Python genera en el momento las
+imágenes ATR de la Meta A (`tools/make_atr.py`); esas imágenes no se versionan:
 
 ```bash
 cmake -S test/host -B build/host -G Ninja

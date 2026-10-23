@@ -9,9 +9,12 @@
 >   `ImageRepository` y `DriveMailbox`, `DriveBay` y los casos de uso en dos contextos (ADR-014).
 > - **H2b** (PR #4, fusionado en `main`, `6cfb036`): protocolo SIO puro. Incluye `sio_checksum`, `CommandFrame`,
 >   `StatusFrameEncoder`, `SioCommandDispatcher`, y `VirtualDrive::validateRead`/`geometry`.
-> - **H2c** (rama `h2c-sesion-sio`, en revisión): `SioSession`, puertos `Clock` y `SioTransport`, recuperación ante
->   errores de transporte (`SioCommandDispatcher::abandon`) y temporización simulada.
-> - Aún **no** se han implementado adaptadores (UART, GPIO, microSD). No se ha realizado ningún flasheo de hardware.
+> - **H2c** (PR #5, fusionado en `main`, `7f56f4f`): `SioSession`, puertos `Clock` y `SioTransport`, recuperación
+>   ante errores de transporte (`SioCommandDispatcher::abandon`) y temporización simulada.
+> - **H3a** (rama `h3a-almacenamiento`, en revisión): adaptador de archivos portable `rb_file_storage` (ADR-015),
+>   herramientas `make_atr.py` y `compare_crc.py`, y Meta A en el host.
+> - Aún **no** se han implementado el montaje de la microSD, la consola ni los adaptadores UART/GPIO. No se ha
+>   realizado ningún flasheo de hardware.
 > Fecha: 2026-10-23. Reemplaza a la v0.1 del mismo día.
 > Repositorio: `calaluis/retrobridge-chile` (privado por ahora). Licencia: GPL-3.0-only (ADR-013).
 > Las firmas de clases que aparecen aquí son **notación de diseño**, no implementación.
@@ -100,7 +103,7 @@ flowchart TB
   subgraph INFRA["Infraestructura (ESP-IDF, FreeRTOS, C/C++)"]
     direction LR
     SIOPHY["EspSioTransport<br/>UART + GPIO COMMAND<br/>(ISR en C, IRAM)"]
-    SD["FatFsImageRepository<br/>FatFsByteSource"]
+    SD["StdioImageRepository<br/>StdioByteSource (ADR-015)"]
     CLK["EspClock<br/>(esp_timer)"]
     CON["Consola<br/>(esp_console)"]
     BOARD["Perfiles de placa"]
@@ -580,6 +583,8 @@ Se valida en H6/H7.
 
 - `readAt` es todo o nada: si `offset + out.size() > size()` devuelve `ErrorCode::OutOfBounds` y no escribe
   parcialmente.
+- **Aclaración H3-3:** ante `IoError` (por ejemplo, archivo truncado o tarjeta retirada), el contenido del búfer queda
+  sin especificar. Los consumidores no lo usan: `DiskImage` devuelve el error y el despachador rellena con ceros.
 - `size()` es estable mientras la fuente esté abierta.
 - `readAt` no usa heap.
 - `open` sobre una ubicación inexistente devuelve `ErrorCode::NotFound`.
@@ -598,10 +603,9 @@ Puertos **que no se crean**, y por qué:
 
 | Adaptador | Implementa | Dónde | v1 |
 |---|---|---|---|
-| `FatFsImageRepository` / `FatFsByteSource` | `ImageRepository` / `ImageByteSource` | `rb_esp_storage` | Sí |
+| `StdioImageRepository` / `StdioByteSource` (ADR-015) | `ImageRepository` / `ImageByteSource` | `rb_file_storage`: portable; en el ESP32 pasa por VFS → FATFS sobre la microSD montada por `rb_esp_storage`; en el host, archivos reales | Sí |
 | `EspSioTransport` | `SioTransport` | `rb_esp_sio`: C++ para la tarea, C para la ISR y la inicialización del controlador | Sí |
 | `EspClock` | `Clock` | `rb_esp_platform` | Sí |
-| `PosixImageRepository` / `PosixByteSource` | `ImageRepository` / `ImageByteSource` | `test/host/adapters` | Solo pruebas |
 | `MemoryByteSource`, `FakeClock`, `ScriptedSioTransport` | Ídem | `test/host/fakes` | Solo pruebas |
 | `TnfsImageRepository` / `TnfsByteSource` | `ImageRepository` / `ImageByteSource` | `rb_net_tnfs` (futuro) | **No** |
 
@@ -650,19 +654,20 @@ retrobridge-chile/
 │   │   ├── include/rb/sio/           # command_frame.hpp, sio_checksum.hpp, status_frame_encoder.hpp,
 │   │   │                             # sio_command_dispatcher.hpp, sio_session.hpp
 │   │   └── src/
-│   ├── rb_esp_platform/              # ESP-IDF: EspClock, backend de RB_LOG
-│   ├── rb_esp_storage/               # ESP-IDF: montaje SD + FatFs* adaptadores
+│   ├── rb_file_storage/              # portable: StdioImageRepository/ByteSource, política de rutas (ADR-015)
+│   ├── rb_esp_platform/              # ESP-IDF: EspClock, diagnóstico de memoria, backend de RB_LOG
+│   ├── rb_esp_storage/               # ESP-IDF: inicialización de la microSD y montaje FAT en la VFS (sin lógica de archivos)
 │   ├── rb_esp_sio/                   # ESP-IDF: EspSioTransport (C++), sio_isr.c (C, IRAM)
 │   ├── rb_board/                     # perfiles de placa constexpr + validación de pines
 │   └── rb_console/                   # comandos de diagnóstico → casos de uso
 ├── test/host/                        # CMake + CTest + Unity, sin ESP-IDF
 │   ├── CMakeLists.txt                # agrega rb_core, rb_domain, rb_application, rb_sio como bibliotecas
 │   ├── unity/                        # Unity fijado (D-9)
-│   ├── fakes/                        # MemoryByteSource, FakeClock, ScriptedSioTransport, FakeRemoteByteSource
-│   ├── adapters/                     # PosixImageRepository/ByteSource
+│   ├── fakes/                        # MemoryImageRepository, FakeClock, ScriptedSioTransport, FakeRemoteByteSource
 │   ├── contracts/                    # suites de contrato reutilizables por puerto
-│   ├── domain/  application/  sio/   # pruebas por capa
-│   └── fixtures/                     # ATR generados por tools/make_atr.py
+│   ├── domain/  application/  sio/  storage/   # pruebas por capa (storage: archivos reales y Meta A)
+│   └── support/                      # cabeceras ATR, CRC32 de prueba
+│   # Las imágenes de la Meta A se generan en build/ con tools/make_atr.py; no se versionan (H3-9)
 ├── test/target/                      # (opcional, H3+) app de pruebas en el ESP32 con las mismas suites de contrato
 ├── tools/                            # make_atr.py, fake_atari.py, check_layering.py
 ├── docs/
@@ -725,6 +730,7 @@ Cada ADR tendrá su archivo en `docs/adr/`. Resumen:
 | **012** | Desarrollo independiente con trazabilidad de fuentes; **sin** afirmación de sala limpia. | Declarar sala limpia. | No podemos demostrarla dada la experiencia previa (§0.2). |
 | **013** | Código propio bajo GPL-3.0-only (`LICENSE`), con `THIRD_PARTY_NOTICES.md` (terceros) separado. | Licencia propietaria (versión inicial de este ADR); GPL-3.0 o posterior; un solo archivo. | Proyecto personal de afición y aprendizaje; dependencias compatibles con GPLv3; obligaciones de atribución claras. |
 | **014** | Contextos de almacenamiento y de unidad, cada uno dueño de sus recursos, con traspaso por `DriveMailbox`. El montaje lento ocurre fuera del contexto de la unidad, que lo aplica en O(1). | Montaje dentro de la sesión SIO; mutex sobre `DriveBay`. | No bloquea el bus (t2) aunque abrir una imagen tarde segundos (TNFS), y no hay carreras de datos. |
+| **015** | Adaptador de archivos portable sobre stdio y la VFS de ESP-IDF (`rb_file_storage`), con política de rutas, mapeo de errores y `IoError` con búfer sin especificar. | API nativa de FatFs; POSIX `pread`. | El mismo código se prueba en el host con archivos reales y corre en el ESP32 sobre FATFS. |
 
 **Justificación de las interfaces principales:**
 
@@ -752,9 +758,9 @@ Cada ADR tendrá su archivo en `docs/adr/`. Resumen:
   | Búfer | Tamaño | Propietario | Memoria |
   |---|---|---|---|
   | Trama de comando | 5 B | `EspSioTransport` | DRAM |
-  | Datos de respuesta | 256 + 1 B (sector DD + checksum) | `SioSession` | DRAM |
+  | Respuesta (código + datos + checksum) | 1 + 256 + 1 = 258 B | `SioSession` | DRAM |
   | Cabecera ATR | 16 B | `MountDiskImage` (pila) | — |
-  | Slots de archivo | N = 1 en la v1 | `FatFsImageRepository` | estático |
+  | Slots de archivo | 3 en el ESP32 (H3-4) | `StdioImageRepository` | estático |
 
   Los datos se pasan con `Span<T>` (vista no propietaria, C++17 no trae `std::span`). Ninguna función guarda un
   `Span` más allá de la llamada.
@@ -824,8 +830,8 @@ Cada medición se registra en `docs/mediciones/sio-tiempos.md` con:
 
 | Nivel | Entorno | Qué valida |
 |---|---|---|
-| I-1 | Host: `SioSession` + dispatcher + casos de uso reales + `PosixImageRepository` con un ATR real generado | Toda la pila pura con archivos reales |
-| I-2 | ESP32 sin conexión SIO (H3): consola + `FatFsImageRepository` | Meta A: el CRC32 de cada sector coincide con `make_atr.py`; suites de contrato en el equipo (`test/target`) |
+| I-1 | Host: `StdioImageRepository` con archivos reales + `DiskImage` (H3a); en H2c, `SioSession` + despachador + casos de uso | Contratos sobre archivos reales y **Meta A en el host** (`test_meta_a`, imágenes de `make_atr.py`) |
+| I-2 | ESP32 sin conexión SIO (H3c): consola + `StdioImageRepository` sobre la microSD | Meta A en el equipo: el CRC32 de cada sector coincide con `make_atr.py` (`compare_crc.py`); rendimiento y heap (H3-12, H3-13) |
 | I-3 | ESP32 + `tools/fake_atari.py` por USB-serie de 3,3 V (antes y después de H4) | Lógica de la secuencia contra un emisor real de tramas. Los tiempos los mide el analizador, no el PC. |
 | I-4 | ESP32 + Atari real (H5–H7, después de la puerta H4) | Escucha, STATUS, READ y arranque |
 
@@ -872,7 +878,7 @@ El CI nunca flashea.
 | **H0** Esqueleto | Proyecto ESP-IDF con versión fijada; componentes vacíos con CMake dual; C++17 + `-fno-exceptions -fno-rtti` verificados; host tests con una prueba trivial; `check_layering.py`; CI; `LICENSE` + `THIRD_PARTY_NOTICES.md`; `docs/adr/` con ADR 001–013 | CI en verde en las cuatro tareas; una inclusión prohibida deliberada en una rama de prueba hace fallar el CI | No |
 | **H1** Dominio | `rb_core` (Result, Span, ErrorCode); objetos de valor; `VirtualDrive`; `DiskImage`; `AtrLayout` | Suites de valor, invariantes y ATR en verde; sin dependencias fuera de `rb_core` | No |
 | **H2** Aplicación + SIO puro | Puertos; casos de uso; `DriveBay`; fakes; suites de contrato; `rb_sio` completo (checksum, trama, encoder, dispatcher, sesión) | Transacciones simuladas STATUS/READ correctas byte a byte y en tiempo simulado; prueba de aceptación de TNFS simulado (§5.3) sin tocar dominio, aplicación ni SIO | No |
-| **H3** Almacenamiento en el equipo | `rb_esp_storage`, `rb_esp_platform`, `rb_console`; contratos en el equipo | **Meta A**: CRC32 de todos los sectores coincide con el PC; lectura de sector ≤ 5 ms medida. Flasheo solo con aprobación explícita. | ESP32 por USB, sin pines SIO |
+| **H3** Almacenamiento en el equipo | **H3a:** `rb_file_storage`, herramientas y Meta A en el host. **H3b:** diagnóstico, `rb_board`, `rb_esp_platform`, `rb_console` y `rb_esp_storage` (solo compilación). **H3c:** perfil de la placa real y validación en el equipo. | **Meta A**: CRC32 de todos los sectores coincide con el PC, primero en el host (H3a) y luego en la microSD (H3c). Lectura de sector física ≤ 5 ms medida. Lectura sin cambios en el heap. Flasheo solo con aprobación explícita. | H3a/H3b: no. H3c: ESP32 por USB, sin pines SIO |
 | **H4** Puerta de hardware | Anexo A completo; perfil de placa en `rb_board` con validación de pines; mediciones pasivas | Pinout, alimentación y adaptación de niveles revisados y firmados | Solo medición pasiva |
 | **H5** Escucha | `EspSioTransport` en modo **solo recepción**; ISR en C/IRAM | Tramas decodificadas con el Atari falso y luego con el real; velocidad, t0 y t1 registrados en `sio-tiempos.md`; DATA IN nunca se maneja | Solo entradas |
 | **H6** STATUS | Transmisión habilitada; `StatusFrameEncoder` con bits confirmados (D-5) | t2 y t5 medidos dentro del presupuesto (§9.3) con el Atari falso y el real | Salida DATA IN |

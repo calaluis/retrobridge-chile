@@ -1,0 +1,804 @@
+# RetroBridge Chile — Arquitectura inicial (propuesta v0.2)
+
+> Estado: **APROBADA** (2026-10-23): decisiones D-1 a D-13 aprobadas tal como se proponen en §12.
+> Implementación: el hito **H0** (PR #1, rama `h0-esqueleto`) incorpora el esqueleto ESP-IDF, los componentes
+> iniciales `rb_core`, `rb_domain`, `rb_application` y `rb_sio` (sin lógica), las pruebas de host y el CI.
+> Aún **no** se han implementado las funcionalidades SIO, ATR, dominio ni casos de uso.
+> No se ha realizado ningún flasheo de hardware.
+> Fecha: 2026-10-23. Reemplaza a la v0.1 del mismo día.
+> Repositorio: `calaluis/retrobridge-chile` (privado por ahora). Licencia: GPL-3.0-only (ADR-013).
+> Las firmas de clases que aparecen aquí son **notación de diseño**, no implementación.
+
+## Cambios respecto de v0.1
+
+- Lenguaje principal C++17 (C solo para controladores de bajo nivel e integración con APIs C de ESP-IDF).
+- Arquitectura hexagonal con capas Dominio / Aplicación / Infraestructura y DDD ligero (§2, §3).
+- Modelo de dominio explícito con invariantes (§3), casos de uso (§4) y puertos mínimos (§5).
+- SOLID con criterios de verificación (§7) y registro de decisiones ADR (§8).
+- Restricciones embebidas: sin excepciones ni RTTI, sin heap en la ruta crítica, ISR sin llamadas virtuales (§9).
+- Se elimina la afirmación de "sala limpia": se reemplaza por una política de desarrollo independiente con
+  trazabilidad de fuentes (§0).
+
+---
+
+## 0. Alcance, procedencia y licencias
+
+### 0.1 Alcance de la v1 (sin cambios)
+
+Atari XL/XE · ESP32 · unidad **D1** · imagen **ATR local en microSD** · **solo lectura** · comandos **STATUS**
+(`$53`) y **READ SECTOR** (`$52`). Atari 2600, Wi-Fi, TNFS/TCP y TNFS/WSS quedan para etapas futuras: el diseño
+deja el punto de extensión (§5.3), pero no se implementa ningún adaptador de red.
+
+### 0.2 Desarrollo independiente y trazabilidad
+
+- **No afirmamos un procedimiento formal de sala limpia.** Hay experiencia previa con el firmware original de
+  FujiNet, y no podemos demostrar aislamiento.
+- Lo que sí aplicamos y podemos demostrar:
+  1. No se copia, traduce ni adapta código fuente de FujiNet ni de otros emuladores de periféricos SIO.
+  2. El diseño se basa en documentación pública de protocolos, especificaciones de hardware y documentación oficial
+     de ESP-IDF, registradas en §12 y en `docs/fuentes.md`.
+  3. Cada PR declara las fuentes consultadas para ese cambio (plantilla de PR).
+  4. Las decisiones de diseño quedan registradas en ADR (§8), con su justificación propia.
+- El historial de git y los ADR sirven como evidencia de la evolución independiente del diseño.
+
+### 0.3 Licencias
+
+- `LICENSE`: texto oficial completo de la **GNU GPL versión 3** para **nuestro** código (`GPL-3.0-only`). El
+  titular de los derechos está pendiente de confirmación.
+- `THIRD_PARTY_NOTICES.md`, **separado**: avisos de dependencias (ESP-IDF, Apache-2.0; FatFs; Unity, MIT; y las
+  que se agreguen). Cada nueva dependencia actualiza este archivo en el mismo PR.
+- Recomendación: validar con asesoría legal la redacción de ambos archivos.
+
+---
+
+## 1. Fundamentos técnicos (resumen de v0.1)
+
+**Bus SIO** (manual técnico de Atari C016555, secciones 9 y K):
+
+- Serie asíncrona de ~19 200 baudios, 8N1, LSB primero.
+- Trama de comando de 5 bytes con COMMAND en bajo: `[ID][CMD][AUX1][AUX2][CHK]`.
+- El checksum es la suma de los bytes con el acarreo reinyectado.
+- Respuestas: ACK `$41`, NAK `$4E`, COMPLETE `$43`, ERROR `$45`.
+- Las unidades de disco usan los ID `$31` en adelante (D1 = `$31`).
+- La salida del periférico es de colector abierto.
+- El pin 10 (+5V/READY) entrega como máximo 50 mA.
+
+**Tiempos (lado computador):**
+
+| Tiempo | Significado | Mín | Máx |
+|---|---|---|---|
+| t0 | COMMAND↓ → primer byte | 750 µs | 1600 µs |
+| t1 | Último bit → COMMAND↑ | 650 µs | 950 µs |
+| t2 | COMMAND↑ → ACK | 0 | 16 ms |
+| t3 | ACK → datos del computador | 1000 µs | 1800 µs |
+| t4 | Fin de datos → ACK | 850 µs | 16 ms |
+| t5 | ACK → COMPLETE | 250 µs | 255 s (depende del controlador) |
+
+**Formato ATR:**
+
+- Cabecera de 16 bytes con magia `$0296`, tamaño en párrafos de 16 bytes (más un byte alto) y tamaño de sector de
+  128 o 256 bytes.
+- En imágenes DD, los tres primeros sectores normalmente miden 128 bytes.
+
+Los requisitos de hardware a confirmar (§3 de la v0.1) se mantienen íntegros en el **Anexo A**.
+
+---
+
+## 2. Arquitectura y dirección de dependencias
+
+### 2.1 Capas y contextos
+
+```mermaid
+flowchart TB
+  subgraph INFRA["Infraestructura (ESP-IDF, FreeRTOS, C/C++)"]
+    direction LR
+    SIOPHY["EspSioTransport<br/>UART + GPIO COMMAND<br/>(ISR en C, IRAM)"]
+    SD["FatFsImageRepository<br/>FatFsByteSource"]
+    CLK["EspClock<br/>(esp_timer)"]
+    CON["Consola<br/>(esp_console)"]
+    BOARD["Perfiles de placa"]
+  end
+
+  subgraph SIO["Contexto Bus SIO (C++17 puro)"]
+    SESS["SioSession<br/>(secuencia y tiempos)"]
+    DISP["SioCommandDispatcher<br/>(capa anticorrupción)"]
+    FRAME["CommandFrame · SioChecksum<br/>StatusFrameEncoder"]
+  end
+
+  subgraph APP["Aplicación (C++17 puro)"]
+    UC["MountDiskImage · GetDriveStatus · ReadSector"]
+    PORTS["Puertos: ImageRepository · ImageByteSource<br/>Clock · SioTransport"]
+  end
+
+  subgraph DOM["Dominio: Unidad de disco (C++17 puro)"]
+    VD["VirtualDrive · DiskImage · DiskGeometry<br/>SectorNumber · DriveNumber · DriveStatus · AtrLayout"]
+  end
+
+  CORE["rb_core: Result · ErrorCode · Span · RB_ASSERT"]
+
+  MAIN["main/app_main.cpp<br/>raíz de composición"]
+
+  MAIN --> INFRA
+  MAIN --> SIO
+  MAIN --> APP
+  CON --> UC
+  SIOPHY -. implementa .-> PORTS
+  SD -. implementa .-> PORTS
+  CLK -. implementa .-> PORTS
+  SESS --> PORTS
+  SESS --> DISP
+  DISP --> UC
+  DISP --> FRAME
+  UC --> PORTS
+  UC --> VD
+  VD --> CORE
+  PORTS --> CORE
+  FRAME --> CORE
+```
+
+**Regla de dependencia:** las flechas apuntan siempre hacia el dominio.
+
+- `rb_domain` depende solo de `rb_core`.
+- `rb_application` depende de `rb_domain` y `rb_core`.
+- `rb_sio` depende de `rb_application`.
+- Infraestructura depende de todo lo anterior; nada depende de infraestructura salvo `main`.
+- Ningún componente puro incluye cabeceras de ESP-IDF, FreeRTOS, FATFS ni sockets.
+
+### 2.2 Contextos delimitados (DDD ligero)
+
+| Contexto | Tipo | Responsabilidad | Lenguaje propio |
+|---|---|---|---|
+| **Unidad de disco** | Núcleo | Qué es una unidad virtual, qué disco tiene, qué sectores existen y cuál es su estado | unidad, disco, imagen, sector, geometría, densidad, montar, solo lectura |
+| **Bus SIO** | Soporte | Tramas, checksum, códigos de respuesta, tiempos del bus | trama de comando, ID de dispositivo, ACK/NAK/COMPLETE/ERROR, t0–t5 |
+| **Almacenamiento de imágenes** | Genérico | Obtener bytes de una imagen desde algún medio (microSD hoy, TNFS mañana) | ubicación de imagen, fuente de bytes, repositorio |
+
+**Mapa de contextos:**
+
+- *Bus SIO → Unidad de disco:* `SioCommandDispatcher` actúa como **capa anticorrupción**. Traduce
+  `CommandFrame` (ID `$31`, comando `$52`, AUX1/AUX2) a conceptos de dominio (`DriveNumber{1}`, `SectorNumber{n}`)
+  e invoca casos de uso. El dominio nunca ve bytes de protocolo.
+- *Unidad de disco → Almacenamiento:* a través de los puertos `ImageRepository` e `ImageByteSource`. El dominio no
+  sabe si los bytes vienen de FATFS o de la red.
+
+### 2.3 Glosario (lenguaje ubicuo)
+
+La documentación va en español y los identificadores en inglés (decisión D-11). Este glosario es la tabla de
+correspondencia.
+
+| Término | Identificador | Definición |
+|---|---|---|
+| Unidad | `VirtualDrive` | Unidad de disco emulada D1…D8 que el Atari direcciona |
+| Número de unidad | `DriveNumber` | 1…8; D1 = 1 |
+| Imagen de disco | `DiskImage` | Disco "insertado": geometría + disposición + fuente de bytes |
+| Geometría | `DiskGeometry` | Cantidad de sectores y tamaño de cada uno |
+| Número de sector | `SectorNumber` | Sector lógico, base 1 |
+| Densidad | `Density` | Simple (720×128), media (1040×128), doble (720×256) o no estándar |
+| Estado de unidad | `DriveStatus` | Situación observable de la unidad que el Atari consulta con STATUS |
+| Montar | `MountDiskImage` | Insertar una imagen en una unidad |
+| Trama de comando | `CommandFrame` | 5 bytes enviados con COMMAND en bajo |
+| Fuente de bytes | `ImageByteSource` | Acceso aleatorio de solo lectura a los bytes de una imagen |
+
+---
+
+## 3. Modelo de dominio Atari XL/XE
+
+### 3.1 Evaluación de los conceptos propuestos
+
+| Concepto propuesto | Decisión | Justificación |
+|---|---|---|
+| `VirtualDisk` | **Renombrar a `VirtualDrive`** (D-1) | En el lenguaje Atari, el Atari habla con una *unidad* (D1); el *disco* es lo que se inserta. "VirtualDisk" se confundiría con `DiskImage`. La unidad tiene identidad (D1) y ciclo de vida (vacía ↔ con disco): es la entidad raíz. |
+| `SectorNumber` | **Se adopta**, objeto de valor | Evita el error más común (sector 0, confusión base 0/base 1) y concentra la validación. |
+| `DiskGeometry` | **Se adopta**, objeto de valor | Concentra la regla de "tres primeros sectores de 128 bytes" y la densidad; sin ella, esa lógica se dispersaría. |
+| `DriveStatus` | **Se adopta**, objeto de valor | Representa el estado en términos de dominio. La codificación a 4 bytes pertenece al contexto SIO (`StatusFrameEncoder`), porque es un detalle del protocolo. |
+| `DiskImage` | **Se adopta**, entidad subordinada, **clase concreta** | Une geometría, disposición en el archivo y fuente de bytes. **No** se define una interfaz `DiskImage` mientras ATR sea el único formato (ADR-007). |
+| `DriveNumber` | **Se agrega**, objeto de valor | Necesario para direccionar D1…D8 sin enteros sueltos; habilita varias unidades en el futuro sin cambiar firmas. |
+| `AtrLayout` | **Se agrega**, objeto de valor | Traduce `SectorNumber` → (desplazamiento, longitud) dentro del archivo ATR y valida la cabecera. Es conocimiento puro del formato ATR, que forma parte del lenguaje del dominio Atari. |
+| `Density` | **Se agrega**, enumeración | Se deriva de la geometría y se usa en el estado de la unidad. |
+| `DriveBay` | **Se agrega**, contenedor de aplicación | Arreglo fijo de `VirtualDrive` (capacidad 1 en la v1). No es un repositorio con persistencia: solo da acceso por `DriveNumber` sin usar heap. |
+
+Conceptos **descartados** por ahora:
+
+- `Sector` como entidad: un sector es un rango de bytes; un `Span` basta.
+- `DiskImageFactory` como clase: es una función de `AtrLayout`.
+- Eventos de dominio: no hay consumidores en la v1.
+
+### 3.2 Diagrama
+
+```mermaid
+classDiagram
+  class VirtualDrive {
+    <<entidad raíz>>
+    DriveNumber number
+    optional~DiskImage~ disk
+    bool lastOperationFailed
+    mount(DiskImage) Result~void~
+    unmount()
+    readSector(SectorNumber, Span out) Result~size_t~
+    status() DriveStatus
+  }
+  class DiskImage {
+    <<entidad>>
+    ImageLocation location
+    DiskGeometry geometry
+    AtrLayout layout
+    ImageByteSource& source
+    bool readOnly
+  }
+  class DiskGeometry {
+    <<valor>>
+    uint16 sectorCount
+    SectorSize sectorSize
+    contains(SectorNumber) bool
+    sizeOf(SectorNumber) uint16
+    density() Density
+  }
+  class AtrLayout {
+    <<valor>>
+    parse(header16, fileSize) Result~AtrLayout~
+    locate(SectorNumber) ByteRange
+    geometry() DiskGeometry
+  }
+  class SectorNumber {
+    <<valor>>
+    uint16 value  "≥ 1"
+  }
+  class DriveNumber {
+    <<valor>>
+    uint8 value  "1..8"
+  }
+  class DriveStatus {
+    <<valor>>
+    bool diskPresent
+    bool writeProtected
+    bool lastOperationFailed
+    Density density
+  }
+  class ImageByteSource {
+    <<puerto>>
+  }
+  VirtualDrive "1" o-- "0..1" DiskImage
+  VirtualDrive --> DriveNumber
+  VirtualDrive ..> DriveStatus : produce
+  DiskImage *-- DiskGeometry
+  DiskImage *-- AtrLayout
+  DiskImage --> ImageByteSource : usa (no posee)
+  DiskGeometry ..> SectorNumber : valida
+```
+
+### 3.3 Responsabilidades e invariantes
+
+**`SectorNumber`** (valor)
+
+- Invariante: `value ≥ 1`.
+- Se construye solo con `SectorNumber::from(uint16_t) → Result<SectorNumber>`; no hay constructor público que
+  acepte 0.
+- No sabe si el sector existe en un disco concreto: eso lo valida `DiskGeometry`.
+
+**`DriveNumber`** (valor)
+
+- Invariante: `1 ≤ value ≤ 8`.
+- La correspondencia con el ID SIO (`$30 + n`) **no** vive aquí: es del contexto SIO.
+
+**`DiskGeometry`** (valor)
+
+- Invariantes:
+  - `sectorCount ≥ 1` (decisión D-7: si se exige `≥ 3` para discos arrancables).
+  - `sectorSize ∈ {128, 256}` en la v1.
+- `contains(n)` ⇔ `n ≤ sectorCount`.
+- `sizeOf(n)` devuelve 128 si `n ≤ 3` o si `sectorSize = 128`; en otro caso devuelve `sectorSize`.
+- `density()` se deriva: 720×128 → simple, 1040×128 → media, 720×256 → doble; cualquier otra combinación → no
+  estándar.
+- Inmutable.
+
+**`AtrLayout`** (valor)
+
+- `parse()` acepta la cabecera solo si la magia es `$0296` y el tamaño de sector es válido.
+- La cantidad de sectores se calcula desde el tamaño **real** de la fuente, no solo desde la cabecera (política
+  D-8). Si la cabecera declara más datos que el archivo, se registra una advertencia y prevalece el tamaño real.
+- `locate(n)`, con H = 16:
+  - si `n ≤ 3`: desplazamiento = `H + (n−1)·128`;
+  - si no: desplazamiento = `H + 3·128 + (n−4)·sectorSize`, en imágenes DD con sectores cortos.
+- La variante DD con los tres primeros sectores de 256 bytes depende de D-6.
+- Invariante: todo `ByteRange` devuelto cabe dentro del tamaño de la fuente.
+
+**`DiskImage`** (entidad)
+
+- Identidad: su `ImageLocation` (ruta en la SD hoy, URL TNFS mañana).
+- Invariantes:
+  - Geometría y disposición son coherentes con el tamaño de la fuente.
+  - `readOnly = true` en la v1, sin excepción.
+- **No posee** la fuente de bytes: la posee el adaptador del repositorio (memoria estática con slots fijos). La
+  imagen guarda una referencia válida mientras esté montada.
+
+**`VirtualDrive`** (entidad raíz)
+
+- Identidad: `DriveNumber`.
+- Estados: *vacía* o *con disco*.
+- Invariantes:
+  - `readSector` sobre una unidad vacía → `ErrorCode::NoDiskMounted`.
+  - Un sector fuera de la geometría → `ErrorCode::SectorOutOfRange`, sin tocar la fuente.
+  - El búfer de salida debe medir al menos `geometry.sizeOf(n)`; si no → `ErrorCode::BufferTooSmall`.
+  - Cada operación actualiza `lastOperationFailed`, que se refleja en `status()`.
+  - Montar sobre una unidad ocupada reemplaza el disco: es un desmontaje implícito, y el repositorio libera el
+    slot anterior.
+- No conoce bytes de protocolo, tiempos, UART ni archivos.
+
+**`DriveStatus`** (valor)
+
+- Instantánea inmutable que produce `VirtualDrive::status()`.
+- El significado bit a bit de los 4 bytes de la respuesta STATUS se decide en el encoder SIO, una vez confirmado
+  con documentación de la 810/1050 (D-5).
+
+---
+
+## 4. Casos de uso
+
+Los casos de uso son **clases concretas** sin interfaz propia (ADR-009). Dependen solo de dominio y puertos.
+
+| Caso de uso | Entrada | Salida | Puertos usados | Contexto de ejecución |
+|---|---|---|---|---|
+| `MountDiskImage` | `DriveNumber`, `ImageLocation` | `Result<DiskGeometry>` | `ImageRepository`, `ImageByteSource` | Arranque o consola; **fuera** de la ruta crítica SIO |
+| `GetDriveStatus` | `DriveNumber` | `Result<DriveStatus>` | — | Tarea SIO |
+| `ReadSector` | `DriveNumber`, `SectorNumber`, `Span<uint8_t>` de salida | `Result<size_t>` (bytes escritos) | `ImageByteSource`, a través de `DiskImage` | Tarea SIO, **después** del ACK |
+
+`MountDiskImage` realiza estos pasos:
+
+1. `repository.open(location)` → fuente.
+2. Lee la cabecera de 16 bytes.
+3. `AtrLayout::parse`.
+4. Construye `DiskImage`.
+5. `drive.mount(image)`.
+
+Si falla cualquier paso, libera el slot de la fuente y devuelve el error; la unidad queda como estaba.
+
+### 4.1 De comando SIO a caso de uso y de vuelta (procesamiento en dos fases)
+
+```mermaid
+sequenceDiagram
+  participant A as Atari
+  participant T as EspSioTransport (infra)
+  participant S as SioSession
+  participant D as SioCommandDispatcher
+  participant U as ReadSector
+  participant V as VirtualDrive / DiskImage
+  participant B as ImageByteSource
+
+  A->>T: COMMAND↓ + [31 52 AUX1 AUX2 CHK] + COMMAND↑
+  T->>S: frameReceived(5 bytes) (notificación desde ISR)
+  S->>D: accept(frame)
+  Note over D: checksum OK · ID $31 = D1 · comando $52 soportado<br/>SectorNumber::from(AUX1 | AUX2<<8)
+  D-->>S: Accepted(ReadSector, D1, sector n)
+  S->>T: send ACK $41  (dentro de t2 ≤ 16 ms)
+  S->>D: execute(buffer)
+  D->>U: execute(D1, n, buffer)
+  U->>V: readSector(n, buffer)
+  V->>B: readAt(offset, len)
+  B-->>V: Ok
+  V-->>U: Ok(128)
+  U-->>D: Ok(128)
+  D-->>S: Complete(data = buffer[0..128), checksum)
+  S->>S: esperar t5 ≥ 250 µs desde el fin del ACK
+  S->>T: send COMPLETE $43 + 128 bytes + CHK
+  T->>A: bytes por DATA IN
+```
+
+**Fase 1 — `accept(frame)`** (rápida, sin E/S):
+
+- Checksum inválido → `Ignore`: no se responde, según el texto del manual (D-4).
+- ID que no corresponde a ninguna unidad montada en el `DriveBay` → `Ignore`, y la línea queda en alta
+  impedancia.
+- Comando no soportado para D1 (incluidos `W`, `P` y `!` en la v1) → `Nak`.
+- Parámetros inválidos (sector 0) → `Accepted`, y el error se reporta en la fase 2 como `ERROR`.
+
+**Fase 2 — `execute(buffer)`** (puede hacer E/S):
+
+- Éxito → `Complete` + trama de datos.
+- Error de dominio o de almacenamiento → `Error` + trama de datos. Hay que confirmar si el Atari espera la trama de
+  datos después de `ERROR` (D-4).
+
+**Por qué dos fases:** el ACK debe salir dentro de los 16 ms de t2, mientras que el COMPLETE tiene un margen de
+segundos (t5, según el controlador). Separarlas permite que una futura fuente lenta (TNFS) lea **después** del ACK
+sin cambiar el dominio ni los casos de uso (ADR-005).
+
+`GetDriveStatus` sigue el mismo camino. En la fase 2 se obtiene `DriveStatus`, `StatusFrameEncoder` lo convierte
+en 4 bytes y se devuelve `Complete` + 4 bytes + CHK. La respuesta a STATUS sobre una unidad vacía depende de D-5.
+
+---
+
+## 5. Puertos y adaptadores
+
+### 5.1 Puertos (mínimos)
+
+Todos viven en `rb_application/include/rb/app/ports/`. Son interfaces con métodos virtuales puros, sin estado y
+con destructor protegido no virtual: no se destruyen polimórficamente, así que no hace falta destructor virtual.
+
+| Puerto | Dirección | Firma (notación) | Por qué existe |
+|---|---|---|---|
+| `ImageByteSource` | Saliente | `uint32_t size() const` · `Result<void> readAt(uint32_t offset, Span<uint8_t> out)` | Separa el dominio del medio. Es **el** punto de extensión para TNFS. |
+| `ImageRepository` | Saliente | `Result<ImageByteSource*> open(const ImageLocation&)` · `void close(ImageByteSource*)` | Abrir y cerrar requiere conocer el medio (FATFS, TNFS). Slots fijos, sin heap. |
+| `Clock` | Saliente | `uint64_t nowMicros() const` · `void waitUntil(uint64_t micros)` | Permite probar t2/t5 con un reloj falso. |
+| `SioTransport` | Saliente (desde `SioSession`) | `Result<FrameBytes> waitCommandFrame()` · `Result<void> send(Span<const uint8_t>)` · `void releaseDataLine()` | Aísla UART, GPIO e ISR para probar la secuencia con un transporte simulado. |
+
+**Contratos** (verificados por pruebas de contrato, §10.3):
+
+- `readAt` es todo o nada: si `offset + out.size() > size()` devuelve `ErrorCode::OutOfBounds` y no escribe
+  parcialmente.
+- `size()` es estable mientras la fuente esté abierta.
+- `readAt` no usa heap.
+- `open` sobre una ubicación inexistente devuelve `ErrorCode::NotFound`.
+- Con todos los slots ocupados, `open` devuelve `ErrorCode::NoFreeSlot`.
+- `close` es idempotente.
+- `SioTransport::send` retorna cuando el **último bit** salió del UART, porque t5 se mide desde ese punto.
+
+Puertos **que no se crean**, y por qué:
+
+- **Logger:** se usa una macro `RB_LOG_*` con backend de compilación (`ESP_LOG` o `printf`). El dominio no registra
+  eventos.
+- **Puertos de entrada:** los casos de uso son el puerto de entrada.
+- **`FileSystem` genérico:** sería una interfaz ancha sin un consumidor que la necesite.
+
+### 5.2 Adaptadores
+
+| Adaptador | Implementa | Dónde | v1 |
+|---|---|---|---|
+| `FatFsImageRepository` / `FatFsByteSource` | `ImageRepository` / `ImageByteSource` | `rb_esp_storage` | Sí |
+| `EspSioTransport` | `SioTransport` | `rb_esp_sio`: C++ para la tarea, C para la ISR y la inicialización del controlador | Sí |
+| `EspClock` | `Clock` | `rb_esp_platform` | Sí |
+| `PosixImageRepository` / `PosixByteSource` | `ImageRepository` / `ImageByteSource` | `test/host/adapters` | Solo pruebas |
+| `MemoryByteSource`, `FakeClock`, `ScriptedSioTransport` | Ídem | `test/host/fakes` | Solo pruebas |
+| `TnfsImageRepository` / `TnfsByteSource` | `ImageRepository` / `ImageByteSource` | `rb_net_tnfs` (futuro) | **No** |
+
+### 5.3 Cómo se agregará TNFS/TCP y TNFS/WSS (sin implementarlo)
+
+1. Nuevo componente `rb_net_tnfs` con `TnfsImageRepository` y `TnfsByteSource`, que implementan los mismos dos
+   puertos.
+2. El transporte (TCP o WSS con verificación TLS) es un detalle **interno** de ese adaptador; el puerto no cambia.
+3. `ImageLocation` pasa a admitir un esquema (`sd:` / `tnfs:` / `tnfs+wss:`). Un `RoutingImageRepository` en la
+   raíz de composición elige el adaptador.
+4. La latencia de red queda cubierta por el procesamiento en dos fases: el ACK sale antes de leer, y la lectura
+   ocurre dentro del margen de t5.
+5. Si hace falta caché, se agrega como decorador de `ImageByteSource`.
+6. **Prueba de aceptación del diseño:** en H2, un `FakeRemoteByteSource` con latencia simulada debe funcionar con
+   `SioSession` sin modificar `rb_domain`, `rb_application` ni `rb_sio`.
+
+---
+
+## 6. Organización de carpetas (ESP-IDF + C++17)
+
+```
+retrobridge-chile/
+├── CMakeLists.txt                    # proyecto ESP-IDF
+├── sdkconfig.defaults                # sin excepciones ni RTTI, FREERTOS_HZ=1000, ISR UART en IRAM
+├── partitions.csv
+├── main/
+│   ├── CMakeLists.txt
+│   ├── idf_component.yml             # dependencias fijadas
+│   ├── Kconfig.projbuild             # selección de perfil de placa
+│   └── app_main.cpp                  # raíz de composición: instancias estáticas y cableado
+├── components/
+│   ├── rb_core/                      # C++17 puro: Result, ErrorCode, Span, RB_ASSERT
+│   │   ├── CMakeLists.txt            # if(ESP_PLATFORM) idf_component_register(...) else() add_library(...)
+│   │   └── include/rb/core/*.hpp
+│   ├── rb_domain/                    # C++17 puro. REQUIRES rb_core
+│   │   ├── include/rb/domain/        # virtual_drive.hpp, disk_image.hpp, disk_geometry.hpp,
+│   │   │                             # sector_number.hpp, drive_number.hpp, drive_status.hpp, atr_layout.hpp
+│   │   └── src/
+│   ├── rb_application/               # C++17 puro. REQUIRES rb_domain
+│   │   ├── include/rb/app/ports/     # image_byte_source.hpp, image_repository.hpp, clock.hpp, sio_transport.hpp
+│   │   ├── include/rb/app/usecases/  # mount_disk_image.hpp, get_drive_status.hpp, read_sector.hpp
+│   │   ├── include/rb/app/drive_bay.hpp
+│   │   └── src/
+│   ├── rb_sio/                       # C++17 puro. Contexto Bus SIO. REQUIRES rb_application
+│   │   ├── include/rb/sio/           # command_frame.hpp, sio_checksum.hpp, status_frame_encoder.hpp,
+│   │   │                             # sio_command_dispatcher.hpp, sio_session.hpp
+│   │   └── src/
+│   ├── rb_esp_platform/              # ESP-IDF: EspClock, backend de RB_LOG
+│   ├── rb_esp_storage/               # ESP-IDF: montaje SD + FatFs* adaptadores
+│   ├── rb_esp_sio/                   # ESP-IDF: EspSioTransport (C++), sio_isr.c (C, IRAM)
+│   ├── rb_board/                     # perfiles de placa constexpr + validación de pines
+│   └── rb_console/                   # comandos de diagnóstico → casos de uso
+├── test/host/                        # CMake + CTest + Unity, sin ESP-IDF
+│   ├── CMakeLists.txt                # agrega rb_core, rb_domain, rb_application, rb_sio como bibliotecas
+│   ├── unity/                        # Unity fijado (D-9)
+│   ├── fakes/                        # MemoryByteSource, FakeClock, ScriptedSioTransport, FakeRemoteByteSource
+│   ├── adapters/                     # PosixImageRepository/ByteSource
+│   ├── contracts/                    # suites de contrato reutilizables por puerto
+│   ├── domain/  application/  sio/   # pruebas por capa
+│   └── fixtures/                     # ATR generados por tools/make_atr.py
+├── test/target/                      # (opcional, H3+) app de pruebas en el ESP32 con las mismas suites de contrato
+├── tools/                            # make_atr.py, fake_atari.py, check_layering.py
+├── docs/
+│   ├── arquitectura-inicial.md
+│   ├── adr/                          # un archivo por ADR
+│   ├── hardware/                     # pinout confirmado, mediciones (Anexo A)
+│   ├── mediciones/sio-tiempos.md     # presupuesto vs. medición real (§9.3)
+│   └── fuentes.md
+├── LICENSE                           # GPL-3.0-only (código propio)
+├── THIRD_PARTY_NOTICES.md            # avisos de dependencias, separado
+└── .github/workflows/                # build ESP-IDF fijado + host tests + check_layering
+```
+
+Notas técnicas:
+
+- El estándar por defecto de ESP-IDF para C++ es `gnu++26`. Fijamos **C++17** explícitamente en cada componente
+  propio y en las pruebas de host. Esto se verifica en H0 (ADR-001).
+- Los componentes puros usan un `CMakeLists.txt` dual: se registran con `idf_component_register` cuando
+  `ESP_PLATFORM` está definido, y como `add_library` en el build de host. Es un solo árbol de fuentes y no requiere
+  el objetivo `linux` de ESP-IDF.
+
+---
+
+## 7. Aplicación concreta de SOLID
+
+| Principio | Aplicación en RetroBridge | Cómo se verifica |
+|---|---|---|
+| **S** — Responsabilidad única | `VirtualDrive` cambia por reglas de unidad; `AtrLayout` por el formato ATR; `SioCommandDispatcher` por el mapeo de comandos; `SioSession` por la secuencia y los tiempos; `FatFsByteSource` por la E/S de archivos; `StatusFrameEncoder` por la codificación de STATUS. | Cada clase documenta en su cabecera **su única razón de cambio**. La revisión rechaza clases con dos. Guía orientativa (no regla rígida): ≤ 300 líneas por clase. |
+| **O** — Abierto/cerrado | Se aplica en el eje que sabemos que crecerá, **el medio de la imagen**: TNFS entra como adaptador nuevo. El conjunto de comandos SIO es finito y lo define el protocolo, así que el dispatcher usa un `switch` explícito (no un registro de manejadores). | Prueba de aceptación §5.3 (6): `FakeRemoteByteSource` funciona sin modificar `rb_domain`, `rb_application` ni `rb_sio` (diff vacío en esos directorios). |
+| **L** — Sustitución de Liskov | Todas las implementaciones de `ImageByteSource` e `ImageRepository` se intercambian sin que los casos de uso lo noten. | Las **mismas suites de contrato** (§10.3) se ejecutan contra cada implementación: memoria, POSIX y FATFS en el equipo. |
+| **I** — Segregación de interfaces | Puertos estrechos (2–3 métodos). Leer bytes (`ImageByteSource`) está separado de abrir y cerrar (`ImageRepository`). No existe una interfaz `Storage` general. | Revisión: ningún puerto supera 4 métodos y ningún adaptador implementa un método que solo devuelva "no soportado". |
+| **D** — Inversión de dependencias | Dominio, aplicación y SIO dependen de los puertos de `rb_application`. La infraestructura los implementa y `main` los cablea. | 1) `REQUIRES` de CMake limita el grafo (un componente puro no puede enlazar ESP-IDF). 2) `tools/check_layering.py` en CI falla si un componente puro incluye `esp_*`, `freertos/`, `driver/`, `ff.h`, `sdmmc*`, `lwip/` o `sys/socket.h`. 3) Las pruebas de dominio y aplicación compilan sin ESP-IDF. |
+
+**Límite contra la sobreingeniería** (también verificable en revisión):
+
+- Sin interfaces de un solo implementador, salvo los puertos que tienen implementación falsa en pruebas.
+- Herencia de profundidad máxima 1: interfaz → implementación.
+- Sin fábricas abstractas, localizadores de servicios ni contenedores de inyección: el cableado es manual en
+  `app_main.cpp`.
+
+---
+
+## 8. Decisiones arquitectónicas (ADR)
+
+Cada ADR tendrá su archivo en `docs/adr/`. Resumen:
+
+| ADR | Decisión | Alternativas descartadas | Justificación |
+|---|---|---|---|
+| **001** | C++17 como lenguaje principal; C solo para ISR, inicialización de controladores e integración con APIs C. Estándar fijado por componente. | C17 puro (v0.1); C++20/26. | Tipos de valor seguros (`SectorNumber`), RAII y `constexpr` sin costo en tiempo de ejecución. C++17 es amplio y estable en GCC de ESP-IDF y en compiladores de host. |
+| **002** | Hexagonal con Dominio / Aplicación / Infraestructura, más el contexto Bus SIO como capa anticorrupción. Dependencias forzadas por CMake y `check_layering.py`. | Capas sin control automático. | Las reglas que no se verifican se erosionan. |
+| **003** | Errores con `Result<T>` (`[[nodiscard]]`) y `enum class ErrorCode : uint8_t` única en `rb_core`. `RB_ASSERT` solo para violaciones de invariantes internas: aborta con traza. | Excepciones; códigos `int`; `std::optional` sin causa. | Sin excepciones (ADR-004). Un solo enum de errores es suficiente al tamaño actual del proyecto; se divide si supera unas 30 entradas. |
+| **004** | `-fno-exceptions -fno-rtti` en el equipo **y** en el host. | Habilitarlas. | Coherencia entre host y equipo. ESP-IDF las trae deshabilitadas por defecto; RTTI agrega decenas de kB. |
+| **005** | Procesamiento SIO en dos fases (`accept` → ACK → `execute` → COMPLETE/ERROR). | Una sola llamada que devuelve la respuesta completa. | Garantiza t2 aunque la fuente sea lenta. Es el habilitador de TNFS. |
+| **006** | Polimorfismo dinámico (métodos virtuales) **solo** en puertos y **solo** desde contexto de tarea. La ISR de COMMAND es una función C libre en IRAM que solo notifica a la tarea. | Plantillas (polimorfismo estático) en todos los puertos. | Las vtables viven en flash y no son accesibles con la caché deshabilitada. Una llamada virtual cuesta nanosegundos frente a ~520 µs por byte a 19 200 baudios. Se revisa si las mediciones lo justifican. |
+| **007** | `DiskImage` y `AtrLayout` concretos; **no** hay interfaz de formato de imagen. | Interfaz `DiskImageFormat` desde ya. | Solo existe ATR. La interfaz se extrae cuando llegue el segundo formato (ATX/XFD); el punto de corte ya está localizado en `MountDiskImage`. |
+| **008** | La entidad raíz se llama `VirtualDrive` (no `VirtualDisk`). | `VirtualDisk`. | Coincide con el lenguaje Atari (unidad D1 ≠ disco insertado). |
+| **009** | Casos de uso como clases concretas, sin interfaces de entrada. | Interfaces `IReadSector`, etc. | No hay un segundo implementador. Las pruebas usan los casos de uso reales con puertos falsos. |
+| **010** | Pruebas de host con CMake + CTest + Unity, independientes de ESP-IDF. | Objetivo `linux` de ESP-IDF (en preview). | Más simple y estable. Las pruebas en el equipo reutilizan las suites de contrato. |
+| **011** | Memoria estática en la ruta SIO: búferes propiedad de `SioSession`, slots fijos en repositorios, sin `new`, `std::vector` ni `std::string` después de la inicialización. | Asignación por solicitud. | Determinismo y ausencia de fragmentación. Se verifica midiendo el heap (§9.2). |
+| **012** | Desarrollo independiente con trazabilidad de fuentes; **sin** afirmación de sala limpia. | Declarar sala limpia. | No podemos demostrarla dada la experiencia previa (§0.2). |
+| **013** | Código propio bajo GPL-3.0-only (`LICENSE`), con `THIRD_PARTY_NOTICES.md` (terceros) separado. | Licencia propietaria (versión inicial de este ADR); GPL-3.0 o posterior; un solo archivo. | Proyecto personal de afición y aprendizaje; dependencias compatibles con GPLv3; obligaciones de atribución claras. |
+
+**Justificación de las interfaces principales:**
+
+- **`ImageByteSource`:** tiene dos métodos porque es lo mínimo que necesita `AtrLayout` (tamaño y lectura
+  posicional). Usa desplazamientos de 32 bits porque las imágenes ATR caben de sobra. Es todo o nada para que el
+  dominio nunca reciba sectores a medias.
+- **`ImageRepository`:** separa el ciclo de vida (abrir y cerrar con slots fijos) de la lectura. Así un adaptador
+  TNFS puede gestionar conexiones sin contaminar la lectura.
+- **`Clock`:** `waitUntil` en vez de `delay` para expresar plazos absolutos (fin del ACK + t5), que es como el
+  manual define los tiempos.
+- **`SioTransport`:** es el único límite entre la secuencia del protocolo y el silicio. `releaseDataLine()` es
+  explícito porque el bus es compartido y una línea mal liberada interferiría con otros dispositivos.
+
+---
+
+## 9. Restricciones de memoria y temporización
+
+### 9.1 Reglas de código embebido
+
+- **Sin excepciones ni RTTI** (ADR-004). Nada de `dynamic_cast` ni `typeid`.
+- **Sin heap en la ruta crítica** (ADR-011). Está permitido durante la inicialización (montaje de FATFS, creación de
+  tareas, instalación del controlador UART).
+- **Búferes y su propietario:**
+
+  | Búfer | Tamaño | Propietario | Memoria |
+  |---|---|---|---|
+  | Trama de comando | 5 B | `EspSioTransport` | DRAM |
+  | Datos de respuesta | 256 + 1 B (sector DD + checksum) | `SioSession` | DRAM |
+  | Cabecera ATR | 16 B | `MountDiskImage` (pila) | — |
+  | Slots de archivo | N = 1 en la v1 | `FatFsImageRepository` | estático |
+
+  Los datos se pasan con `Span<T>` (vista no propietaria, C++17 no trae `std::span`). Ninguna función guarda un
+  `Span` más allá de la llamada.
+- **ISR:**
+  - Solo la ISR de COMMAND es nuestra; está escrita en C con `IRAM_ATTR` y se registra con `ESP_INTR_FLAG_IRAM`.
+  - Sus datos van en DRAM.
+  - Su única acción es registrar la marca de tiempo y notificar a la tarea SIO.
+  - Sin llamadas virtuales, sin `ESP_LOG` (solo `ESP_DRAM_LOG*` en depuración) y sin código en flash.
+  - La ISR del UART es la del controlador de ESP-IDF, configurada en IRAM.
+- **Tarea SIO:** fijada al núcleo 1, con prioridad alta y pila dimensionada por medición (marca de agua alta).
+  Desde aquí sí se llaman métodos virtuales.
+
+### 9.2 Manejo de errores sin excepciones
+
+- Toda función que puede fallar devuelve `Result<T>` marcado `[[nodiscard]]`; ignorarlo produce una advertencia que
+  se trata como error de compilación.
+- Los errores se propagan hacia arriba sin traducirse dentro del dominio. El **dispatcher** es el único que traduce
+  `ErrorCode` → respuesta SIO (`NAK` / `ERROR` / silencio), según la tabla de §4.1.
+- `RB_ASSERT(cond)`:
+  - Se usa para invariantes que, si fallan, indican un error de programación (no de datos externos).
+  - En el equipo, `abort()` con traza; en las pruebas de host, la prueba falla.
+- Los datos externos (cabecera ATR, tramas, archivos) **nunca** disparan `RB_ASSERT`: siempre `Result`.
+- Verificación del heap: en H7, tras 10 000 lecturas de sector, `heap_caps_get_free_size` y el bloque libre mayor
+  deben ser idénticos a los iniciales.
+
+### 9.3 Presupuesto temporal SIO (a medir y registrar)
+
+| Intervalo | Límite del manual | Presupuesto propio (objetivo) | Medición | Instrumento |
+|---|---|---|---|---|
+| COMMAND↑ → inicio del ACK (t2) | 0–16 ms | ≤ 1 ms (D-10) | pendiente (H6) | analizador lógico |
+| Fin del ACK → inicio de COMPLETE (t5) | ≥ 250 µs | 300–500 µs + tiempo de lectura | pendiente (H6/H7) | analizador lógico |
+| Lectura de un sector desde SD | — (dentro de t5) | ≤ 5 ms peor caso | pendiente (H3) | `esp_timer` |
+| ISR COMMAND → tarea SIO despierta | — | ≤ 50 µs | pendiente (H5) | GPIO de depuración + analizador |
+| Velocidad real del bus | ~19 200 ± 5 % | medir NTSC y PAL | pendiente (H5) | analizador lógico |
+| t0 / t1 recibidos del Atari | 750–1600 / 650–950 µs | solo se observan | pendiente (H5) | analizador lógico |
+
+Cada medición se registra en `docs/mediciones/sio-tiempos.md` con:
+
+- fecha;
+- commit del firmware;
+- modelo de Atari, NTSC/PAL y ROM;
+- instrumento y frecuencia de muestreo;
+- mínimo, máximo y percentil 99 sobre al menos 1 000 transacciones.
+
+---
+
+## 10. Estrategia de pruebas
+
+### 10.1 Pruebas de host (sin ESP32): CMake + CTest + Unity
+
+| Suite | Qué cubre | Ejemplos |
+|---|---|---|
+| Objetos de valor | `SectorNumber`, `DriveNumber`, `DiskGeometry`, `DriveStatus`, `AtrLayout` | `from(0)` falla; `from(1)` correcto; `sizeOf(3) = 128` en DD; densidades 720×128, 1040×128 y 720×256 |
+| Invariantes de entidades | `VirtualDrive`, `DiskImage` | Lectura en unidad vacía → `NoDiskMounted`; sector > máximo → `SectorOutOfRange` sin tocar la fuente (espía); búfer chico → `BufferTooSmall`; `lastOperationFailed` se refleja en `status()` |
+| ATR | Análisis y disposición | Magia mala; tamaño de sector 512; cabecera mayor que el archivo; archivo truncado; imágenes > 1 MB; desplazamientos de los sectores 1–4 en DD |
+| Casos de uso | `MountDiskImage`, `GetDriveStatus`, `ReadSector` | Montaje con repositorio que falla → unidad sin cambios y slot liberado; lectura correcta byte a byte contra el fixture |
+| Contratos de puertos | Suites reutilizables (§10.3) | Ejecutadas contra `MemoryByteSource`, `PosixByteSource` y `FakeRemoteByteSource` |
+| Protocolo SIO | `SioChecksum`, `CommandFrame`, `StatusFrameEncoder`, `SioCommandDispatcher` | Vectores de checksum con acarreo (`$FF+$01`); ID ajeno → `Ignore`; checksum malo → `Ignore`; `$57` → `Nak`; sector 0 → `Accepted` y luego `Error` |
+| Sesión con adaptadores simulados | `SioSession` + `ScriptedSioTransport` + `FakeClock` | Secuencia completa de STATUS y READ; ACK antes de leer; COMPLETE no antes de fin del ACK + 250 µs; con `FakeRemoteByteSource` de 50 ms de latencia, el ACK sigue dentro de t2 |
+| Manejo de errores | Transversal | Fuente que falla a mitad → `ERROR`; `[[nodiscard]]` comprobado en compilación |
+
+- Las pruebas se compilan con los mismos flags que el firmware (`-std=gnu++17 -fno-exceptions -fno-rtti -Wall
+  -Wextra -Werror`) y, además, con sanitizadores (ASan/UBSan) en el host.
+- Fuzzing opcional de `AtrLayout::parse` y `CommandFrame` con libFuzzer.
+
+### 10.2 Integración
+
+| Nivel | Entorno | Qué valida |
+|---|---|---|
+| I-1 | Host: `SioSession` + dispatcher + casos de uso reales + `PosixImageRepository` con un ATR real generado | Toda la pila pura con archivos reales |
+| I-2 | ESP32 sin conexión SIO (H3): consola + `FatFsImageRepository` | Meta A: el CRC32 de cada sector coincide con `make_atr.py`; suites de contrato en el equipo (`test/target`) |
+| I-3 | ESP32 + `tools/fake_atari.py` por USB-serie de 3,3 V (antes y después de H4) | Lógica de la secuencia contra un emisor real de tramas. Los tiempos los mide el analizador, no el PC. |
+| I-4 | ESP32 + Atari real (H5–H7, después de la puerta H4) | Escucha, STATUS, READ y arranque |
+
+### 10.3 Pruebas de contrato
+
+Se escriben una vez como funciones parametrizadas por una fábrica de la implementación. Por ejemplo, la suite de
+`ImageByteSource` comprueba:
+
+- `size()` estable;
+- lectura en el borde exacto;
+- lectura que excede el tamaño → `OutOfBounds` sin escritura parcial (el búfer se rellena con un centinela y se
+  verifica);
+- lectura de longitud 0.
+
+Cada adaptador nuevo (incluido el futuro TNFS) **debe** pasarla para aceptarse.
+
+### 10.4 Integración continua
+
+GitHub Actions:
+
+1. Pruebas de host con sanitizadores.
+2. Build de ESP-IDF con la imagen oficial en la etiqueta fijada.
+3. `check_layering.py`.
+4. Verificación de que cada dependencia nueva aparece en `THIRD_PARTY_NOTICES.md` (lista manual comparada con
+   `idf_component.yml`).
+
+El CI nunca flashea.
+
+---
+
+## 11. Hitos H0–H7 actualizados
+
+| Hito | Entregable | Criterio de aceptación | ¿Toca hardware? |
+|---|---|---|---|
+| **H0** Esqueleto | Proyecto ESP-IDF con versión fijada; componentes vacíos con CMake dual; C++17 + `-fno-exceptions -fno-rtti` verificados; host tests con una prueba trivial; `check_layering.py`; CI; `LICENSE` + `THIRD_PARTY_NOTICES.md`; `docs/adr/` con ADR 001–013 | CI en verde en las cuatro tareas; una inclusión prohibida deliberada en una rama de prueba hace fallar el CI | No |
+| **H1** Dominio | `rb_core` (Result, Span, ErrorCode); objetos de valor; `VirtualDrive`; `DiskImage`; `AtrLayout` | Suites de valor, invariantes y ATR en verde; sin dependencias fuera de `rb_core` | No |
+| **H2** Aplicación + SIO puro | Puertos; casos de uso; `DriveBay`; fakes; suites de contrato; `rb_sio` completo (checksum, trama, encoder, dispatcher, sesión) | Transacciones simuladas STATUS/READ correctas byte a byte y en tiempo simulado; prueba de aceptación de TNFS simulado (§5.3) sin tocar dominio, aplicación ni SIO | No |
+| **H3** Almacenamiento en el equipo | `rb_esp_storage`, `rb_esp_platform`, `rb_console`; contratos en el equipo | **Meta A**: CRC32 de todos los sectores coincide con el PC; lectura de sector ≤ 5 ms medida. Flasheo solo con aprobación explícita. | ESP32 por USB, sin pines SIO |
+| **H4** Puerta de hardware | Anexo A completo; perfil de placa en `rb_board` con validación de pines; mediciones pasivas | Pinout, alimentación y adaptación de niveles revisados y firmados | Solo medición pasiva |
+| **H5** Escucha | `EspSioTransport` en modo **solo recepción**; ISR en C/IRAM | Tramas decodificadas con el Atari falso y luego con el real; velocidad, t0 y t1 registrados en `sio-tiempos.md`; DATA IN nunca se maneja | Solo entradas |
+| **H6** STATUS | Transmisión habilitada; `StatusFrameEncoder` con bits confirmados (D-5) | t2 y t5 medidos dentro del presupuesto (§9.3) con el Atari falso y el real | Salida DATA IN |
+| **H7** READ SECTOR | Lectura de extremo a extremo | **Meta B**: el Atari arranca un ATR de prueba desde D1; 10 000 lecturas sin variación de heap; tabla de mediciones completa | Atari real |
+
+---
+
+## 12. Decisiones aprobadas
+
+Las 13 decisiones fueron **aprobadas el 2026-10-23 tal como se proponen**. Las que dicen "confirmar" (D-4, D-5)
+quedan aprobadas como política y se completan con documentación o medición en el hito indicado.
+
+| # | Decisión | Resolución aprobada |
+|---|---|---|
+| D-1 | Nombre de la entidad raíz | `VirtualDrive` en vez de `VirtualDisk` (ADR-008) |
+| D-2 | Tipo de resultado | `Result<T>` propio y mínimo en `rb_core`, sin dependencia externa (alternativa: `tl::expected`, licencia CC0) |
+| D-3 | Mecanismo de los puertos | Virtuales desde contexto de tarea; plantillas solo si las mediciones lo exigen (ADR-006) |
+| D-4 | Política de errores SIO | Checksum malo o ID ajeno → silencio; comando no soportado → NAK; error de ejecución → ERROR + trama de datos. **Confirmar con documentación y medición** si el Atari espera la trama de datos tras ERROR |
+| D-5 | Respuesta a STATUS | Significado bit a bit tomado de documentación pública de la 810/1050, registrado antes de H6; y qué responder con la unidad vacía (NAK o STATUS con "sin disco") |
+| D-6 | Imágenes DD con sectores de arranque de 256 bytes | Rechazarlas en la v1 con un error claro (alternativa: detectarlas por el tamaño del archivo) |
+| D-7 | Geometría mínima | `sectorCount ≥ 1` (alternativa: `≥ 3` para garantizar el sector de arranque) |
+| D-8 | Cabecera ATR que no coincide con el tamaño real | Prevalece el tamaño real, con advertencia en el registro |
+| D-9 | Obtención de Unity | Copia fijada en `test/host/unity/` (sin red en CI; aviso MIT en `THIRD_PARTY_NOTICES.md`) frente a `FetchContent` con hash fijo |
+| D-10 | Presupuesto de t2 | Objetivo ≤ 1 ms (el manual permite hasta 16 ms) |
+| D-11 | Idioma | Documentación en español; identificadores y comentarios de código en inglés, con el glosario §2.3 como puente |
+| D-12 | Versión de ESP-IDF | Última v6.x estable al iniciar H0, fijada por etiqueta exacta |
+| D-13 | Texto de procedencia | Redacción de §0.2 y plantilla de PR con "fuentes consultadas" obligatoria |
+
+---
+
+## 13. Fuentes consultadas
+
+**Primarias:**
+
+- Atari, Inc., *Atari Home Computer Technical Reference Notes* (C016555, 1982), OS User's Manual, sección 9
+  (interfaz SIO: conector, especificaciones eléctricas, trama, checksum, respuestas, tiempos t0–t5) y apéndice K
+  (unidad 810: ID, comandos y geometría).
+  https://ftp.mirrorservice.org/sites/www.bitsavers.org/pdf/atari/400_800/CO16555_Atari_Home_Computer_Technical_Reference_Notes_1982.pdf
+- Espressif, ESP-IDF Programming Guide — *C++ Support* (estándar por defecto, `CONFIG_COMPILER_CXX_EXCEPTIONS`,
+  `CONFIG_COMPILER_CXX_RTTI`, vtables en flash):
+  https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/cplusplus.html
+- Espressif, ESP-IDF Programming Guide — *Concurrency Constraints for Flash on SPI1* (ISR con
+  `ESP_INTR_FLAG_IRAM`, código y datos en IRAM/DRAM, `ESP_DRAM_LOG*`):
+  https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/spi_flash/spi_flash_concurrency.html
+- Espressif, ESP-IDF Programming Guide — *GPIO* (pines de arranque, flash/PSRAM, solo entrada):
+  https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/gpio.html
+- Espressif, ESP-IDF Programming Guide — *Running Applications on Host* (objetivo `linux`, en preview):
+  https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/host-apps.html
+
+**Secundarias (solo contexto):**
+
+- Wikipedia, "Atari SIO": https://en.wikipedia.org/wiki/Atari_SIO
+- Atarimax, documentación SIO2PC, capítulo 1: https://atarimax.com/sio2pc/documentation/chapter1.html
+- Descripción del formato ATR:
+  https://ftp.pigwa.net/upload/mirror%20z%2085.11.68.68/85.11.68.68/stuff/collections/nir_dary_cds/Tech%20Info/file%20formats/afmtatr.htm
+- Notas ATR de bw-atari8-tools: https://slackware.uk/~urchlay/repos/bw-atari8-tools/plain/ksiders/atr.txt
+- CNX Software, anuncio de ESP-IDF v6.0 (marzo de 2026):
+  https://www.cnx-software.com/2026/03/24/esp-idf-v6-0-framework-adds-support-for-esp32-c5-and-esp32-c61-preview-for-esp32-h21-and-esp32-h4/
+
+**No usado:** código fuente de `fujinet-firmware` u otros emuladores de periféricos SIO. Una búsqueda devolvió
+páginas de la wiki de FujiNet sobre tiempos; no se usaron, porque los tiempos provienen del manual de Atari.
+
+---
+
+## Anexo A — Requisitos de hardware a confirmar antes de manejar GPIO (sin cambios desde v0.1)
+
+**Placa:**
+
+1. Modelo y revisión.
+2. Módulo ESP32: flash y PSRAM.
+3. Chip USB-serie y circuito de auto-reset.
+4. Mapa de pines completo: DATA IN, DATA OUT, COMMAND, MOTOR, PROCEED, READY, INTERRUPT, CLOCK, microSD (modo y
+   detección), botones y LEDs.
+5. Adaptación de nivel y dirección de cada línea SIO.
+6. Ningún pin en GPIO 6–11/16–17 (flash/PSRAM), uso seguro de los pines de arranque (0, 2, 5, 12, 15) y GPIO 34–39
+   solo como entradas.
+
+**Alimentación:**
+
+7. Origen (USB, SIO o ambos) y protección contra retroalimentación.
+8. Corriente tomada del pin 10, cuyo límite es 50 mA.
+9. Confirmar que no se usa el pin 12.
+
+**Eléctrica:**
+
+10. Requisitos del manual para el periférico: entrada V_IH ≥ 2,0 V y V_IL ≤ 0,4 V; salida de colector abierto con
+    V_OL ≤ 0,4 V a 1,6 mA.
+11. Sin suponer tolerancia a 5 V en el ESP32.
+12. Niveles en reposo medidos con el Atari encendido y sin firmware que configure pines SIO.
+
+**Entorno:**
+
+13. Modelo de Atari, NTSC/PAL y ROM.
+14. Otros dispositivos en el bus.
+15. Instrumentos disponibles.
+16. microSD en FAT32.
+17. Imágenes ATR con derechos de uso claros.

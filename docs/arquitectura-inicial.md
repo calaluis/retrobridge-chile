@@ -1,10 +1,12 @@
 # RetroBridge Chile — Arquitectura inicial (propuesta v0.2)
 
 > Estado: **APROBADA** (2026-10-23): decisiones D-1 a D-13 aprobadas tal como se proponen en §12.
-> Implementación: el hito **H0** (PR #1, rama `h0-esqueleto`) incorpora el esqueleto ESP-IDF, los componentes
-> iniciales `rb_core`, `rb_domain`, `rb_application` y `rb_sio` (sin lógica), las pruebas de host y el CI.
-> Aún **no** se han implementado las funcionalidades SIO, ATR, dominio ni casos de uso.
-> No se ha realizado ningún flasheo de hardware.
+> Implementación:
+> - **H0** (PR #1, fusionado en `main`, `6b18e41`): esqueleto ESP-IDF, componentes iniciales, pruebas de host y CI.
+> - **H1** (rama `h1-dominio`, en revisión): `rb_core` y dominio Atari XL/XE (objetos de valor, `AtrLayout`,
+>   `DiskImage`, `VirtualDrive`). Incluye la enmienda del ADR-002 (puertos de salida del dominio, §5.1) y las reglas
+>   de propiedad de §3.4.
+> - Aún **no** se han implementado SIO, casos de uso ni adaptadores. No se ha realizado ningún flasheo de hardware.
 > Fecha: 2026-10-23. Reemplaza a la v0.1 del mismo día.
 > Repositorio: `calaluis/retrobridge-chile` (privado por ahora). Licencia: GPL-3.0-only (ADR-013).
 > Las firmas de clases que aparecen aquí son **notación de diseño**, no implementación.
@@ -107,11 +109,12 @@ flowchart TB
 
   subgraph APP["Aplicación (C++17 puro)"]
     UC["MountDiskImage · GetDriveStatus · ReadSector"]
-    PORTS["Puertos: ImageRepository · ImageByteSource<br/>Clock · SioTransport"]
+    PORTS["Puertos: ImageRepository<br/>Clock · SioTransport"]
   end
 
   subgraph DOM["Dominio: Unidad de disco (C++17 puro)"]
     VD["VirtualDrive · DiskImage · DiskGeometry<br/>SectorNumber · DriveNumber · DriveStatus · AtrLayout"]
+    DPORT["Puerto del dominio:<br/>ImageByteSource"]
   end
 
   CORE["rb_core: Result · ErrorCode · Span · RB_ASSERT"]
@@ -124,6 +127,7 @@ flowchart TB
   CON --> UC
   SIOPHY -. implementa .-> PORTS
   SD -. implementa .-> PORTS
+  SD -. implementa .-> DPORT
   CLK -. implementa .-> PORTS
   SESS --> PORTS
   SESS --> DISP
@@ -131,14 +135,18 @@ flowchart TB
   DISP --> FRAME
   UC --> PORTS
   UC --> VD
+  PORTS --> DPORT
+  VD --> DPORT
   VD --> CORE
+  DPORT --> CORE
   PORTS --> CORE
   FRAME --> CORE
 ```
 
 **Regla de dependencia:** las flechas apuntan siempre hacia el dominio.
 
-- `rb_domain` depende solo de `rb_core`.
+- `rb_domain` depende solo de `rb_core`. Puede definir sus propios puertos de salida (hoy, `ImageByteSource`)
+  siempre que dependan solo de `rb_core` (enmienda H1 del ADR-002).
 - `rb_application` depende de `rb_domain` y `rb_core`.
 - `rb_sio` depende de `rb_application`.
 - Infraestructura depende de todo lo anterior; nada depende de infraestructura salvo `main`.
@@ -157,8 +165,8 @@ flowchart TB
 - *Bus SIO → Unidad de disco:* `SioCommandDispatcher` actúa como **capa anticorrupción**. Traduce
   `CommandFrame` (ID `$31`, comando `$52`, AUX1/AUX2) a conceptos de dominio (`DriveNumber{1}`, `SectorNumber{n}`)
   e invoca casos de uso. El dominio nunca ve bytes de protocolo.
-- *Unidad de disco → Almacenamiento:* a través de los puertos `ImageRepository` e `ImageByteSource`. El dominio no
-  sabe si los bytes vienen de FATFS o de la red.
+- *Unidad de disco → Almacenamiento:* a través de `ImageByteSource`, un puerto que define el dominio, y de
+  `ImageRepository`, un puerto de la capa de aplicación. El dominio no sabe si los bytes vienen de FATFS o de la red.
 
 ### 2.3 Glosario (lenguaje ubicuo)
 
@@ -211,17 +219,17 @@ classDiagram
     DriveNumber number
     optional~DiskImage~ disk
     bool lastOperationFailed
-    mount(DiskImage) Result~void~
-    unmount()
-    readSector(SectorNumber, Span out) Result~size_t~
+    mount(DiskImage&&) Result~ImageByteSource*~
+    unmount() ImageByteSource*
+    readSector(SectorNumber, Span out) Result~uint16~
     status() DriveStatus
   }
   class DiskImage {
-    <<entidad>>
-    ImageLocation location
-    DiskGeometry geometry
+    <<entidad, solo movible>>
     AtrLayout layout
-    ImageByteSource& source
+    ImageByteSource* source  "prestada"
+    open(ImageByteSource&) Result~DiskImage~
+    readSector(SectorNumber, Span out) Result~uint16~
     bool readOnly
   }
   class DiskGeometry {
@@ -254,7 +262,10 @@ classDiagram
     Density density
   }
   class ImageByteSource {
-    <<puerto>>
+    <<puerto del dominio>>
+    size() uint32
+    readAt(offset, Span out) Result~void~
+    isAttached() bool
   }
   VirtualDrive "1" o-- "0..1" DiskImage
   VirtualDrive --> DriveNumber
@@ -293,22 +304,33 @@ classDiagram
 **`AtrLayout`** (valor)
 
 - `parse()` acepta la cabecera solo si la magia es `$0296` y el tamaño de sector es válido.
-- La cantidad de sectores se calcula desde el tamaño **real** de la fuente, no solo desde la cabecera (política
-  D-8). Si la cabecera declara más datos que el archivo, se registra una advertencia y prevalece el tamaño real.
+- La cantidad de sectores se calcula desde el tamaño **real** de la fuente, no desde la cabecera (D-8, precisada
+  en H1-3):
+  - Los datos son el tamaño del archivo menos 16 bytes de cabecera, en ambas direcciones.
+  - `headerSizeMismatch()` informa si la cabecera declara otra cosa, y `ignoredTrailingBytes()` informa cuántos
+    bytes de un sector final incompleto se ignoraron. El dominio no registra eventos: la advertencia la emite la
+    capa de aplicación.
 - `locate(n)`, con H = 16:
   - si `n ≤ 3`: desplazamiento = `H + (n−1)·128`;
   - si no: desplazamiento = `H + 3·128 + (n−4)·sectorSize`, en imágenes DD con sectores cortos.
-- La variante DD con los tres primeros sectores de 256 bytes depende de D-6.
-- Invariante: todo `ByteRange` devuelto cabe dentro del tamaño de la fuente.
+- D-6, precisada en H1-4: con sectores de 256 bytes y al menos 384 bytes de datos, se exige `datos % 256 ≠ 0`. El
+  formato estándar (3×128 + n×256) siempre deja resto 128. Un múltiplo exacto de 256 corresponde a la variante con
+  sectores de arranque de 256 bytes y se rechaza con `UnsupportedAtrLayout`. Un DD estándar seguido exactamente de
+  128 bytes sobrantes cae en el mismo caso y también se rechaza, porque es indistinguible.
+- Se rechaza con `ImageTooSmall` una imagen sin ningún sector completo, o un archivo de menos de 16 bytes.
+- Se rechaza con `ImageTooLarge` una imagen de más de 65 535 sectores (H1-5).
+- Invariante: todo `ByteRange` devuelto cabe dentro del tamaño de la fuente. La aritmética usa `uint32_t` sin
+  posibilidad de desbordamiento.
 
 **`DiskImage`** (entidad)
 
-- Identidad: su `ImageLocation` (ruta en la SD hoy, URL TNFS mañana).
+- Identidad: en H1 forma parte del agregado `VirtualDrive` y no tiene identidad propia. Su `ImageLocation` (ruta en
+  la SD hoy, URL TNFS mañana) se agrega en H2, junto con `ImageRepository` (H1-2).
+- Solo se crea con `DiskImage::open(ImageByteSource&)`, que lee y valida la cabecera (H1-1).
 - Invariantes:
   - Geometría y disposición son coherentes con el tamaño de la fuente.
   - `readOnly = true` en la v1, sin excepción.
-- **No posee** la fuente de bytes: la posee el adaptador del repositorio (memoria estática con slots fijos). La
-  imagen guarda una referencia válida mientras esté montada.
+- **No posee** la fuente de bytes: la toma prestada. Las reglas están en §3.4.
 
 **`VirtualDrive`** (entidad raíz)
 
@@ -319,8 +341,10 @@ classDiagram
   - Un sector fuera de la geometría → `ErrorCode::SectorOutOfRange`, sin tocar la fuente.
   - El búfer de salida debe medir al menos `geometry.sizeOf(n)`; si no → `ErrorCode::BufferTooSmall`.
   - Cada operación actualiza `lastOperationFailed`, que se refleja en `status()`.
-  - Montar sobre una unidad ocupada reemplaza el disco: es un desmontaje implícito, y el repositorio libera el
-    slot anterior.
+  - Montar sobre una unidad ocupada reemplaza el disco: es un desmontaje implícito. `mount` y `unmount` devuelven
+    la fuente desplazada, ya desvinculada, para que la capa de aplicación la cierre una sola vez (H1-8, §3.4).
+  - `mount` y `unmount` reinician `lastOperationFailed`.
+  - No es copiable ni movible: es una entidad con identidad fija.
 - No conoce bytes de protocolo, tiempos, UART ni archivos.
 
 **`DriveStatus`** (valor)
@@ -328,6 +352,48 @@ classDiagram
 - Instantánea inmutable que produce `VirtualDrive::status()`.
 - El significado bit a bit de los 4 bytes de la respuesta STATUS se decide en el encoder SIO, una vez confirmado
   con documentación de la 810/1050 (D-5).
+- En la v1, `writeProtected` es siempre `true`. Con la unidad vacía, `density` es `Unknown` (H1-6).
+
+### 3.4 Propiedad y vida útil de `DiskImage` e `ImageByteSource` (H1-8)
+
+**Quién posee qué:**
+
+- **La fuente:** la posee quien la crea. En producción es un slot de memoria estática del repositorio (H2/H3); en
+  las pruebas, la propia prueba.
+- **`DiskImage`:** guarda un puntero **prestado**.
+- **`VirtualDrive`:** posee su `DiskImage` en línea, dentro de un `std::optional`, sin heap.
+
+**Mecanismo:** `ImageByteSource` tiene una marca `attached` que solo modifica `DiskImage` (clase amiga).
+
+- Una fuente está *vinculada* exactamente mientras un `DiskImage` vivo la referencia.
+- `DiskImage` es solo movible:
+  - mover transfiere el vínculo y deja el origen inválido;
+  - destruirlo, o asignar otro encima, desvincula su fuente.
+
+| Riesgo | Protección | Prueba |
+|---|---|---|
+| 1. Montar dos veces la misma instancia | `DiskImage::open` rechaza una fuente vinculada (`SourceInUse`), así que una fuente respalda a lo más un `DiskImage`, en cualquier unidad. | `test_source_cannot_back_two_images`, `test_mounted_source_cannot_be_opened_again` |
+| 2. Cerrar una fuente en uso | `isAttached()` es verdadero mientras está montada. El contrato de `ImageRepository::close` (H2) prohíbe cerrar una fuente vinculada y lo comprobará con `RB_ASSERT`, porque sería un error de programación. `mount` y `unmount` solo devuelven fuentes ya desvinculadas. | `test_source_stays_attached_while_mounted`, `test_mounting_over_a_disk_returns_the_detached_previous_source` |
+| 3. Duplicar referencias al copiar | `DiskImage` no es copiable; `Result<DiskImage>` tampoco. Se comprueba en compilación. | `static_assert` en `test_disk_image.cpp`; `test_move_transfers_the_attachment` |
+| 4. Usar una fuente liberada o reutilizada | Una fuente solo queda desvinculada cuando ningún `DiskImage` la referencia. Tras `unmount`, la unidad ya no la toca. Un `DiskImage` movido devuelve `InvalidDiskImage` sin leer. | `test_unmounted_source_is_never_read_again`, `test_moved_from_image_refuses_reads`, `test_destruction_detaches_the_source` |
+
+**Ciclo de vida completo** (lo implementa `MountDiskImage` en H2):
+
+1. `open` en el repositorio.
+2. `DiskImage::open`; si falla, se cierra la fuente.
+3. `drive.mount`.
+4. Si `mount` devolvió una fuente desplazada, se cierra con `close`.
+
+**Obligaciones de H2** (forman parte del contrato; H1 no las implementa):
+
+1. `ImageRepository` **no cierra ni reutiliza** un slot cuya fuente tenga `isAttached() == true`:
+   - `close` sobre una fuente vinculada es un error de programación y se detiene con `RB_ASSERT`;
+   - `open` nunca entrega una fuente vinculada.
+2. **Montar y leer se serializan.** La marca `attached` no es atómica, así que `mount`, `unmount` y `readSector`
+   de una unidad se ejecutan siempre desde un único contexto (o con la sesión SIO pausada). El mecanismo concreto
+   se decide en H2.
+3. **Las pruebas de contrato lo verifican** (§10.3): ningún cierre ni reutilización de una fuente vinculada, y
+   montaje y lectura serializados según el mecanismo que se elija.
 
 ---
 
@@ -409,8 +475,13 @@ en 4 bytes y se devuelve `Complete` + 4 bytes + CHK. La respuesta a STATUS sobre
 
 ### 5.1 Puertos (mínimos)
 
-Todos viven en `rb_application/include/rb/app/ports/`. Son interfaces con métodos virtuales puros, sin estado y
-con destructor protegido no virtual: no se destruyen polimórficamente, así que no hace falta destructor virtual.
+- **Ubicación:**
+  - `ImageByteSource` vive en `rb_domain/include/rb/domain/`: es un puerto del dominio (enmienda H1 del ADR-002).
+  - Los demás viven en `rb_application/include/rb/app/ports/`.
+- **Forma:** son interfaces con métodos virtuales puros y destructor protegido no virtual. No se destruyen
+  polimórficamente, así que no hace falta destructor virtual.
+- **Estado:** no tienen estado, salvo la marca `attached` de `ImageByteSource`, que solo gestiona `DiskImage`
+  (§3.4).
 
 | Puerto | Dirección | Firma (notación) | Por qué existe |
 |---|---|---|---|
@@ -427,7 +498,7 @@ con destructor protegido no virtual: no se destruyen polimórficamente, así que
 - `readAt` no usa heap.
 - `open` sobre una ubicación inexistente devuelve `ErrorCode::NotFound`.
 - Con todos los slots ocupados, `open` devuelve `ErrorCode::NoFreeSlot`.
-- `close` es idempotente.
+- `close` es idempotente y no debe recibir una fuente vinculada (`isAttached()`): §3.4.
 - `SioTransport::send` retorna cuando el **último bit** salió del UART, porque t5 se mide desde ese punto.
 
 Puertos **que no se crean**, y por qué:
@@ -480,11 +551,12 @@ retrobridge-chile/
 │   │   ├── CMakeLists.txt            # if(ESP_PLATFORM) idf_component_register(...) else() add_library(...)
 │   │   └── include/rb/core/*.hpp
 │   ├── rb_domain/                    # C++17 puro. REQUIRES rb_core
-│   │   ├── include/rb/domain/        # virtual_drive.hpp, disk_image.hpp, disk_geometry.hpp,
-│   │   │                             # sector_number.hpp, drive_number.hpp, drive_status.hpp, atr_layout.hpp
+│   │   ├── include/rb/domain/        # virtual_drive.hpp, disk_image.hpp, disk_geometry.hpp, density.hpp,
+│   │   │                             # sector_number.hpp, drive_number.hpp, drive_status.hpp, atr_layout.hpp,
+│   │   │                             # image_byte_source.hpp (puerto del dominio)
 │   │   └── src/
 │   ├── rb_application/               # C++17 puro. REQUIRES rb_domain
-│   │   ├── include/rb/app/ports/     # image_byte_source.hpp, image_repository.hpp, clock.hpp, sio_transport.hpp
+│   │   ├── include/rb/app/ports/     # image_repository.hpp, clock.hpp, sio_transport.hpp
 │   │   ├── include/rb/app/usecases/  # mount_disk_image.hpp, get_drive_status.hpp, read_sector.hpp
 │   │   ├── include/rb/app/drive_bay.hpp
 │   │   └── src/
@@ -681,7 +753,16 @@ Se escriben una vez como funciones parametrizadas por una fábrica de la impleme
   verifica);
 - lectura de longitud 0.
 
-Cada adaptador nuevo (incluido el futuro TNFS) **debe** pasarla para aceptarse.
+La suite de `ImageRepository` (H2) comprueba además las obligaciones de §3.4:
+
+- mientras la fuente devuelta esté vinculada a un `DiskImage`, su slot no se reutiliza y `open` entrega otro
+  slot o `NoFreeSlot`;
+- `close` sobre una fuente vinculada se detiene con `RB_ASSERT`, verificado con una prueba que espera el aborto;
+- tras desmontar, `close` libera el slot y este puede reutilizarse.
+
+La serialización de montaje y lectura se verifica en las pruebas de `MountDiskImage` y `SioSession` (H2).
+
+Cada adaptador nuevo (incluido el futuro TNFS) **debe** pasar estas suites para aceptarse.
 
 ### 10.4 Integración continua
 

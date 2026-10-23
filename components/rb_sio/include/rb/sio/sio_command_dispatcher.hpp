@@ -57,6 +57,12 @@ public:
     // Precondition: the last accept() returned Accepted; out.size() >= kMaxFrameSize.
     Completion execute(rb::core::Span<uint8_t> out);
 
+    // Discards an accepted command without executing it, e.g. when the ACK could
+    // not be transmitted (H2c). Recoverable transport errors must not reach the
+    // accept() precondition, which is reserved for programming errors. No effect
+    // if nothing is pending.
+    void abandon() noexcept { pending_.reset(); }
+
     bool hasPendingCommand() const noexcept { return pending_.has_value(); }
 
 private:

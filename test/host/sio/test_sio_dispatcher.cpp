@@ -316,6 +316,27 @@ static void test_status_ignores_aux_bytes(void)
     TEST_ASSERT_EQUAL_HEX8(code::kComplete, dispatcher.execute(Span<uint8_t>{out}).code);
 }
 
+// --- Recovery (H2c) -----------------------------------------------------------------------
+
+static void test_abandon_discards_the_pending_command_without_io(void)
+{
+    FakeByteSource sd = sd_source();
+    DriveBay bay{1};
+    mount(bay, sd);
+    SioCommandDispatcher dispatcher{bay};
+
+    const unsigned reads_before = sd.reads();
+    TEST_ASSERT_TRUE(accept(dispatcher, read_frame(1)) == Acceptance::Accepted);
+    dispatcher.abandon();  // e.g. the ACK could not be transmitted
+    TEST_ASSERT_FALSE(dispatcher.hasPendingCommand());
+    TEST_ASSERT_EQUAL_UINT(reads_before, sd.reads());  // never executed
+
+    TEST_ASSERT_TRUE(accept(dispatcher, read_frame(2)) == Acceptance::Accepted);  // ready for the next one
+    dispatcher.abandon();
+    dispatcher.abandon();  // no pending command: no effect
+    assert_status(dispatcher, {0x00, 0xFF, 0xE0, 0x00, 0xE0});
+}
+
 // Death test: execute() without an accepted command is a programming error.
 static int execute_without_accept(void)
 {
@@ -347,5 +368,6 @@ int main(int argc, char** argv)
     RUN_TEST(test_read_on_empty_drive_sends_error_with_128_zeros);
     RUN_TEST(test_status_for_each_geometry);
     RUN_TEST(test_status_ignores_aux_bytes);
+    RUN_TEST(test_abandon_discards_the_pending_command_without_io);
     return UNITY_END();
 }

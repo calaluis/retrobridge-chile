@@ -7,9 +7,11 @@
 >   `DiskImage`, `VirtualDrive`), enmienda del ADR-002 y reglas de propiedad de §3.4.
 > - **H2a** (PR #3, fusionado en `main`, `5a9d45a`): capa de aplicación y recursos. Incluye `ImageLocation`,
 >   `ImageRepository` y `DriveMailbox`, `DriveBay` y los casos de uso en dos contextos (ADR-014).
-> - **H2b** (rama `h2b-sio-puro`, en revisión): protocolo SIO puro. Incluye `sio_checksum`, `CommandFrame`,
+> - **H2b** (PR #4, fusionado en `main`, `6cfb036`): protocolo SIO puro. Incluye `sio_checksum`, `CommandFrame`,
 >   `StatusFrameEncoder`, `SioCommandDispatcher`, y `VirtualDrive::validateRead`/`geometry`.
-> - Aún **no** se han implementado la sesión (H2c) ni adaptadores. No se ha realizado ningún flasheo de hardware.
+> - **H2c** (rama `h2c-sesion-sio`, en revisión): `SioSession`, puertos `Clock` y `SioTransport`, recuperación ante
+>   errores de transporte (`SioCommandDispatcher::abandon`) y temporización simulada.
+> - Aún **no** se han implementado adaptadores (UART, GPIO, microSD). No se ha realizado ningún flasheo de hardware.
 > Fecha: 2026-10-23. Reemplaza a la v0.1 del mismo día.
 > Repositorio: `calaluis/retrobridge-chile` (privado por ahora). Licencia: GPL-3.0-only (ADR-013).
 > Las firmas de clases que aparecen aquí son **notación de diseño**, no implementación.
@@ -480,6 +482,29 @@ sequenceDiagram
 segundos (t5, según el controlador). Separarlas permite que una futura fuente lenta (TNFS) lea **después** del ACK
 sin cambiar el dominio ni los casos de uso (ADR-005).
 
+**`SioSession` (H2c).** Cada `step()` atiende **una** solicitud del buzón (en O(1)) **o** una transacción del bus,
+nunca ambas (ADR-014). La transacción sigue estos pasos:
+
+1. `accept()`.
+2. ACK.
+3. `execute()`.
+4. Espera hasta el fin del ACK + `kCompleteDelayUs` = 300 µs (t5 ≥ 250 µs).
+5. **Un solo envío** de `[código][datos][checksum]`.
+
+La línea DATA IN se libera al final de toda transacción, incluso si falla.
+
+| Situación | Comportamiento |
+|---|---|
+| Sin trama en 20 ms (`kPollTimeoutUs`) | `Idle`; no se transmite ni se libera nada |
+| Error de recepción (encuadre, desbordamiento) | `TransportFailed`; se libera la línea |
+| Trama incompleta o demasiado larga (≠ 5 bytes) | `Ignored`, sin transmitir; se libera la línea |
+| Falla el envío del ACK | `dispatcher.abandon()`: el comando aceptado **no se ejecuta**. Se libera la línea; el computador reintenta según su lógica de SIO. |
+| Falla el envío de COMPLETE/ERROR + datos | Se descarta la transacción y se libera la línea. El despachador ya no tiene un comando pendiente. |
+| Falla el envío del NAK | `TransportFailed`; se libera la línea |
+
+Los errores de transporte son recuperables y nunca abortan. La precondición de `accept()` (`RB_ASSERT`, sin comando
+pendiente) queda reservada para errores de programación. La propiedad de las fuentes no se ve afectada.
+
 `GetDriveStatus` sigue el mismo camino. En la fase 2 se obtiene `DriveStatus`, `StatusFrameEncoder` lo convierte
 en 4 bytes y se devuelve `Complete` + 4 bytes + CHK, también con la unidad vacía (§4.2).
 
@@ -549,7 +574,7 @@ Se valida en H6/H7.
 | `ImageRepository` | Saliente | `Result<ImageByteSource*> open(const ImageLocation&)` · `void close(ImageByteSource*)` | Abrir y cerrar requiere conocer el medio (FATFS, TNFS). Slots fijos, sin heap. Solo se usa desde el contexto de almacenamiento. |
 | `DriveMailbox` | Entre contextos (ADR-014) | Almacenamiento: `submit(DriveRequest&)`, `takeReply()`. Unidad: `takeRequest()`, `putReply(DriveReply)` | Traspasa montajes y desmontajes al contexto de la unidad sin bloquear el bus. Un intercambio en curso; `submit` solo consume la solicitud si tiene éxito. |
 | `Clock` | Saliente | `uint64_t nowMicros() const` · `void waitUntil(uint64_t micros)` | Permite probar t2/t5 con un reloj falso. |
-| `SioTransport` | Saliente (desde `SioSession`) | `Result<FrameBytes> waitCommandFrame()` · `Result<void> send(Span<const uint8_t>)` · `void releaseDataLine()` | Aísla UART, GPIO e ISR para probar la secuencia con un transporte simulado. |
+| `SioTransport` | Saliente (desde `SioSession`) | `Result<CommandBytes> waitCommandFrame(uint32_t timeoutUs)` (`Timeout`/`TransportError`; `CommandBytes` = 5 bytes, cantidad recibida e instante de COMMAND↑) · `Result<void> send(Span<const uint8_t>)` · `void releaseDataLine()` | Aísla UART, GPIO e ISR para probar la secuencia con un transporte simulado. |
 
 **Contratos** (verificados por pruebas de contrato, §10.3):
 

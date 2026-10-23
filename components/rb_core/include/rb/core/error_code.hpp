@@ -43,6 +43,10 @@ enum class ErrorCode : uint8_t {
     // SIO protocol (H2b)
     InvalidCommandFrame,
     ChecksumMismatch,
+
+    // SIO transport (H2c)
+    Timeout,
+    TransportError,
 };
 
 }  // namespace rb::core

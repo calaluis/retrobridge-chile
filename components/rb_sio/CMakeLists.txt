@@ -6,7 +6,8 @@ include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/rb_build_flags.cmake)
 
 set(rb_srcs
     "src/build_checks.cpp"
-    "src/sio_command_dispatcher.cpp")
+    "src/sio_command_dispatcher.cpp"
+    "src/sio_session.cpp")
 
 if(ESP_PLATFORM)
     idf_component_register(SRCS ${rb_srcs} INCLUDE_DIRS "include" REQUIRES rb_application)

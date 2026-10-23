@@ -1,7 +1,6 @@
 # ADR-013 — Licencia GPL-3.0-only y avisos de terceros separados
 
-- Estado: Aprobada (2026-10-23). Revisión pendiente de aprobación: cambia la licencia propietaria por
-  GPL-3.0-only.
+- Estado: Aprobada (2026-10-23).
 
 ## Decisión
 

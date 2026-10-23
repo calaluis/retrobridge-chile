@@ -10,11 +10,16 @@ namespace rb::core {
 
 // Non-owning view of a contiguous buffer (C++17 has no std::span).
 // A Span must not be stored beyond the call that received it (ADR-011).
+// Invariant: data() may be null only when size() is 0. No member performs
+// pointer arithmetic on a null data pointer.
 template <typename T>
 class Span {
 public:
     constexpr Span() noexcept = default;
-    constexpr Span(T* data, std::size_t size) noexcept : data_(data), size_(size) {}
+    constexpr Span(T* data, std::size_t size) noexcept : data_(data), size_(size)
+    {
+        RB_ASSERT(data != nullptr || size == 0);
+    }
 
     template <std::size_t N>
     constexpr Span(T (&array)[N]) noexcept : data_(array), size_(N)
@@ -43,7 +48,7 @@ public:
     constexpr std::size_t size() const noexcept { return size_; }
     constexpr bool empty() const noexcept { return size_ == 0; }
     constexpr T* begin() const noexcept { return data_; }
-    constexpr T* end() const noexcept { return data_ + size_; }
+    constexpr T* end() const noexcept { return size_ == 0 ? data_ : data_ + size_; }
 
     T& operator[](std::size_t index) const
     {
@@ -60,7 +65,8 @@ public:
     Span subspan(std::size_t offset, std::size_t count) const
     {
         RB_ASSERT(offset <= size_ && count <= size_ - offset);
-        return Span{data_ + offset, count};
+        // A null data_ implies size_ == 0, hence offset == 0: no arithmetic needed.
+        return Span{data_ == nullptr ? data_ : data_ + offset, count};
     }
 
 private:

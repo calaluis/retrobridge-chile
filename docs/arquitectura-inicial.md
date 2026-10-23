@@ -384,8 +384,16 @@ classDiagram
 3. `drive.mount`.
 4. Si `mount` devolvió una fuente desplazada, se cierra con `close`.
 
-**Concurrencia:** la marca no es atómica. Montar y leer quedan serializados en un solo contexto; cómo hacerlo se
-define en H2.
+**Obligaciones de H2** (forman parte del contrato; H1 no las implementa):
+
+1. `ImageRepository` **no cierra ni reutiliza** un slot cuya fuente tenga `isAttached() == true`:
+   - `close` sobre una fuente vinculada es un error de programación y se detiene con `RB_ASSERT`;
+   - `open` nunca entrega una fuente vinculada.
+2. **Montar y leer se serializan.** La marca `attached` no es atómica, así que `mount`, `unmount` y `readSector`
+   de una unidad se ejecutan siempre desde un único contexto (o con la sesión SIO pausada). El mecanismo concreto
+   se decide en H2.
+3. **Las pruebas de contrato lo verifican** (§10.3): ningún cierre ni reutilización de una fuente vinculada, y
+   montaje y lectura serializados según el mecanismo que se elija.
 
 ---
 
@@ -745,7 +753,16 @@ Se escriben una vez como funciones parametrizadas por una fábrica de la impleme
   verifica);
 - lectura de longitud 0.
 
-Cada adaptador nuevo (incluido el futuro TNFS) **debe** pasarla para aceptarse.
+La suite de `ImageRepository` (H2) comprueba además las obligaciones de §3.4:
+
+- mientras la fuente devuelta esté vinculada a un `DiskImage`, su slot no se reutiliza y `open` entrega otro
+  slot o `NoFreeSlot`;
+- `close` sobre una fuente vinculada se detiene con `RB_ASSERT`, verificado con una prueba que espera el aborto;
+- tras desmontar, `close` libera el slot y este puede reutilizarse.
+
+La serialización de montaje y lectura se verifica en las pruebas de `MountDiskImage` y `SioSession` (H2).
+
+Cada adaptador nuevo (incluido el futuro TNFS) **debe** pasar estas suites para aceptarse.
 
 ### 10.4 Integración continua
 

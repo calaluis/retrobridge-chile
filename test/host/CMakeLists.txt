@@ -40,6 +40,10 @@ rb_add_host_test(test_toolchain toolchain/test_toolchain.cpp)
 # rb_core
 rb_add_host_test(test_result core/test_result.cpp)
 rb_add_host_test(test_span core/test_span.cpp)
+# A Span invariant violation must abort through RB_ASSERT.
+add_test(NAME test_span_rejects_null_with_size
+         COMMAND ${CMAKE_COMMAND} -DTEST_BINARY=$<TARGET_FILE:test_span> -DTEST_ARG=--construct-null-with-size
+                 -P ${CMAKE_CURRENT_LIST_DIR}/expect_abort.cmake)
 
 # rb_domain
 rb_add_host_test(test_value_objects domain/test_value_objects.cpp)

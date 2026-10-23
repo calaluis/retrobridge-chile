@@ -4,6 +4,6 @@ include(${CMAKE_CURRENT_LIST_DIR}/../cmake/rb_build_flags.cmake)
 
 idf_component_register(
     SRCS "app_main.cpp"
-    REQUIRES rb_core rb_domain rb_application rb_sio log)
+    REQUIRES rb_core rb_domain rb_application rb_sio rb_file_storage log)
 
 rb_apply_build_flags(${COMPONENT_LIB})

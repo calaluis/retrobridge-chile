@@ -20,6 +20,7 @@ add_subdirectory(${rb_root}/components/rb_core rb_core)
 add_subdirectory(${rb_root}/components/rb_domain rb_domain)
 add_subdirectory(${rb_root}/components/rb_application rb_application)
 add_subdirectory(${rb_root}/components/rb_sio rb_sio)
+add_subdirectory(${rb_root}/components/rb_file_storage rb_file_storage)
 
 # Unity v2.7.0, vendored (D-9). Third-party code: built with its own defaults.
 add_library(unity STATIC unity/src/unity.c)
@@ -29,7 +30,7 @@ enable_testing()
 
 function(rb_add_host_test name)
     add_executable(${name} ${ARGN})
-    target_link_libraries(${name} PRIVATE unity rb_sio)
+    target_link_libraries(${name} PRIVATE unity rb_sio rb_file_storage)
     target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
     rb_apply_build_flags(${name})
     add_test(NAME ${name} COMMAND ${name})
@@ -72,5 +73,24 @@ rb_add_host_test(test_sio_dispatcher sio/test_sio_dispatcher.cpp)
 rb_add_abort_test(test_dispatcher_execute_without_accept_aborts test_sio_dispatcher --execute-without-accept)
 rb_add_host_test(test_sio_session sio/test_sio_session.cpp)
 rb_add_host_test(test_sio_session_allocations sio/test_sio_session_allocations.cpp)
+
+# rb_file_storage (H3a)
+rb_add_host_test(test_image_path storage/test_image_path.cpp)
+
+set(rb_storage_data ${CMAKE_CURRENT_BINARY_DIR}/storage-data)
+file(MAKE_DIRECTORY ${rb_storage_data}/sub)
+rb_add_host_test(test_stdio_storage storage/test_stdio_storage.cpp)
+target_compile_definitions(test_stdio_storage PRIVATE RB_TEST_DATA_DIR="${rb_storage_data}")
+
+# Meta A on the host: images and manifest generated at test time by the
+# independent Python oracle (nothing is stored in the repository).
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+set(rb_test_images ${CMAKE_CURRENT_BINARY_DIR}/test-images)
+add_test(NAME generate_atr_images
+         COMMAND ${Python3_EXECUTABLE} -I ${rb_root}/tools/make_atr.py --out ${rb_test_images})
+set_tests_properties(generate_atr_images PROPERTIES FIXTURES_SETUP atr_images)
+rb_add_host_test(test_meta_a storage/test_meta_a.cpp)
+target_compile_definitions(test_meta_a PRIVATE RB_TEST_IMAGES_DIR="${rb_test_images}")
+set_tests_properties(test_meta_a PROPERTIES FIXTURES_REQUIRED atr_images)
 rb_add_abort_test(test_repository_close_attached_aborts test_port_contracts --close-attached-source)
 rb_add_abort_test(test_mailbox_reply_without_request_aborts test_drive_mailbox --reply-without-request)

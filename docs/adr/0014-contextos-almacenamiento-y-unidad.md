@@ -73,3 +73,13 @@ visibilidad de memoria del traspaso dependen de la implementación del buzón en
   unidad no configurada);
 - que un slot vinculado no se reutiliza;
 - con pruebas que esperan un aborto: `close` sobre una fuente vinculada y `putReply` sin una solicitud tomada.
+
+## Nota H3 (2026-10-23, H3-6 y H3-7)
+
+- **Diagnóstico:** pertenece al contexto de almacenamiento. Usa su propio `DiskImage`, abierto y cerrado allí, y
+  nunca el `DriveBay`.
+- **Comandos de consola que recorren el camino completo** (`drive mount`, `drive read`, H3b): ejecutan
+  `MountDiskImage` → `ApplyDriveRequest` → `CollectDriveReply` → `ReadSector` **en secuencia y en una sola tarea**,
+  como las pruebas de host. No se crean tareas adicionales ni mutex.
+- **Separación real de los contextos:** llega en H5, con la tarea SIO y la cola RTOS, y se verifica con los
+  criterios de aceptación de este ADR.

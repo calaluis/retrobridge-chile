@@ -42,6 +42,18 @@ Result<uint16_t> VirtualDrive::readSector(SectorNumber sector, Span<uint8_t> out
     return result;
 }
 
+Result<uint16_t> VirtualDrive::validateRead(SectorNumber sector) const noexcept
+{
+    if (!disk_) {
+        return Failure{ErrorCode::NoDiskMounted};
+    }
+    const DiskGeometry& geometry = disk_->geometry();
+    if (!geometry.contains(sector)) {
+        return Failure{ErrorCode::SectorOutOfRange};
+    }
+    return geometry.sizeOf(sector);
+}
+
 DriveStatus VirtualDrive::status() const noexcept
 {
     // v1 is read-only: every drive reports write protection.

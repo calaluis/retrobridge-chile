@@ -4,13 +4,16 @@
 # for the host tests.
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/rb_build_flags.cmake)
 
-set(rb_srcs "src/build_checks.cpp")
+set(rb_srcs
+    "src/build_checks.cpp"
+    "src/sio_command_dispatcher.cpp")
 
 if(ESP_PLATFORM)
-    idf_component_register(SRCS ${rb_srcs} REQUIRES rb_application)
+    idf_component_register(SRCS ${rb_srcs} INCLUDE_DIRS "include" REQUIRES rb_application)
     rb_apply_build_flags(${COMPONENT_LIB})
 else()
     add_library(rb_sio STATIC ${rb_srcs})
+    target_include_directories(rb_sio PUBLIC include)
     target_link_libraries(rb_sio PUBLIC rb_application)
     rb_apply_build_flags(rb_sio)
 endif()

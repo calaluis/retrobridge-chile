@@ -63,5 +63,12 @@ rb_add_host_test(test_drive_mailbox application/test_drive_mailbox.cpp)
 rb_add_host_test(test_drive_bay application/test_drive_bay.cpp)
 rb_add_host_test(test_drive_lifecycle application/test_drive_lifecycle.cpp)
 rb_add_abort_test(test_drive_bay_invalid_count_aborts test_drive_bay --invalid-drive-count)
+
+# rb_sio
+rb_add_host_test(test_sio_checksum sio/test_sio_checksum.cpp)
+rb_add_host_test(test_command_frame sio/test_command_frame.cpp)
+rb_add_host_test(test_status_frame_encoder sio/test_status_frame_encoder.cpp)
+rb_add_host_test(test_sio_dispatcher sio/test_sio_dispatcher.cpp)
+rb_add_abort_test(test_dispatcher_execute_without_accept_aborts test_sio_dispatcher --execute-without-accept)
 rb_add_abort_test(test_repository_close_attached_aborts test_port_contracts --close-attached-source)
 rb_add_abort_test(test_mailbox_reply_without_request_aborts test_drive_mailbox --reply-without-request)

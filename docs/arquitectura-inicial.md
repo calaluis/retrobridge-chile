@@ -3,10 +3,12 @@
 > Estado: **APROBADA** (2026-10-23): decisiones D-1 a D-13 aprobadas tal como se proponen en §12.
 > Implementación:
 > - **H0** (PR #1, fusionado en `main`, `6b18e41`): esqueleto ESP-IDF, componentes iniciales, pruebas de host y CI.
-> - **H1** (rama `h1-dominio`, en revisión): `rb_core` y dominio Atari XL/XE (objetos de valor, `AtrLayout`,
->   `DiskImage`, `VirtualDrive`). Incluye la enmienda del ADR-002 (puertos de salida del dominio, §5.1) y las reglas
->   de propiedad de §3.4.
-> - Aún **no** se han implementado SIO, casos de uso ni adaptadores. No se ha realizado ningún flasheo de hardware.
+> - **H1** (PR #2, fusionado en `main`, `81dc471`): `rb_core` y dominio Atari XL/XE (objetos de valor, `AtrLayout`,
+>   `DiskImage`, `VirtualDrive`), enmienda del ADR-002 y reglas de propiedad de §3.4.
+> - **H2a** (rama `h2a-aplicacion`, en revisión): capa de aplicación y recursos. Incluye `ImageLocation`,
+>   `ImageRepository` y `DriveMailbox`, `DriveBay` y los casos de uso en dos contextos (ADR-014).
+> - Aún **no** se han implementado el protocolo SIO (H2b), la sesión (H2c) ni adaptadores. No se ha realizado ningún
+>   flasheo de hardware.
 > Fecha: 2026-10-23. Reemplaza a la v0.1 del mismo día.
 > Repositorio: `calaluis/retrobridge-chile` (privado por ahora). Licencia: GPL-3.0-only (ADR-013).
 > Las firmas de clases que aparecen aquí son **notación de diseño**, no implementación.
@@ -324,8 +326,9 @@ classDiagram
 
 **`DiskImage`** (entidad)
 
-- Identidad: en H1 forma parte del agregado `VirtualDrive` y no tiene identidad propia. Su `ImageLocation` (ruta en
-  la SD hoy, URL TNFS mañana) se agrega en H2, junto con `ImageRepository` (H1-2).
+- Identidad: forma parte del agregado `VirtualDrive` y no tiene identidad propia. Su `ImageLocation` (ruta en la SD
+  hoy, URL TNFS mañana) la guarda `DriveBay` junto a cada unidad, no `DiskImage` (H2-10). Así las interfaces de H1
+  no cambian.
 - Solo se crea con `DiskImage::open(ImageByteSource&)`, que lee y valida la cabecera (H1-1).
 - Invariantes:
   - Geometría y disposición son coherentes con el tamaño de la fuente.
@@ -377,23 +380,28 @@ classDiagram
 | 3. Duplicar referencias al copiar | `DiskImage` no es copiable; `Result<DiskImage>` tampoco. Se comprueba en compilación. | `static_assert` en `test_disk_image.cpp`; `test_move_transfers_the_attachment` |
 | 4. Usar una fuente liberada o reutilizada | Una fuente solo queda desvinculada cuando ningún `DiskImage` la referencia. Tras `unmount`, la unidad ya no la toca. Un `DiskImage` movido devuelve `InvalidDiskImage` sin leer. | `test_unmounted_source_is_never_read_again`, `test_moved_from_image_refuses_reads`, `test_destruction_detaches_the_source` |
 
-**Ciclo de vida completo** (lo implementa `MountDiskImage` en H2):
+**Ciclo de vida completo** (implementado en H2a, ADR-014). Hay dos contextos, cada uno dueño de sus recursos:
 
-1. `open` en el repositorio.
-2. `DiskImage::open`; si falla, se cierra la fuente.
-3. `drive.mount`.
-4. Si `mount` devolvió una fuente desplazada, se cierra con `close`.
+| Paso | Contexto | Acción |
+|---|---|---|
+| 1 | Almacenamiento | `MountDiskImage`: `repository.open(location)`, luego `DiskImage::open`. Si falla, cierra la fuente y termina. |
+| 2 | Almacenamiento | `mailbox.submit(DriveRequest::mount(...))`. Con `MailboxBusy`, desvincula el `DiskImage`, cierra la fuente y termina (montaje cancelado). |
+| 3 | Unidad | `ApplyDriveRequest`: `bay.mount(...)`. Si tiene éxito, la fuente desplazada va en `displaced`; si la unidad no existe, el disco se desvincula y su fuente va en `rejected`. Envía `putReply`. No usa el repositorio. |
+| 4 | Almacenamiento | `CollectDriveReply`: cierra `displaced` y `rejected`. Cada uno llega exactamente una vez y ya desvinculado. |
 
-**Obligaciones de H2** (forman parte del contrato; H1 no las implementa):
+El desmontaje sigue los mismos pasos 2–4 con `DriveRequest::unmount`.
 
-1. `ImageRepository` **no cierra ni reutiliza** un slot cuya fuente tenga `isAttached() == true`:
-   - `close` sobre una fuente vinculada es un error de programación y se detiene con `RB_ASSERT`;
-   - `open` nunca entrega una fuente vinculada.
-2. **Montar y leer se serializan.** La marca `attached` no es atómica, así que `mount`, `unmount` y `readSector`
-   de una unidad se ejecutan siempre desde un único contexto (o con la sesión SIO pausada). El mecanismo concreto
-   se decide en H2.
-3. **Las pruebas de contrato lo verifican** (§10.3): ningún cierre ni reutilización de una fuente vinculada, y
-   montaje y lectura serializados según el mecanismo que se elija.
+**Obligaciones de H2, implementadas en H2a:**
+
+1. `ImageRepository` **no cierra ni reutiliza** un slot cuya fuente tenga `isAttached() == true`. Su interfaz
+   pública no virtual (H2-11) aplica `RB_ASSERT` en `close` y verifica que `open` nunca entregue una fuente vinculada.
+2. **Montar y leer se serializan:** todo acceso a `DriveBay` ocurre en el contexto de la unidad. La parte lenta del
+   montaje ocurre en el contexto de almacenamiento, así que no bloquea el bus.
+3. **Las pruebas lo verifican** (§10.3): suites de contrato, ciclo de vida con montajes cancelados o rechazados, y
+   pruebas que esperan el aborto.
+
+**Dimensionamiento:** para reemplazar un disco sin desmontarlo antes, el repositorio necesita al menos
+**unidades + 1** slots.
 
 ---
 
@@ -403,19 +411,15 @@ Los casos de uso son **clases concretas** sin interfaz propia (ADR-009). Depende
 
 | Caso de uso | Entrada | Salida | Puertos usados | Contexto de ejecución |
 |---|---|---|---|---|
-| `MountDiskImage` | `DriveNumber`, `ImageLocation` | `Result<DiskGeometry>` | `ImageRepository`, `ImageByteSource` | Arranque o consola; **fuera** de la ruta crítica SIO |
-| `GetDriveStatus` | `DriveNumber` | `Result<DriveStatus>` | — | Tarea SIO |
-| `ReadSector` | `DriveNumber`, `SectorNumber`, `Span<uint8_t>` de salida | `Result<size_t>` (bytes escritos) | `ImageByteSource`, a través de `DiskImage` | Tarea SIO, **después** del ACK |
+| `MountDiskImage` | `DriveNumber`, `ImageLocation` | `Result<MountReport>` (geometría y discrepancias D-8) | `ImageRepository`, `DriveMailbox` | Almacenamiento |
+| `UnmountDiskImage` | `DriveNumber` | `Result<void>` | `DriveMailbox` | Almacenamiento |
+| `CollectDriveReply` | — | `optional<DriveOutcome>` | `ImageRepository`, `DriveMailbox` | Almacenamiento |
+| `ApplyDriveRequest` | — | `bool` (si aplicó una solicitud) | `DriveMailbox` | Unidad, entre transacciones SIO |
+| `GetDriveStatus` | `DriveNumber` | `Result<DriveStatus>` | — | Unidad |
+| `ReadSector` | `DriveNumber`, `SectorNumber`, `Span<uint8_t>` de salida | `Result<uint16_t>` (bytes escritos) | `ImageByteSource`, a través de `DiskImage` | Unidad, **después** del ACK |
 
-`MountDiskImage` realiza estos pasos:
-
-1. `repository.open(location)` → fuente.
-2. Lee la cabecera de 16 bytes.
-3. `AtrLayout::parse`.
-4. Construye `DiskImage`.
-5. `drive.mount(image)`.
-
-Si falla cualquier paso, libera el slot de la fuente y devuelve el error; la unidad queda como estaba.
+El montaje se divide entre los dos contextos de ADR-014 (§3.4). Si falla cualquier paso, la fuente se cierra
+exactamente una vez y la unidad queda como estaba. Una unidad no configurada responde `DriveNotConfigured`.
 
 ### 4.1 De comando SIO a caso de uso y de vuelta (procesamiento en dos fases)
 
@@ -448,26 +452,73 @@ sequenceDiagram
   T->>A: bytes por DATA IN
 ```
 
-**Fase 1 — `accept(frame)`** (rápida, sin E/S):
+**Fase 1 — `accept(frame)`** (rápida, sin E/S; D-4 revisada por H2-4, ADR-005):
 
-- Checksum inválido → `Ignore`: no se responde, según el texto del manual (D-4).
-- ID que no corresponde a ninguna unidad montada en el `DriveBay` → `Ignore`, y la línea queda en alta
+- Checksum inválido → `Ignore`: no se responde.
+- ID que no corresponde a ninguna unidad configurada en el `DriveBay` → `Ignore`, y la línea queda en alta
   impedancia.
 - Comando no soportado para D1 (incluidos `W`, `P` y `!` en la v1) → `Nak`.
-- Parámetros inválidos (sector 0) → `Accepted`, y el error se reporta en la fase 2 como `ERROR`.
+- Parámetros inválidos detectables sin E/S (sector 0 o mayor que la geometría montada) → `Nak`, sin fase 2. Se
+  consulta con `VirtualDrive::validateRead`, un método const que se agrega en H2b.
+- READ con la unidad vacía → `Accepted`, y en la fase 2 `Error` con 128 bytes en cero. Es una decisión de diseño
+  parecida a las unidades tipo 1050 [ALT tabla 55]; la 810 no detecta la falta de disco.
 
 **Fase 2 — `execute(buffer)`** (puede hacer E/S):
 
 - Éxito → `Complete` + trama de datos.
-- Error de dominio o de almacenamiento → `Error` + trama de datos. Hay que confirmar si el Atari espera la trama de
-  datos después de `ERROR` (D-4).
+- Fallo de ejecución → `Error`.
+  - Si el comando es de **lectura**, va seguido de la trama de datos (ADR-005, H2-5), con ceros.
+  - Si el comando es inmediato o de escritura, `Error` va solo.
 
 **Por qué dos fases:** el ACK debe salir dentro de los 16 ms de t2, mientras que el COMPLETE tiene un margen de
 segundos (t5, según el controlador). Separarlas permite que una futura fuente lenta (TNFS) lea **después** del ACK
 sin cambiar el dominio ni los casos de uso (ADR-005).
 
 `GetDriveStatus` sigue el mismo camino. En la fase 2 se obtiene `DriveStatus`, `StatusFrameEncoder` lo convierte
-en 4 bytes y se devuelve `Complete` + 4 bytes + CHK. La respuesta a STATUS sobre una unidad vacía depende de D-5.
+en 4 bytes y se devuelve `Complete` + 4 bytes + CHK, también con la unidad vacía (§4.2).
+
+### 4.2 Trama de STATUS (H2-6/H2-7, se implementa en H2b)
+
+**Campos documentados** [ATARI fig. 5-19; ALT tabla 44 y §10.9]:
+
+- **Byte 0, estado de la unidad:**
+  - D0: última trama de comando con fallo.
+  - D1: última trama de datos con fallo.
+  - D2: PUT fallido.
+  - D3: fallo **por** protección contra escritura.
+  - D4: motor girando.
+  - D5: doble densidad (256 bytes) y D7: densidad media (1040×128). Ambos vienen solo de ALT y los introdujeron
+    unidades posteriores a la 810.
+- **Byte 1:** estado del FDC, invertido en la 810: un 0 indica error.
+- **Byte 2:** timeout del formateo, en unidades de 64/60 s.
+- **Byte 3:** sin uso.
+
+**Valores provisionales:**
+
+| Campo | Valor | Estado |
+|---|---|---|
+| Byte 1, normal | `$FF` | [DOC] 810 (ALT tabla 54) |
+| Byte 1, operación anterior fallida | `$EF` ("record not found") | [DIS] sobre un valor [DOC] de la 810 |
+| Byte 1, sin disco | `$7F` ("not ready") | [DIS] al estilo de la 1050; la 810 no detecta la falta de disco |
+| Byte 2 | `$E0` (≈ 4 min NTSC) | [DOC] valor por defecto de la 810; solo se usa para el formateo |
+| D5 / D7 | Según la geometría; con la unidad vacía, 0 | [DOC] ALT |
+| D4 | 0 (no hay motor) | [DIS] |
+| D0 | 1 tras un NAK a D1 | [HIP] |
+| **D3** | **Por revisar antes de H2b:** indica una escritura fallida por protección, no "disco de solo lectura". No se activará de forma permanente sin justificación. | Pendiente |
+
+**Sin disco frente a error anterior:**
+
+- Sin disco es un estado: byte 1 = `$7F`, sin bits de densidad.
+- Error anterior es un hecho pasado: hay disco, byte 1 = `$EF`, y vuelve a `$FF` tras la siguiente lectura
+  correcta.
+
+**Qué es propio de la 810 y qué queda pendiente:**
+
+- **Propio de la 810:** NAK por sector inválido, `$FF`/`$EF`, `$E0` y que no detecta la falta de disco.
+- **Pendiente para XL/XE y otras unidades:** los timeouts del SO XL ([ATARI] da 7 s para el 400/800; ALT menciona
+  `$0F` ≈ 16–19 s), el comportamiento sin disco, D0 y el contenido de los datos en un ERROR.
+
+Se valida en H6/H7.
 
 ---
 
@@ -480,13 +531,16 @@ en 4 bytes y se devuelve `Complete` + 4 bytes + CHK. La respuesta a STATUS sobre
   - Los demás viven en `rb_application/include/rb/app/ports/`.
 - **Forma:** son interfaces con métodos virtuales puros y destructor protegido no virtual. No se destruyen
   polimórficamente, así que no hace falta destructor virtual.
+  - **Excepción, `ImageRepository` (H2-11):** su API pública (`open`/`close`) no es virtual y aplica las
+    obligaciones de §3.4. Los adaptadores implementan `doOpen`/`doClose`, y `doClose` debe ser idempotente.
 - **Estado:** no tienen estado, salvo la marca `attached` de `ImageByteSource`, que solo gestiona `DiskImage`
   (§3.4).
 
 | Puerto | Dirección | Firma (notación) | Por qué existe |
 |---|---|---|---|
 | `ImageByteSource` | Saliente | `uint32_t size() const` · `Result<void> readAt(uint32_t offset, Span<uint8_t> out)` | Separa el dominio del medio. Es **el** punto de extensión para TNFS. |
-| `ImageRepository` | Saliente | `Result<ImageByteSource*> open(const ImageLocation&)` · `void close(ImageByteSource*)` | Abrir y cerrar requiere conocer el medio (FATFS, TNFS). Slots fijos, sin heap. |
+| `ImageRepository` | Saliente | `Result<ImageByteSource*> open(const ImageLocation&)` · `void close(ImageByteSource*)` | Abrir y cerrar requiere conocer el medio (FATFS, TNFS). Slots fijos, sin heap. Solo se usa desde el contexto de almacenamiento. |
+| `DriveMailbox` | Entre contextos (ADR-014) | Almacenamiento: `submit(DriveRequest&)`, `takeReply()`. Unidad: `takeRequest()`, `putReply(DriveReply)` | Traspasa montajes y desmontajes al contexto de la unidad sin bloquear el bus. Un intercambio en curso; `submit` solo consume la solicitud si tiene éxito. |
 | `Clock` | Saliente | `uint64_t nowMicros() const` · `void waitUntil(uint64_t micros)` | Permite probar t2/t5 con un reloj falso. |
 | `SioTransport` | Saliente (desde `SioSession`) | `Result<FrameBytes> waitCommandFrame()` · `Result<void> send(Span<const uint8_t>)` · `void releaseDataLine()` | Aísla UART, GPIO e ISR para probar la secuencia con un transporte simulado. |
 
@@ -638,6 +692,7 @@ Cada ADR tendrá su archivo en `docs/adr/`. Resumen:
 | **011** | Memoria estática en la ruta SIO: búferes propiedad de `SioSession`, slots fijos en repositorios, sin `new`, `std::vector` ni `std::string` después de la inicialización. | Asignación por solicitud. | Determinismo y ausencia de fragmentación. Se verifica midiendo el heap (§9.2). |
 | **012** | Desarrollo independiente con trazabilidad de fuentes; **sin** afirmación de sala limpia. | Declarar sala limpia. | No podemos demostrarla dada la experiencia previa (§0.2). |
 | **013** | Código propio bajo GPL-3.0-only (`LICENSE`), con `THIRD_PARTY_NOTICES.md` (terceros) separado. | Licencia propietaria (versión inicial de este ADR); GPL-3.0 o posterior; un solo archivo. | Proyecto personal de afición y aprendizaje; dependencias compatibles con GPLv3; obligaciones de atribución claras. |
+| **014** | Contextos de almacenamiento y de unidad, cada uno dueño de sus recursos, con traspaso por `DriveMailbox`. El montaje lento ocurre fuera del contexto de la unidad, que lo aplica en O(1). | Montaje dentro de la sesión SIO; mutex sobre `DriveBay`. | No bloquea el bus (t2) aunque abrir una imagen tarde segundos (TNFS), y no hay carreras de datos. |
 
 **Justificación de las interfaces principales:**
 
@@ -803,8 +858,8 @@ quedan aprobadas como política y se completan con documentación o medición en
 | D-1 | Nombre de la entidad raíz | `VirtualDrive` en vez de `VirtualDisk` (ADR-008) |
 | D-2 | Tipo de resultado | `Result<T>` propio y mínimo en `rb_core`, sin dependencia externa (alternativa: `tl::expected`, licencia CC0) |
 | D-3 | Mecanismo de los puertos | Virtuales desde contexto de tarea; plantillas solo si las mediciones lo exigen (ADR-006) |
-| D-4 | Política de errores SIO | Checksum malo o ID ajeno → silencio; comando no soportado → NAK; error de ejecución → ERROR + trama de datos. **Confirmar con documentación y medición** si el Atari espera la trama de datos tras ERROR |
-| D-5 | Respuesta a STATUS | Significado bit a bit tomado de documentación pública de la 810/1050, registrado antes de H6; y qué responder con la unidad vacía (NAK o STATUS con "sin disco") |
+| D-4 | Política de errores SIO | **Revisada por H2-4/H2-5 (2026-10-23):** checksum malo o ID ajeno → silencio; comando no soportado o parámetros inválidos detectables sin E/S → NAK; fallo de ejecución → ERROR, seguido de la trama de datos solo en los comandos de lectura (ADR-005, §4.1). Fuentes: listado del SO de Atari y *Altirra Hardware Reference Manual* §9 y §10.9. |
+| D-5 | Respuesta a STATUS | **Precisada por H2-6/H2-7:** tabla de §4.2, que separa lo documentado de lo provisional. Con la unidad vacía, COMPLETE con byte 1 = `$7F`. El bit D3 se revisa antes de H2b. Validación física en H6/H7. |
 | D-6 | Imágenes DD con sectores de arranque de 256 bytes | Rechazarlas en la v1 con un error claro (alternativa: detectarlas por el tamaño del archivo) |
 | D-7 | Geometría mínima | `sectorCount ≥ 1` (alternativa: `≥ 3` para garantizar el sector de arranque) |
 | D-8 | Cabecera ATR que no coincide con el tamaño real | Prevalece el tamaño real, con advertencia en el registro |
@@ -834,6 +889,16 @@ quedan aprobadas como política y se completan con documentación o medición en
   https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/gpio.html
 - Espressif, ESP-IDF Programming Guide — *Running Applications on Host* (objetivo `linux`, en preview):
   https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/host-apps.html
+
+**Documentación de hardware de referencia** (es documentación, no código de emulador; compatible con ADR-012):
+
+- Avery Lee, *Altirra Hardware Reference Manual*, edición 2026-01-02:
+  - §9: protocolo SIO, NAK, Complete, Error y la trama de datos tras Error.
+  - §10.2: tabla 44, trama de STATUS.
+  - §10.8: tablas 54 y 55, estado del FDC y comportamiento sin disco.
+  - §10.9: Atari 810.
+
+  https://www.virtualdub.org/downloads/Altirra%20Hardware%20Reference%20Manual.pdf
 
 **Secundarias (solo contexto):**
 

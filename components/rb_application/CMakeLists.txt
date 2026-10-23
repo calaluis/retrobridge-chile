@@ -9,7 +9,10 @@ set(rb_srcs
     "src/image_location.cpp"
     "src/drive_bay.cpp"
     "src/mount_disk_image.cpp"
-    "src/apply_drive_request.cpp")
+    "src/apply_drive_request.cpp"
+    "src/diagnostics/latency_stats.cpp"
+    "src/diagnostics/verify_sectors.cpp"
+    "src/diagnostics/benchmark_reads.cpp")
 
 if(ESP_PLATFORM)
     idf_component_register(SRCS ${rb_srcs} INCLUDE_DIRS "include" REQUIRES rb_domain)

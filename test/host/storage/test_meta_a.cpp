@@ -10,6 +10,7 @@
 #include <cstring>
 #include <optional>
 
+#include "rb/app/diagnostics/verify_sectors.hpp"
 #include "rb/app/image_location.hpp"
 #include "rb/domain/disk_image.hpp"
 #include "rb/storage/stdio_image_repository.hpp"
@@ -148,6 +149,43 @@ static void test_every_sector_crc_matches_the_manifest(void)
     TEST_ASSERT_EQUAL_size_t(0, repository.open_count());
 }
 
+// VerifySectors (H3b), the diagnostic the console runs on the ESP32, must
+// report exactly the manifest's CRCs over real files.
+static void test_verify_sectors_matches_the_manifest(void)
+{
+    struct ManifestSink final : rb::app::SectorCrcSink {
+        std::array<uint32_t, 1441> expected{};
+        unsigned matched = 0;
+        unsigned errors = 0;
+        void onSector(uint16_t sector, uint16_t, uint32_t crc) override
+        {
+            TEST_ASSERT_EQUAL_HEX32(expected[sector], crc);
+            ++matched;
+        }
+        void onReadError(uint16_t, rb::core::ErrorCode) override { ++errors; }
+    } sink;
+
+    std::FILE* manifest = open_csv("manifest.csv");
+    std::array<char, 256> line{};
+    while (std::fgets(line.data(), static_cast<int>(line.size()), manifest) != nullptr) {
+        char name[32] = {};
+        unsigned sector = 0, offset = 0, length = 0, crc = 0;
+        TEST_ASSERT_EQUAL_INT(5, std::sscanf(line.data(), "%31[^,],%u,%u,%u,%x", name, &sector, &offset, &length, &crc));
+        if (std::strcmp(name, "dd-1440") == 0) {
+            sink.expected[sector] = crc;
+        }
+    }
+    std::fclose(manifest);
+
+    StdioImageRepository<1> repository{RB_TEST_IMAGES_DIR};
+    rb::app::VerifySectors verify{repository, rb::test::crc32};
+    const auto report = verify.execute(ImageLocation::from("dd-1440.atr").value(), sink).value();
+    TEST_ASSERT_EQUAL_UINT32(1440, report.sectors);
+    TEST_ASSERT_EQUAL_UINT32(0, report.readErrors);
+    TEST_ASSERT_EQUAL_UINT(1440, sink.matched);
+    TEST_ASSERT_EQUAL_size_t(0, repository.open_count());
+}
+
 static void test_crc32_reference_vector(void)
 {
     const char* check = "123456789";
@@ -160,5 +198,6 @@ int main(void)
     RUN_TEST(test_crc32_reference_vector);
     RUN_TEST(test_geometry_matches_the_generator);
     RUN_TEST(test_every_sector_crc_matches_the_manifest);
+    RUN_TEST(test_verify_sectors_matches_the_manifest);
     return UNITY_END();
 }

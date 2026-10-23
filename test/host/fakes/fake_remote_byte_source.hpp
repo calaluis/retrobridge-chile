@@ -37,6 +37,9 @@ public:
         if (offset > size_ || out.size() > size_ - offset) {
             return rb::core::Failure{rb::core::ErrorCode::OutOfBounds};
         }
+        if (reads_ > successful_reads_) {
+            return rb::core::Failure{rb::core::ErrorCode::IoError};
+        }
         for (uint32_t i = 0; i < out.size(); ++i) {
             const uint32_t at = offset + i;
             out[i] = at < header_.size() ? header_[at] : FakeByteSource::data_byte(at);
@@ -45,6 +48,8 @@ public:
     }
 
     void set_latency(uint64_t latencyUs) { latency_us_ = latencyUs; }
+    // Reads after the first `count` fail with IoError (simulated removal or media error).
+    void fail_reads_after(unsigned count) { successful_reads_ = count; }
     void set_hook(Hook hook, void* context)
     {
         hook_ = hook;
@@ -61,6 +66,7 @@ private:
     Hook hook_ = nullptr;
     void* hook_context_ = nullptr;
     unsigned reads_ = 0;
+    unsigned successful_reads_ = UINT32_MAX;
     uint64_t last_read_started_at_ = 0;
 };
 

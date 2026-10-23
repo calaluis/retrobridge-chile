@@ -1,0 +1,16 @@
+menu "RetroBridge Chile"
+
+    choice RB_BOARD
+        prompt "Board profile"
+        default RB_BOARD_UNCONFIRMED
+        help
+            Hardware profile of the ESP32 board (H3-11). Only an unconfirmed
+            profile exists until the real board is identified and its pinout,
+            power and level shifting are verified (Annex A, H3c/H4). With it the
+            firmware initialises no microSD bus, no board GPIO and no SIO signal.
+
+        config RB_BOARD_UNCONFIRMED
+            bool "Unconfirmed (hardware not validated: storage and SIO disabled)"
+    endchoice
+
+endmenu

@@ -11,10 +11,15 @@
 >   `StatusFrameEncoder`, `SioCommandDispatcher`, y `VirtualDrive::validateRead`/`geometry`.
 > - **H2c** (PR #5, fusionado en `main`, `7f56f4f`): `SioSession`, puertos `Clock` y `SioTransport`, recuperación
 >   ante errores de transporte (`SioCommandDispatcher::abandon`) y temporización simulada.
-> - **H3a** (rama `h3a-almacenamiento`, en revisión): adaptador de archivos portable `rb_file_storage` (ADR-015),
+> - **H3a** (PR #6, fusionado en `main`, `0e1c6be`): adaptador de archivos portable `rb_file_storage` (ADR-015),
 >   herramientas `make_atr.py` y `compare_crc.py`, y Meta A en el host.
-> - Aún **no** se han implementado el montaje de la microSD, la consola ni los adaptadores UART/GPIO. No se ha
->   realizado ningún flasheo de hardware.
+> - **H3b** (rama `h3b-diagnostico-plataforma`, en revisión):
+>   - diagnóstico portable (`InspectImage`, `VerifySectors`, `BenchmarkReads`, `LatencyStats`);
+>   - `rb_board` (perfil `RB_BOARD_UNCONFIRMED` por defecto y validador de GPIO);
+>   - `InlineDriveMailbox`;
+>   - `rb_esp_platform`, `rb_esp_storage` (montaje bloqueado sin placa confirmada) y `rb_console`, que en el ESP32
+>     solo se compilan.
+> - Aún **no** se han implementado los adaptadores UART/GPIO del SIO. No se ha realizado ningún flasheo de hardware.
 > Fecha: 2026-10-23. Reemplaza a la v0.1 del mismo día.
 > Repositorio: `calaluis/retrobridge-chile` (privado por ahora). Licencia: GPL-3.0-only (ADR-013).
 > Las firmas de clases que aparecen aquí son **notación de diseño**, no implementación.

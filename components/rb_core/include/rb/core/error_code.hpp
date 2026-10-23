@@ -47,6 +47,11 @@ enum class ErrorCode : uint8_t {
     // SIO transport (H2c)
     Timeout,
     TransportError,
+
+    // Board and storage platform (H3b)
+    BoardNotConfirmed,
+    InvalidPinAssignment,
+    StorageNotMounted,
 };
 
 }  // namespace rb::core

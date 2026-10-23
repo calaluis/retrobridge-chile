@@ -12,20 +12,22 @@ using rb::board::kNoPin;
 namespace PinWarning = rb::board::PinWarning;
 using rb::board::SdInterface;
 using rb::board::SdSpiPins;
+using rb::board::SpiHost;
 using rb::board::unconfirmed_profile;
 using rb::board::validate_for_storage;
 using rb::core::ErrorCode;
 
 namespace {
 
-BoardProfile spi_board(SdSpiPins pins, bool psram = false, int8_t card_detect = kNoPin)
+BoardProfile spi_board(SdSpiPins pins, bool psram = false, int8_t card_detect = kNoPin, SpiHost host = SpiHost::Spi2)
 {
-    return BoardProfile{"test-fixture", true, psram, SdInterface::Spi, pins, card_detect};
+    return BoardProfile{"test-fixture", true, psram, SdInterface::Spi, pins, host, card_detect};
 }
 
 BoardProfile sdmmc_board(SdInterface width)
 {
-    return BoardProfile{"test-fixture", true, false, width, SdSpiPins{kNoPin, kNoPin, kNoPin, kNoPin}, kNoPin};
+    return BoardProfile{"test-fixture", true, false, width, SdSpiPins{kNoPin, kNoPin, kNoPin, kNoPin}, SpiHost::None,
+                        kNoPin};
 }
 
 ErrorCode rejection(const BoardProfile& profile)
@@ -109,6 +111,13 @@ static void test_missing_duplicate_and_nonexistent_pins_are_rejected(void)
     TEST_ASSERT_TRUE(rejection(spi_board(SdSpiPins{18, 23, 19, 20})) == ErrorCode::InvalidPinAssignment);  // no GPIO20
 }
 
+static void test_spi_requires_a_valid_host(void)
+{
+    TEST_ASSERT_TRUE(validate_for_storage(spi_board(SdSpiPins{18, 23, 19, 21}, false, kNoPin, SpiHost::Spi3)).ok());
+    TEST_ASSERT_TRUE(rejection(spi_board(SdSpiPins{18, 23, 19, 21}, false, kNoPin, SpiHost::None)) ==
+                     ErrorCode::InvalidPinAssignment);
+}
+
 static void test_confirmed_board_without_storage_interface(void)
 {
     TEST_ASSERT_TRUE(rejection(sdmmc_board(SdInterface::None)) == ErrorCode::InvalidPinAssignment);
@@ -139,6 +148,7 @@ int main(void)
     RUN_TEST(test_psram_pins_are_rejected_only_with_psram);
     RUN_TEST(test_input_only_pins_cannot_drive_outputs);
     RUN_TEST(test_missing_duplicate_and_nonexistent_pins_are_rejected);
+    RUN_TEST(test_spi_requires_a_valid_host);
     RUN_TEST(test_confirmed_board_without_storage_interface);
     RUN_TEST(test_sdmmc_uses_the_fixed_slot1_pins_of_the_esp32);
     return UNITY_END();

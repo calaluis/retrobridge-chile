@@ -26,8 +26,10 @@ Result<void> SdCardStorage::mount(const BoardProfile& profile)
     esp_err_t err = ESP_FAIL;
     switch (profile.sdInterface) {
     case SdInterface::Spi:
-        err = rb_sd_mount_spi(kMountPoint, profile.spi.sck, profile.spi.mosi, profile.spi.miso, profile.spi.cs,
-                              profile.cardDetect, kMaxOpenFiles, &card_);
+        // The validator only accepts Spi2 or Spi3 for SPI profiles.
+        err = rb_sd_mount_spi(kMountPoint, profile.spiHost == rb::board::SpiHost::Spi3 ? RB_SD_SPI3 : RB_SD_SPI2,
+                              profile.spi.sck, profile.spi.mosi, profile.spi.miso, profile.spi.cs, profile.cardDetect,
+                              kMaxOpenFiles, &card_);
         break;
     case SdInterface::Sdmmc1Bit:
         err = rb_sd_mount_sdmmc(kMountPoint, 1, kMaxOpenFiles, &card_);

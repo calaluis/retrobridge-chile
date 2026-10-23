@@ -4,13 +4,27 @@ menu "RetroBridge Chile"
         prompt "Board profile"
         default RB_BOARD_UNCONFIRMED
         help
-            Hardware profile of the ESP32 board (H3-11). Only an unconfirmed
-            profile exists until the real board is identified and its pinout,
-            power and level shifting are verified (Annex A, H3c/H4). With it the
-            firmware initialises no microSD bus, no board GPIO and no SIO signal.
+            Hardware profile of the ESP32 board (H3-11). The default is the
+            unconfirmed profile: the firmware then initialises no microSD bus,
+            no board GPIO and no SIO signal. No profile ever configures SIO pins
+            (hardware gate H4).
 
         config RB_BOARD_UNCONFIRMED
             bool "Unconfirmed (hardware not validated: storage and SIO disabled)"
+
+        config RB_BOARD_FUJINET_ATARI_V1X
+            bool "FujiNet Atari ESP32, FN32ROV-1.3/1.5 (microSD over SPI only)"
+            help
+                microSD in SPI mode on GPIO 18 (CLK), 23 (MOSI), 19 (MISO) and
+                5 (CS, strapping pin), using SPI3_HOST (VSPI), as drawn in the
+                public schematics FN32ROV-1.3-Q24 and FN32ROV-1.5-Q24
+                (docs/hardware/fujinet-atari-v1x.md).
+
+                Select it only after reading the board silkscreen and checking
+                that the revision and pinout match. Revision 1.6 and later add
+                card detect on GPIO15 and are not covered. Flashing requires a
+                verified 16 MB backup and explicit authorization
+                (docs/hardware/procedimiento-instalacion-recuperacion.md).
     endchoice
 
 endmenu

@@ -34,6 +34,10 @@
 >   pinout y adaptación eléctrica verificados en el esquema 1.3, riesgos, procedimiento de medición pasiva y
 >   checklist (`docs/hardware/h4-puerta-sio.md`); diseño preliminar de H5 solo recepción
 >   (`docs/diseno/h5-escucha-solo-recepcion.md`).
+> - **H4, diagnóstico autónomo** (rama `feature/h4-diagnostico-autonomo`, en revisión): componente puro
+>   `rb_hw_diag` (reinicios, watchdog, memoria, microSD, errores de lectura, latencias y eventos) con el adaptador
+>   `EspSystemProbe` y el comando de consola `diag`; sin GPIO del SIO ni ADC
+>   (`docs/diseno/h4-diagnostico-autonomo.md`).
 > - Aún **no** se han implementado los adaptadores UART/GPIO del SIO, y el SIO no se ha probado con un Atari.
 > Fecha: 2026-10-23. Reemplaza a la v0.1 del mismo día.
 > Repositorio: `calaluis/retrobridge-chile` (privado por ahora). Licencia: GPL-3.0-only (ADR-013).

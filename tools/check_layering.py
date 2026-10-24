@@ -22,6 +22,7 @@ PURE_LAYERS = {
     "rb_application": ("rb/core/", "rb/domain/", "rb/app/"),
     "rb_sio": ("rb/core/", "rb/domain/", "rb/app/", "rb/sio/"),
     "rb_board": ("rb/core/", "rb/board/"),
+    "rb_hw_diag": ("rb/core/", "rb/hwdiag/"),  # autonomous diagnostics: no Atari domain, no ESP-IDF
 }
 
 FORBIDDEN_PLATFORM = re.compile(

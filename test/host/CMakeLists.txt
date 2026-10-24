@@ -22,6 +22,7 @@ add_subdirectory(${rb_root}/components/rb_application rb_application)
 add_subdirectory(${rb_root}/components/rb_sio rb_sio)
 add_subdirectory(${rb_root}/components/rb_file_storage rb_file_storage)
 add_subdirectory(${rb_root}/components/rb_board rb_board)
+add_subdirectory(${rb_root}/components/rb_hw_diag rb_hw_diag)
 
 # Unity v2.7.0, vendored (D-9). Third-party code: built with its own defaults.
 add_library(unity STATIC unity/src/unity.c)
@@ -103,5 +104,20 @@ rb_add_host_test(test_board_profile board/test_board_profile.cpp)
 target_link_libraries(test_board_profile PRIVATE rb_board)
 rb_add_host_test(test_fujinet_profile board/test_fujinet_profile.cpp)
 target_link_libraries(test_fujinet_profile PRIVATE rb_board)
+# rb_hw_diag (H4, autonomous diagnostics)
+rb_add_host_test(test_event_log hwdiag/test_event_log.cpp)
+target_link_libraries(test_event_log PRIVATE rb_hw_diag)
+rb_add_host_test(test_diagnostics_recorder hwdiag/test_diagnostics_recorder.cpp)
+target_link_libraries(test_diagnostics_recorder PRIVATE rb_hw_diag)
+set(rb_diag_sample ${CMAKE_CURRENT_BINARY_DIR}/diag-report-sample.txt)
+rb_add_host_test(test_report_writer hwdiag/test_report_writer.cpp)
+target_link_libraries(test_report_writer PRIVATE rb_hw_diag)
+target_compile_definitions(test_report_writer PRIVATE RB_DIAG_SAMPLE_FILE="${rb_diag_sample}")
+set_tests_properties(test_report_writer PROPERTIES FIXTURES_SETUP diag_sample)
+# The firmware's report format, checked by the independent PC tool.
+add_test(NAME check_diag_report_sample
+         COMMAND ${Python3_EXECUTABLE} -I ${rb_root}/tools/check_diag_report.py ${rb_diag_sample})
+set_tests_properties(check_diag_report_sample PROPERTIES FIXTURES_REQUIRED diag_sample)
+
 rb_add_abort_test(test_repository_close_attached_aborts test_port_contracts --close-attached-source)
 rb_add_abort_test(test_mailbox_reply_without_request_aborts test_drive_mailbox --reply-without-request)

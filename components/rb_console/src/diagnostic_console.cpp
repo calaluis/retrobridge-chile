@@ -14,6 +14,7 @@
 #include "esp_rom_crc.h"
 #include "rb/app/diagnostics/latency_stats.hpp"
 #include "rb/esp/memory_snapshot.hpp"
+#include "rb/hwdiag/report_writer.hpp"
 
 namespace rb::console {
 
@@ -30,8 +31,6 @@ ConsoleContext* g_context = nullptr;  // set once before the REPL starts
 
 // Benchmark samples: fixed storage, no allocation (H3-12).
 std::array<uint32_t, 2048> g_latency_samples{};
-
-constexpr uint32_t kSectorReadBudgetUs = 5000;  // architecture §9.3 / H3-12
 
 const char* error_name(ErrorCode error)
 {
@@ -54,6 +53,16 @@ const char* error_name(ErrorCode error)
     case ErrorCode::StorageNotMounted: return "StorageNotMounted";
     default: return "Error";
     }
+}
+
+const char* error_code_name(uint8_t code)
+{
+    return error_name(static_cast<ErrorCode>(code));
+}
+
+uint64_t now_us()
+{
+    return g_context->clock.nowMicros();
 }
 
 const char* density_name(rb::domain::Density density)
@@ -172,6 +181,8 @@ int cmd_sd(int argc, char** argv)
     const char* action = argc > 1 ? argv[1] : "status";
     if (std::strcmp(action, "mount") == 0) {
         const auto mounted = g_context->storage.mount(g_context->board);
+        g_context->diagnostics.recordMount(mounted.ok(), g_context->storage.lastEspError(),
+                                           mounted.ok() ? 0 : static_cast<uint8_t>(mounted.error()), now_us());
         if (!mounted.ok()) {
             std::printf("mount failed: %s (esp_err 0x%x)\n", error_name(mounted.error()),
                         static_cast<unsigned>(g_context->storage.lastEspError()));
@@ -191,6 +202,9 @@ int cmd_sd(int argc, char** argv)
             return 1;
         }
         const auto unmounted = g_context->storage.unmount();
+        if (unmounted.ok()) {
+            g_context->diagnostics.recordUnmount(now_us());
+        }
         std::printf("%s\n", unmounted.ok() ? "unmounted" : error_name(unmounted.error()));
         return unmounted.ok() ? 0 : 1;
     }
@@ -213,7 +227,10 @@ public:
     void onReadError(uint16_t sector, ErrorCode error) override
     {
         std::printf("ERR %u %s\n", static_cast<unsigned>(sector), error_name(error));
+        lastError = static_cast<uint8_t>(error);
     }
+
+    uint8_t lastError = 0;
 };
 
 int atr_info(const ImageLocation& location)
@@ -245,6 +262,7 @@ int atr_crc(const ImageLocation& location, const char* path)
     }
     std::printf("DONE %s sectors=%" PRIu32 " read_errors=%" PRIu32 "\n", name.data(), report.value().sectors,
                 report.value().readErrors);
+    g_context->diagnostics.recordVerify(report.value().sectors, report.value().readErrors, sink.lastError, now_us());
     return report.value().readErrors == 0 ? 0 : 1;
 }
 
@@ -273,6 +291,9 @@ int atr_bench(const ImageLocation& location, int argc, char** argv)
     // the mode and geometry (H3-12); no claim about the objective is made here.
     std::printf("max %s the %" PRIu32 " us budget in this run\n", s.max <= kSectorReadBudgetUs ? "within" : "EXCEEDS",
                 kSectorReadBudgetUs);
+    g_context->diagnostics.recordBenchmark(
+        rb::hwdiag::LatencyFigures{s.count, s.dropped, s.min, s.mean, s.p50, s.p95, s.p99, s.max}, r.reads,
+        r.readErrors, now_us());
     return 0;
 }
 
@@ -363,6 +384,8 @@ int cmd_drive(int argc, char** argv)
         std::array<uint8_t, 256> buffer{};
         const auto read = g_context->readSector.execute(d1, sector.value(), Span<uint8_t>{buffer});
         if (!read.ok()) {
+            g_context->diagnostics.recordSectorReadError(sector.value().value(), static_cast<uint8_t>(read.error()),
+                                                         now_us());
             std::printf("error: %s\n", error_name(read.error()));
             return 1;
         }
@@ -382,6 +405,36 @@ int cmd_drive(int argc, char** argv)
     }
     std::printf("D1: %s, density %s, last operation %s\n", status.value().diskPresent() ? "disk" : "empty",
                 density_name(status.value().density()), status.value().lastOperationFailed() ? "failed" : "ok");
+    return 0;
+}
+
+// --- diag: autonomous diagnostics (H4) ---------------------------------------------------------------
+
+class ConsoleLineSink final : public rb::hwdiag::LineSink {
+public:
+    void line(const char* text) override { std::printf("%s\n", text); }
+};
+
+int cmd_diag(int argc, char** argv)
+{
+    const char* action = argc > 1 ? argv[1] : "status";
+    ConsoleLineSink sink;
+    rb::hwdiag::ReportWriter writer{sink, error_code_name};
+    const rb::hwdiag::DiagnosticsRecorder& recorder = g_context->diagnostics;
+    if (std::strcmp(action, "status") == 0) {
+        writer.writeStatus(g_context->system.capture(), recorder);
+    } else if (std::strcmp(action, "memory") == 0) {
+        writer.writeMemory(g_context->system.capture());
+    } else if (std::strcmp(action, "storage") == 0) {
+        writer.writeStorage(recorder);
+    } else if (std::strcmp(action, "events") == 0) {
+        writer.writeEvents(recorder);
+    } else if (std::strcmp(action, "report") == 0) {
+        writer.writeReport(g_context->system.capture(), recorder);
+    } else {
+        std::printf("usage: diag status|memory|storage|events|report\n");
+        return 1;
+    }
     return 0;
 }
 
@@ -438,6 +491,10 @@ bool start_diagnostic_console(ConsoleContext& context)
         register_command("drive", "drive mount <path>|unmount|read <n>|status (contexts in sequence, H3-7)",
                          cmd_drive) &&
         register_command("mem", "Show heap figures", cmd_mem) &&
+        register_command("diag",
+                         "diag status|memory|storage|events|report: internal diagnostics (report is CRC-framed; "
+                         "check it with tools/check_diag_report.py)",
+                         cmd_diag) &&
         register_command("crctest", "Check the ROM CRC-32 against the reference vector", cmd_crc_selftest);
     if (!registered) {
         return false;

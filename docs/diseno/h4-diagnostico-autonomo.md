@@ -133,4 +133,5 @@ Se conectaría **solo después de aprobar H4 y H5** (`docs/diseno/h5-escucha-sol
 | Host (Python) | `tools/tests/test_diag_report.py` (CRC, líneas faltantes, capturas incompletas, ruido de consola, formato desconocido); prueba de capas de `rb_hw_diag` |
 | Cruzada | `check_diag_report_sample`: la herramienta de PC verifica el informe generado por el C++ |
 | CI ESP-IDF | El job `esp-idf-build` compila los dos perfiles con el módulo. El job `firmware-package` sigue empaquetando el commit fijado `1b1527d` y no se ve afectado |
-| En el equipo (pendiente, con autorización) | `diag report` por UART0 con el ESP32 aislado, verificado con `tools/check_diag_report.py`; reinicio controlado para comprobar el historial |
+| Paquete H4 (CI) | Job `firmware-package-h4`: artefacto `retrobridge-fw-diag-fujinet-atari-v1x-15b153f`, variante `diag` (marcas del diagnóstico en la aplicación y en el ELF, versión = commit) y modo `verify` en CI (`docs/toolchain.md`) |
+| En el equipo (pendiente, con autorización) | `diag report` por UART0 con el ESP32 aislado, verificado con `tools/check_diag_report.py`; regresión de H3c y reinicio controlado (`docs/hardware/procedimiento-instalacion-recuperacion.md` §6) |

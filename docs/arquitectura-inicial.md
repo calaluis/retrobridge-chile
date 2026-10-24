@@ -34,9 +34,13 @@
 >   pinout y adaptación eléctrica verificados en el esquema 1.3, riesgos, procedimiento de medición pasiva y
 >   checklist (`docs/hardware/h4-puerta-sio.md`); diseño preliminar de H5 solo recepción
 >   (`docs/diseno/h5-escucha-solo-recepcion.md`).
-> - **H4, paquete de diagnóstico** (rama `ci/h4-artefacto-diagnostico`, en revisión): job independiente
+> - **H4, paquete de diagnóstico** (PR #14, fusionado en `main`, `ded3710`): job independiente
 >   `firmware-package-h4`, que empaqueta `15b153f` como `retrobridge-fw-diag-fujinet-atari-v1x-15b153f`; el paquete
 >   H3c no cambia.
+> - **H4, validación física del diagnóstico** (2026-10-24; rama `docs/h4-validacion-fisica-2026-10-24`, en
+>   revisión): firmware `15b153f` (ejecución `40133891881`) en la placa, solo por USB y sin el Atari. `rb_hw_diag`
+>   validado funcionalmente y `diag report` verificado con `check_diag_report.py`
+>   (`docs/mediciones/h4-validacion-diagnostico-2026-10-24.md`). **H4 eléctrico sigue en preparación.**
 > - **H4, diagnóstico autónomo** (PR #13, fusionado en `main`, `7ae22ea`): componente puro
 >   `rb_hw_diag` (reinicios, watchdog, memoria, microSD, errores de lectura, latencias y eventos) con el adaptador
 >   `EspSystemProbe` y el comando de consola `diag`; sin GPIO del SIO ni ADC

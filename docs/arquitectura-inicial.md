@@ -21,11 +21,16 @@
 >     solo se compilan.
 > - **H3c, preparación** (PR #8, fusionado en `main`, `13c708d`):
 >   - identificación del hardware (`docs/hardware/fujinet-atari-v1x.md`). La revisión quedó confirmada después
->     (rama `h3c-identificacion`, en revisión): **FN32ROV-1.3-Q24** con ESP32-WROVER-B, por fotografías;
+>     (PR #9, `1b1527d`): **FN32ROV-1.3-Q24** con ESP32-WROVER-B, por fotografías;
 >   - perfil de microSD `fujinet-atari-v1.3/1.5` (SPI3, sin pines SIO), **no predeterminado**;
 >   - tabla de particiones propia de 16 MB;
->   - procedimiento de instalación y recuperación, sin ejecutar.
-> - Aún **no** se han implementado los adaptadores UART/GPIO del SIO. No se ha realizado ningún flasheo de hardware.
+>   - procedimiento de instalación y recuperación.
+> - **H3c, artefacto de firmware** (PR #10, `d39093a`): job `firmware-package`, que compila y verifica el firmware
+>   `1b1527d` con el perfil de la placa.
+> - **H3c, validación física** (2026-10-24; rama `docs/h3c-validacion-fisica-2026-10-24`, en revisión): firmware
+>   `1b1527d` instalado en la placa con respaldo previo D5/D6; **Meta A cumplida en el equipo** (4 640/4 640 CRC32)
+>   (`docs/mediciones/h3c-validacion-fisica-2026-10-24.md`).
+> - Aún **no** se han implementado los adaptadores UART/GPIO del SIO, y el SIO no se ha probado con un Atari.
 > Fecha: 2026-10-23. Reemplaza a la v0.1 del mismo día.
 > Repositorio: `calaluis/retrobridge-chile` (privado por ahora). Licencia: GPL-3.0-only (ADR-013).
 > Las firmas de clases que aparecen aquí son **notación de diseño**, no implementación.
@@ -803,7 +808,7 @@ Cada ADR tendrá su archivo en `docs/adr/`. Resumen:
 |---|---|---|---|---|
 | COMMAND↑ → inicio del ACK (t2) | 0–16 ms | ≤ 1 ms (D-10) | pendiente (H6) | analizador lógico |
 | Fin del ACK → inicio de COMPLETE (t5) | ≥ 250 µs | 300–500 µs + tiempo de lectura | pendiente (H6/H7) | analizador lógico |
-| Lectura de un sector desde SD | — (dentro de t5) | ≤ 5 ms peor caso | pendiente (H3) | `esp_timer` |
+| Lectura de un sector desde SD | — (dentro de t5) | ≤ 5 ms peor caso | H3c: máximo observado de 3,953 ms en 1 200 lecturas (`atr bench`); falta caracterizar el peor caso (`docs/mediciones/h3c-validacion-fisica-2026-10-24.md`) | `esp_timer` |
 | ISR COMMAND → tarea SIO despierta | — | ≤ 50 µs | pendiente (H5) | GPIO de depuración + analizador |
 | Velocidad real del bus | ~19 200 ± 5 % | medir NTSC y PAL | pendiente (H5) | analizador lógico |
 | t0 / t1 recibidos del Atari | 750–1600 / 650–950 µs | solo se observan | pendiente (H5) | analizador lógico |

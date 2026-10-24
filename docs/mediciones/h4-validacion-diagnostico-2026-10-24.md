@@ -41,9 +41,13 @@ imágenes ATR como el firmware H3c. Diseño del módulo: `docs/diseno/h4-diagnos
 2. **Escritura** [H]: con esptool.py v4.5.1, en DIO, 40 MHz y 16 MB, el bootloader en `0x1000`, la tabla de
    particiones en `0x8000` y la aplicación en `0x10000`. Las tres imágenes devolvieron `Hash of data verified`. No se
    usó `erase_flash`.
-3. **Consola por UART0**, en este orden: `diag status`, `diag memory`,
-   `atr bench retrobridge/h3c/dd-1440.atr rand 100`, `diag storage`, `atr crc retrobridge/h3c/dd-720.atr`,
-   `diag storage`, `diag events` y `diag report`.
+3. **Consola por UART0**, con esta cronología confirmada por el equipo:
+   1. `diag status`, `diag events`, `diag memory` y `diag storage`;
+   2. `diag report`, con **exactamente 2 eventos** registrados (`Boot` y `StorageMounted`);
+   3. `atr bench retrobridge/h3c/dd-1440.atr rand 100`, que agregó `BenchmarkCompleted`. `diag storage` mostró
+      después sus contadores (§4.3);
+   4. `atr crc retrobridge/h3c/dd-720.atr`, que agregó `VerifyCompleted`. `diag storage` lo registró (§4.4);
+   5. `diag events`, con **4 eventos** (§4.5).
 4. **Verificación del informe en el PC** (Windows): `python tools/check_diag_report.py diag-report-15b153f.txt`.
 5. **Ciclo de alimentación controlado**: se desconectó y se volvió a conectar el USB para observar el motivo de
    reinicio (§4.1).
@@ -129,7 +133,7 @@ hecha en H3c con el firmware `1b1527d`.
 | 3 | `BenchmarkCompleted` | `0x00000f81` = **3 969 µs** [V]: coincide con la latencia máxima de §4.3 |
 | 4 | `VerifyCompleted` | — |
 
-El orden coincide con la secuencia de comandos de §3.
+El orden coincide con la cronología de §3: los eventos 3 y 4 se agregaron después de capturar el informe de §4.6.
 
 ### 4.6 Informe verificable (`diag report`) [H][V]
 
@@ -142,11 +146,14 @@ El orden coincide con la secuencia de comandos de §3.
 
 Queda validado el formato, el número de líneas y el CRC-32 de un informe capturado desde el hardware físico.
 
-**Dato por conciliar [V]:** en el formato 1, el informe tiene 11 líneas fijas más una por evento conservado
-(`ReportWriter`), así que **13 líneas corresponden a 2 eventos** en el momento de la captura. `diag events` mostró 4.
-Por eso, el informe verificado probablemente se capturó cuando solo estaban `Boot` y `StorageMounted`, es decir,
-antes del benchmark y de `atr crc` [I]. La captura es privada y no se versiona. Para una próxima sesión se recomienda
-capturar `diag report` al final, guardar la captura y adjuntar su número de líneas.
+**Coherencia con la cronología [H][V]:**
+- El informe se generó cuando había **exactamente 2 eventos** (`Boot` y `StorageMounted`), antes de `atr bench` y
+  de `atr crc` (§3, paso 3.2).
+- En el formato 1 el informe tiene 11 líneas fijas más una por evento conservado (`ReportWriter`): 11 + 2 =
+  **13 líneas**, que es lo declarado y lo verificado.
+- Por eso este informe **no** contiene los contadores del benchmark ni de la verificación ATR. Esos datos vienen de
+  las salidas posteriores de `diag storage` y `diag events` (§4.3–§4.5).
+- La captura es privada y no se versiona.
 
 ## 5. Observaciones
 
@@ -154,7 +161,7 @@ capturar `diag report` al final, guardar la captura y adjuntar su número de lí
 |---|---|---|---|
 | O1 | Primer arranque tras el flasheo con `boot reason=OtherWatchdog` (`ESP_RST_WDT`, "otros watchdogs"). En el arranque siguiente, tras el ciclo de USB: `PowerOn`, sin watchdog | **Causa indeterminada.** No se atribuye a esptool, al firmware ni al hardware sin más evidencia. [I] Posibles líneas de estudio: el reinicio por RTS del auto-reset tras la escritura, un watchdog de arranque de la ROM o del bootloader, u otro motivo | **[P]** Repetir un flasheo controlado y capturar el registro completo de arranque de la ROM (línea `rst:`) y de la aplicación, y varios arranques en frío |
 | O2 | Diferencia de 88 bytes de heap alrededor de un benchmark de 100 lecturas | Medición puntual | **[P]** Seguimiento con más lecturas (H3-13; Meta B en H7) |
-| O3 | Informe de 13 líneas frente a 4 eventos en `diag events` | §4.6: el informe probablemente es de un momento anterior | **[P]** Conciliar en la próxima sesión |
+| O3 | Informe de 13 líneas frente a los 4 eventos que mostró al final `diag events` | **Resuelta por la cronología confirmada** (§3, §4.6): el informe se generó con 2 eventos (11 + 2 = 13 líneas); `BenchmarkCompleted` y `VerifyCompleted` se agregaron después | **Resuelta**: no es una discrepancia |
 
 Siguen abiertas las observaciones de H3c (`h3c-validacion-fisica-2026-10-24.md` §5), entre ellas el
 `flash read err, 1000` del primer encendido de H3c. No hay evidencia de que esté relacionado con O1.
@@ -173,7 +180,7 @@ Siguen abiertas las observaciones de H3c (`h3c-validacion-fisica-2026-10-24.md` 
 | Benchmark y su registro en `diag storage` | Ídem | Aprobada | §4.3 |
 | Lectura ATR y su registro | Ídem | Aprobada | §4.4 |
 | `diag events` | Ídem | Aprobada | §4.5 |
-| `diag report` verificado en el PC | Ídem, §4.1 | Aprobada | §4.6 (con el dato por conciliar O3) |
+| `diag report` verificado en el PC | Ídem, §4.1 | Aprobada | §4.6: 13 líneas y CRC `b83ae52b`, generado con 2 eventos según la cronología confirmada |
 | Comparación de los 720 CRC contra el manifiesto en esta sesión | Procedimiento §6.4 | No ejecutada | Hecha en H3c con `1b1527d` |
 | Regresión completa de H3c (5 imágenes, `drive read`, `seq`) | Procedimiento §6.4 | Parcial | Solo `dd-1440` en modo aleatorio y `dd-720` con `atr crc` |
 | MOTOR CONTROL / GPIO36 (M3a) | `h4-puerta-sio.md` | Pendiente | — |

@@ -17,7 +17,7 @@ H5 solo **escucha**: decodifica las tramas de comando del Atari y mide los tiemp
 | GPIO | Señal | En H5 |
 |---|---|---|
 | 39 | COMMAND (entrada, R11 externa) | **Entrada con interrupción** |
-| 33 | DATA OUT del Atari (entrada) | **RX de UART con pull-up interno** (riesgo R3) |
+| 33 | DATA OUT del Atari (entrada) | **RX de UART.** Pull-up interno: **opción**, sujeta a las mediciones de H4 (riesgo R3) |
 | 21 | DATA IN hacia el Atari | **Nunca se configura** (DATA IN se maneja recién en H6) |
 | 22, 26, 27 | PROCEED, INTERRUPT, CLOCK IN | Nunca se configuran |
 | 25 | AUDIO (DAC) | Nunca se configura |
@@ -25,24 +25,45 @@ H5 solo **escucha**: decodifica las tramas de comando del Atari y mide los tiemp
 | 36 | MOTOR | Sin configurar hasta resolver el riesgo R1 |
 | 35 | SIO_5V (ADC) | **Sin ADC durante la escucha** (errata GPIO-3.11) |
 
-## 2. UART para DATA OUT: UART2
+## 2. UART para DATA OUT: propuesta UART2 (revisable)
 
-- **UART0** queda para la consola de diagnóstico por USB (GPIO1/3) [A].
-- **UART1** y **UART2** son equivalentes para 19 200 baudios: ambas tienen FIFO por hardware y se enrutan a
-  cualquier pin por la matriz GPIO [D]. **Propuesta: UART2.**
-  - Las dos tienen pines por defecto prohibidos en esta placa: UART1 en GPIO9/10 (flash) y UART2 en GPIO16/17
-    (PSRAM del WROVER). Por eso hay que llamar a `uart_set_pin` **explícitamente** y no se puede confiar en los
-    valores por defecto. El validador de `rb_board` ya rechaza 6–11 y 16–17.
-  - Cuando el controlador Bluetooth usa HCI por UART, su UART por defecto es UART1 (`BTDM_CTRL_HCI_UART_NO`,
-    valor 1) [D]. Usar UART2 evita ese cruce si algún día se habilita esa configuración [I].
-- **Configuración propuesta:**
-  - 19 200 baudios nominales, 8N1, sin control de flujo y sin inversión (`h4-puerta-sio.md` §3.2);
-  - `uart_set_pin(UART_NUM_2, <sin TX>, 33, <sin RTS>, <sin CTS>)`;
-  - **pull-up interno explícito en GPIO33**. ESP-IDF resuelve la errata GPIO-3.6 para los pads RTC [D].
+**Periféricos que usa RetroBridge** (firmware `1b1527d` y alcance de la v1, arquitectura §0.1) [A]:
+
+| Recurso | Uso |
+|---|---|
+| UART0 (GPIO1/3, CP2102) | Consola de diagnóstico por USB (`esp_console`) |
+| SPI3 / VSPI | microSD (GPIO 5, 18, 19, 23) |
+| `esp_timer` | Marcas de tiempo y benchmarks |
+| Wi-Fi y Bluetooth | **No se usan** en la v1. TNFS por red queda para después (§5.3) y no usa una UART |
+| PSRAM | Desactivada (fragmento de placa); GPIO16/17 reservados por el perfil |
+
+**Por qué UART2:**
+- Con esos periféricos, **UART1 y UART2 están libres y son técnicamente equivalentes** para recibir a 19 200
+  baudios: las dos tienen FIFO por hardware y se enrutan a cualquier pin por la matriz GPIO [D]. Ninguna razón
+  técnica obliga a elegir una.
+- **La propuesta de UART2 es un criterio de desempate,** no una decisión cerrada:
+  - Las dos tienen pines por defecto que no sirven en esta placa: UART1 en GPIO9/10 (flash) y UART2 en GPIO16/17
+    (PSRAM del WROVER). En los dos casos hay que llamar a `uart_set_pin` **explícitamente**. El validador de
+    `rb_board` ya rechaza 6–11 y 16–17. Este punto no favorece a ninguna.
+  - Si en el futuro se habilitara el Bluetooth con HCI por UART, su UART por defecto sería UART1
+    (`BTDM_CTRL_HCI_UART_NO`, valor 1) [D]. RetroBridge no lo prevé, así que el argumento es menor [I].
+- **Se puede cambiar a UART1 en la revisión de H5** sin afectar al diseño: el número de UART es un parámetro del
+  adaptador y del perfil de placa, no del dominio ni de los puertos.
+
+**Configuración propuesta (para revisar en H5):**
+- 19 200 baudios nominales, 8N1, sin control de flujo y sin inversión (`h4-puerta-sio.md` §3.2).
+- `uart_set_pin(<UART elegida>, <sin TX>, 33, <sin RTS>, <sin CTS>)`.
+- **Pull-up de GPIO33: decisión pendiente.**
+  - El esquema no muestra pull-up y el comportamiento real no está medido (`h4-puerta-sio.md` §3.3).
+  - Si M4/M5 confirman un nivel alto indefinido o un flanco lento, la opción es el pull-up interno. ESP-IDF resuelve
+    la errata GPIO-3.6 para los pads RTC [D].
+  - Esa decisión se toma en H5, con las mediciones.
 - **TX sin asignar:**
   - [P] Hay que verificar en la fuente de ESP-IDF v6.1 que dejar TX sin asignar (`UART_PIN_NO_CHANGE`) no enruta
     U2TXD a ningún pad.
-  - En el equipo, `gpio_dump_io_configuration` debe mostrar que **GPIO21 y GPIO17 no están conectados a U2TXD**.
+  - En el equipo, `gpio_dump_io_configuration` debe mostrar que **GPIO21 no está conectado al TX de la UART
+    elegida**, ni a ninguna otra salida, y que los pines por defecto de esa UART (17 para UART2, 10 para UART1) no se
+    usaron.
 - **ISR del UART en IRAM:**
   - ESP-IDF v6.1 tiene `CONFIG_UART_ISR_IN_IRAM` (desactivado por defecto) [D], y la arquitectura pide la ISR del UART
     en IRAM (§9.1) [A].
@@ -101,7 +122,7 @@ los bytes ya están en el FIFO.
 rb_console (consola: "sio listen", "sio stats")       infraestructura
    └── SioListener / CommandFrameMonitor (rb_sio)     usa: SioTransport, Clock, CommandFrame
          └── puertos rb_app::SioTransport, rb_app::Clock
-               └── EspSioTransport (rb_esp_sio, nuevo)  C: ISR de COMMAND + UART2 RX; C++: adaptador
+               └── EspSioTransport (rb_esp_sio, nuevo)  C: ISR de COMMAND + UART RX (UART2 propuesta); C++: adaptador
 ```
 
 - **`rb_esp_sio` (nuevo, infraestructura):**
@@ -135,9 +156,9 @@ rb_console (consola: "sio listen", "sio stats")       infraestructura
    - el monitor con `ScriptedSioTransport` y `FakeClock`: checksum válido o inválido, `Timeout` y `TransportError`.
 2. **ESP32 sin Atari**, con autorización:
    - el firmware arranca;
-   - `gpio_dump_io_configuration` muestra solo GPIO33 (entrada con pull-up) y GPIO39 (entrada con interrupción)
-     entre los pines del SIO, y **GPIO21 sin configurar**;
-   - IO33 en reposo en alto con el pull-up (línea base de M5).
+   - `gpio_dump_io_configuration` muestra solo GPIO33 (entrada, con o sin pull-up según lo decidido) y GPIO39
+     (entrada con interrupción) entre los pines del SIO, y **GPIO21 sin configurar**;
+   - el nivel de IO33 en reposo se compara con la línea base de M5.
 3. **Atari falso (I-3), con autorización:**
    - adaptador USB-serie de **3,3 V** en J1: pin 5 (DATA OUT), pin 7 (COMMAND) y GND;
    - las entradas del 74LS07 aceptan 3,3 V (VIH ≥ 2,0 V) y el adaptador solo debe absorber 0,2 mA en bajo;
@@ -162,7 +183,8 @@ rb_console (consola: "sio listen", "sio stats")       infraestructura
 | P1 | H4 aprobado (checklist) | `h4-puerta-sio.md` §7 |
 | P2 | `esp_timer_get_time`, el cambio de tipo de interrupción y la notificación son seguros desde la ISR en IRAM | Fuente y documentación de ESP-IDF v6.1 |
 | P3 | `UART_PIN_NO_CHANGE` no enruta U2TXD; efecto de `uart_set_pin` sobre el pull-up de RX | Fuente de ESP-IDF v6.1 y `gpio_dump_io_configuration` |
-| P4 | Flanco de subida de IO33 con pull-up interno a 19 200 baudios | Osciloscopio (M5) |
+| P4 | Nivel en reposo y flanco de subida de IO33 sin configurar; necesidad y tipo de pull-up | Osciloscopio (M4, M5); decisión en la revisión de H5 |
+| P8 | UART definitiva (UART2 propuesta, o UART1) | Revisión de H5 |
 | P5 | Velocidad real NTSC/PAL y su tolerancia | Analizador (M5) |
 | P6 | Umbral del filtro de COMMAND | Medición de t0 y de la duración de COMMAND (M5) |
 | P7 | Aprobación del cambio `CONFIG_UART_ISR_IN_IRAM=y` | Revisión de H5 |

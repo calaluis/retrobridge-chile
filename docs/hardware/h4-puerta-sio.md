@@ -28,7 +28,7 @@ Sigue el ADR-012: solo documentación pública de hardware y de fabricantes. No 
 | Pinout SIO | — | Las 10 asignaciones de §2, contra el esquema [E] | Continuidad física (procedimiento, M0) |
 | Adaptación de niveles | — | 74LS07, pull-ups y polaridades (§3) [E][D] | Niveles en reposo y en uso (M1–M5) |
 | Alimentación | Funciona por USB [C] | Diodos OR, Q2/Q3 y VCC_BUF (§4) [E] | VCC, VCC_BUF y corriente del pin 10 (M1–M3, M6) |
-| MOTOR (GPIO36) | — | Conexión directa, sin buffer (§3.4) [E] | **Tensión real de MOTOR CONTROL** (M4) |
+| MOTOR (GPIO36) | — | Conexión directa, sin buffer (§3.4) [E] | **Tensión real de MOTOR CONTROL, medida en el Atari solo** (M3a, punto de detención) |
 | Protocolo SIO | Lógica pura en el host (H2) | Tiempos del manual (arquitectura §1, §9.3) [M] | Velocidad, t0 y t1 reales (H5) |
 | Puertos de software | `SioTransport`, `Clock`, `SioSession` y `SioCommandDispatcher`, con pruebas de host (H2) | — | `EspSioTransport` (H5) |
 
@@ -80,7 +80,7 @@ Es un buffer hexagonal **no inversor** con salidas de **colector abierto** que s
 | IIH / IIL | 20 µA / −0,2 mA |
 | VOL | 0,4 V a 16 mA; 0,7 V a 40 mA |
 | Corriente de fuga de salida a 30 V | 0,25 mA máx. |
-| ICC máx. | 14 mA (salidas altas) / 45 mA (salidas bajas) |
+| ICCH / ICCL máx. | 14 mA / 45 mA, **por circuito integrado**, en las condiciones de la hoja de datos: VCC máximo y **todas** las salidas en alto (ICCH) o **todas** en bajo (ICCL). Son límites de peor caso, no consumo típico |
 
 **Funcionamiento de una salida de colector abierto:**
 - Con la entrada en **bajo**, el transistor de salida conduce y lleva la línea a bajo.
@@ -97,31 +97,40 @@ Así, el 74LS07 **traduce 5 V → 3,3 V** hacia el ESP32 sin que ningún nivel d
 | Señal | En el bus SIO [M] | En el GPIO | Consecuencia |
 |---|---|---|---|
 | COMMAND− | Alto en reposo, **bajo durante la trama de comando** | Igual: alto (3,3 V por R11) en reposo y bajo con la trama | El inicio de la trama es un **flanco descendente** en GPIO39 |
-| DATA OUT | Serie asíncrona, reposo en alto (marca) | Igual, **pero solo si GPIO33 tiene pull-up** (§3.3) | UART sin inversión (`uart_set_line_inverse` no hace falta) |
+| DATA OUT | Serie asíncrona, reposo en alto (marca) | Misma polaridad. Con el bus en marca, la salida del 74LS07 queda abierta, y el nivel alto en IO33 depende de lo que haya en ese nodo: el esquema no muestra pull-up (§3.3) | UART sin inversión (`uart_set_line_inverse` no hace falta) |
 | DATA IN | Serie, reposo en alto (marca), colector abierto del periférico | GPIO21 alto = línea **liberada**; GPIO21 bajo = línea **a bajo** | El reposo de un TX UART (alto) libera la línea; un GPIO21 en bajo **bloquearía el bus** |
 
 **Un nivel alto del ESP32 no es un nivel alto del bus:**
 - En DATA IN, un alto en GPIO21 solo **abre** el transistor del 74LS07. El nivel alto del bus lo pone el pull-up del
   Atari; la 1.5 agrega R16 de 4,7 k a SIO_5V, y la 1.3 no tiene ninguno.
-- En las entradas, el alto en el GPIO lo pone R11 (COMMAND) o el pull-up que configure el firmware (DATA OUT y
-  CLOCK OUT).
+- En las entradas, el alto en el GPIO lo pone R11 (COMMAND). En DATA OUT y CLOCK OUT, el esquema no muestra
+  resistencia; el nivel real se mide en H4 y la solución, si hace falta, se decide en H5 (§3.3).
 
 ### 3.3 Pull-ups y pull-downs
 
 | Línea | 1.3 [E] | 1.5 [E1.5] | Implicación |
 |---|---|---|---|
 | IO39 (COMMAND, lado ESP32) | R11 de 10 k a 3V3 | R12 de 10 k a 3V3 | Reposo definido en alto, incluso con U3 sin alimentación |
-| IO33 (DATA OUT, lado ESP32) | **ninguno** | **ninguno** | Sin pull-up, la línea **flota** cuando el bus está en marca. **H5 debe activar el pull-up interno de GPIO33** (unos 45 kΩ [D]) o se recibirá basura |
-| IO32 (CLOCK OUT, lado ESP32) | ninguno | ninguno | No se usa en modo asíncrono; se deja sin configurar |
+| IO33 (DATA OUT, lado ESP32) | **ninguno dibujado** | **ninguno dibujado** | Ver el análisis debajo de esta tabla |
+| IO32 (CLOCK OUT, lado ESP32) | ninguno dibujado | ninguno dibujado | No se usa en modo asíncrono; se deja sin configurar |
 | SIO_DATAIN (lado bus) | **ninguno** | R16 de 4,7 k a SIO_5V | En la 1.3, el alto de DATA IN depende solo del Atari; sin Atari, la línea flota |
 | IO36 (MOTOR) | R2 de 10 k a GND | R3 de 10 k a GND | Bajo sin Atari; el nivel alto depende del Atari (§3.4) |
 | microSD | sin pull-ups | R17–R19 de 10 k | Ver `fujinet-atari-v1x.md` §3 |
 
-**Sobre el pull-up interno de GPIO33 [D][I]:**
+**IO33 e IO32: qué se sabe y qué no**
+
+| Nivel | Contenido |
+|---|---|
+| **Hecho en el esquema [E]** | En la 1.3 y en la 1.5 no hay ninguna resistencia dibujada entre IO33 (o IO32) y una alimentación. La única carga visible es la salida de colector abierto del 74LS07, que solo puede llevar la línea a bajo |
+| **Comportamiento real [P]** | Desconocido hasta medirlo (M4, M5). Puede haber elementos que el esquema no muestra, y el estado del pad del ESP32 depende de su configuración |
+| **Hipótesis [I]** | Si el pad queda sin pull-up y la salida del 74LS07 está abierta (bus en marca), la entrada podría quedar **flotante**, con un nivel indefinido que una UART podría interpretar mal. Es una hipótesis, **no una conclusión** |
+| **Decisión futura (H5)** | Si la medición confirma un nivel alto indefinido o un flanco lento, una opción es el pull-up interno de GPIO33 (unos 45 kΩ [D]). La decisión, su valor y su verificación pertenecen a **H5**, con medición previa; H4 no la toma |
+
+Datos técnicos para esa decisión [D][I]:
 - GPIO32 y GPIO33 son pads RTC. La errata **GPIO-3.6** indica que sus pull-ups solo se controlan por registros
   RTC; los controladores GPIO de ESP-IDF ≥ 2.1 lo resuelven solos.
-- Con unos 45 kΩ y una capacidad estimada de 10–20 pF, la constante de tiempo es de 0,5–0,9 µs, frente a un bit de
-  unos 52 µs a 19 200 baudios. Parece suficiente, pero **hay que medir el flanco de subida** (M5).
+- Estimación, no medición: con unos 45 kΩ y 10–20 pF supuestos, la constante de tiempo sería de 0,5–0,9 µs, frente
+  a un bit de unos 52 µs a 19 200 baudios.
 - Un pull-up externo sería una modificación de hardware, fuera del alcance de RetroBridge.
 
 ### 3.4 MOTOR: conexión directa a GPIO36 [E][M][D]
@@ -129,10 +138,16 @@ Así, el 74LS07 **traduce 5 V → 3,3 V** hacia el ESP32 sin que ningún nivel d
 - SIO_MCTL llega a IO36 **sin buffer ni divisor**, solo con R2 de 10 k a GND.
 - El manual de Atari solo dice "alto = encendido" y **no especifica la tensión**.
 - El ESP32 admite como máximo **VDD + 0,3 V (unos 3,6 V)** en sus entradas [D].
-- **[P] Antes de cualquier uso de GPIO36 hay que medir la tensión máxima de MOTOR CONTROL** con el Atari
-  encendiendo el motor del casete (M4).
-- [C] La placa ya funcionó con este Atari durante las pruebas WSS sin daño aparente, pero eso no demuestra que el
-  nivel esté dentro del margen.
+- **[P] Punto de detención:** la primera medición del nivel alto de MOTOR CONTROL se hace **en el Atari solo, con
+  la FujiNet desconectada del SIO** (procedimiento, etapa M3a), con el motor del casete encendido y un osciloscopio
+  para ver también los picos.
+  - No se conectan los dos equipos para descubrir después que la tensión supera el límite del ESP32.
+  - Con la FujiNet **apagada** pero conectada, un nivel alto en IO36 también podría entrar por las protecciones del
+    pin [I]; por eso la condición vale aunque la placa esté apagada.
+- **Si la señal puede superar los niveles admisibles del ESP32, no se autoriza ninguna conexión** de la FujiNet al
+  Atari hasta diseñar, revisar y validar una mitigación aprobada.
+- [C] La placa ya funcionó con este Atari durante las pruebas WSS sin daño aparente. Eso **no** demuestra que el
+  nivel esté dentro del margen ni sustituye a la medición.
 - RetroBridge no necesita MOTOR en la v1, que no emula casete.
 
 ### 3.5 GPIO 34–39 y erratas del ESP32 [D]
@@ -168,11 +183,18 @@ Así, el 74LS07 **traduce 5 V → 3,3 V** hacia el ESP32 sin que ningún nivel d
     (DMP2035U, canal P, R14 de 10 k a VCC) y Q2 entrega **VCC_BUF = VCC** a U3 y U4.
   - Sin +3V3 (S5 apagado), Q2 queda abierto, los 74LS07 se quedan sin alimentación, sus salidas quedan abiertas y
     el bus queda **aislado** del ESP32.
-- **[I] Tensión de los 74LS07:** VCC_BUF ≈ VCC = 5 V menos la caída del Schottky (unos 0,3–0,4 V), es decir, unos
-  4,6–4,7 V, **por debajo de los 4,75 V mínimos recomendados** por TI. Hay que medirlo (M1).
-- **Corriente del pin 10:** está especificado en **50 mA** [M], y solo los dos 74LS07 pueden consumir hasta
-  2 × 45 mA [D], más el ESP32. **[I] Alimentar la placa solo desde el SIO probablemente excede la especificación de
-  Atari.** Durante H4/H5: **siempre por USB**. Hay que medir el reparto de corriente con las dos fuentes (M6).
+- **Tensión de los 74LS07, estimación [I], no medición:** VCC_BUF ≈ VCC = 5 V menos la caída del Schottky y de Q2.
+  Con una caída supuesta de unos 0,3–0,4 V, quedaría en unos 4,6–4,7 V, **posiblemente por debajo de los 4,75 V
+  mínimos recomendados** por TI. El valor real depende de la tensión del USB, de la corriente y de los componentes.
+  **Solo la medición (M1) dirá si el riesgo existe**; hasta entonces es un riesgo por confirmar (R7).
+- **Corriente del pin 10:**
+  - Está especificado en **50 mA** [M].
+  - Los 45 mA del 74LS07 son el **máximo de la hoja de datos con todas las salidas en bajo y VCC máximo** [D]. No son
+    el consumo permanente de la placa: en reposo las entradas de los buffers están en alto y la referencia es ICCH
+    (máx. 14 mA por circuito), al que se suma el consumo del ESP32, que esta revisión no midió.
+  - [I] Aun así, la suma ESP32 + buffers + microSD probablemente supera los 50 mA, así que alimentar la placa
+    **solo** desde el SIO podría exceder la especificación de Atari.
+  - Durante H4/H5: **siempre por USB**. El consumo real y su reparto entre USB y SIO se miden en M6.
 - **Atari apagado con la FujiNet encendida por USB:**
   - [I] Las entradas del 74LS07 verán las líneas del Atari sin alimentación, probablemente en bajo, y entonces
     **IO39 indicará COMMAND activo**. H5 debe tolerar un COMMAND bajo permanente sin bloquearse.
@@ -188,13 +210,13 @@ Así, el 74LS07 **traduce 5 V → 3,3 V** hacia el ESP32 sin que ningún nivel d
 
 | # | Riesgo | Causa | Impacto | Prevención | Verificación |
 |---|---|---|---|---|---|
-| R1 | Sobretensión en GPIO36 | MOTOR directo a IO36 sin divisor; nivel de Atari desconocido | Daño del ESP32 | No usar MOTOR; medir antes con el ESP32 desconectado del bus si es posible | M4 [P] |
+| R1 | Sobretensión en GPIO36 | MOTOR directo a IO36 sin divisor; nivel de Atari desconocido | Daño del ESP32 | **Medir primero en el Atari solo, con la FujiNet desconectada; sin conexión si supera el límite** hasta tener una mitigación validada; no usar MOTOR en la v1 | M3a [P], punto de detención |
 | R2 | Bus bloqueado en bajo | GPIO21 configurado en bajo (o TX mal enrutado) | El Atari no puede comunicarse con ningún periférico | H5 sin TX; verificar con `gpio_dump_io_configuration` que GPIO21 no está asignado | Revisión de código y M5 |
-| R3 | Recepción de basura en DATA OUT | IO33 sin pull-up externo | Tramas corruptas | Pull-up interno en GPIO33 (H5); medir el flanco | M5 [P] |
+| R3 | Posible recepción errónea en DATA OUT [I] | El esquema no muestra pull-up en IO33; el comportamiento real no está medido | Tramas corruptas, si la hipótesis se confirma | Medir nivel y flanco; decidir en H5 (por ejemplo, el pull-up interno) | M4, M5 [P] |
 | R4 | Flancos falsos de COMMAND | Errata GPIO-3.11 (ADC) | Tramas fantasma | Sin ADC durante la escucha; filtro por duración | Pruebas de host y M5 |
 | R5 | Interrupciones perdidas | Errata GPIO-3.14 (flanco en el grupo 32–39) | COMMAND perdido | Interrupción por nivel emulando flancos | Pruebas de host y M5 |
-| R6 | Sobrecarga del pin 10 del Atari | Placa alimentada desde el SIO (límite de 50 mA) | Caída del +5 V del Atari | Alimentar siempre por USB en H4/H5 | M6 [P] |
-| R7 | 74LS07 fuera del rango de VCC | Caída en D4/D5 y Q2 | Márgenes reducidos | Medir VCC_BUF con carga | M1 [P] |
+| R6 | Sobrecarga del pin 10 del Atari [I] | Placa alimentada desde el SIO (límite de 50 mA); consumo real no medido | Caída del +5 V del Atari | Alimentar siempre por USB en H4/H5 | M6 [P] |
+| R7 | 74LS07 posiblemente por debajo de 4,75 V [I] | Caída estimada en D4/D5 y Q2 (estimación, no medición) | Márgenes de entrada y salida reducidos | Medir VCC_BUF con carga | M1 [P] |
 | R8 | Lazos de masa | PC y Atari en distintas tomas | Ruido, errores o daño | Misma toma, o portátil con batería | Procedimiento §2 |
 | R9 | Daño de un instrumento | Sonda de 3,3 V en una línea de 5 V | Daño del instrumento o de la placa | Usar solo instrumentos con tolerancia a 5 V confirmada, u osciloscopio con sonda 10× | Procedimiento §1 |
 | R10 | Descarga electrostática por USB | La 1.3 no tiene TVS | Daño del CP2102 o del ESP32 | Pulsera antiestática; conectar primero la masa | — |
@@ -223,13 +245,15 @@ Así, el 74LS07 **traduce 5 V → 3,3 V** hacia el ESP32 sin que ningún nivel d
 
 H4 se aprueba **solo** cuando todos los puntos estén marcados y el equipo firme la revisión:
 
+- [ ] **MOTOR CONTROL medido en el Atari solo, con la FujiNet desconectada, incluidos sus picos:** dentro de lo
+      que admite un pin del ESP32, o mitigación aprobada y validada. **Sin esto no hay conexión** (M3a).
 - [ ] Continuidad de J1 a U3/U4 y a los GPIO de §2, y paso de J1 a J2, con la placa desenergizada (M0).
 - [ ] R11, R2, R4/R5 y su relación con IO39, IO36 e IO35 comprobadas (M0).
 - [ ] VCC, VCC_BUF y +3V3 medidos solo con USB, con S5 encendido y apagado (M1, M2).
 - [ ] Aislamiento: con S5 apagado, VCC_BUF ≈ 0 V y las líneas del bus no son forzadas por la placa (M2, M3).
 - [ ] Niveles en reposo de COMMAND, DATA IN y DATA OUT con el Atari encendido y el firmware sin configurar el SIO
       (M3, M4).
-- [ ] **Tensión máxima de MOTOR CONTROL ≤ 3,6 V en IO36**, o decisión explícita de mitigación (M4).
+- [ ] IO36 en reposo con los dos equipos conectados, solo después de M3a (M4).
 - [ ] +5 V del pin 10 y reparto de corriente con USB y SIO a la vez; sin retroalimentación hacia el Atari (M6).
 - [ ] Observación pasiva de COMMAND y DATA OUT con un instrumento de tolerancia a 5 V confirmada: velocidad del bus,
       polaridad y forma del flanco en IO33 (M5).

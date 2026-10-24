@@ -1,7 +1,8 @@
 # Procedimiento de medición pasiva del SIO (H4): FujiNet FN32ROV-1.3-Q24
 
 > **NO EJECUTAR sin autorización explícita para cada etapa.** Ninguna medición está hecha: todos los resultados
-> están **pendientes**. Las etapas que conectan el Atari (M3–M6) requieren una autorización aparte.
+> están **pendientes**. M3a (Atari solo) requiere una autorización aparte. Las etapas que conectan la FujiNet al
+> Atari (M3–M6) requieren además que **M3a haya pasado su punto de detención**.
 >
 > Análisis eléctrico: `h4-puerta-sio.md`. El firmware en la placa (`1b1527d`) no configura ningún GPIO del SIO.
 > **No se flashea ni se reconfigura nada para medir.**
@@ -32,9 +33,14 @@
 - **Con USB y SIO a la vez,** D4 y D5 hacen un OR: alimenta la fuente de mayor tensión, sin retroalimentación
   esperada. Aun así, en H4 y H5 **la placa se alimenta siempre por USB**, porque el pin 10 del Atari solo garantiza
   50 mA (riesgo R6).
-- **Orden recomendado:**
+- **Orden recomendado,** aplicable **solo después de aprobar M3a** (§3):
   - al encender: Atari apagado → conectar el SIO → USB a la FujiNet (S5 encendido) → encender el Atari;
   - al apagar: Atari → USB → desconectar el SIO.
+
+> **Punto de detención MOTOR.** MOTOR CONTROL llega **directo a GPIO36**, sin buffer ni divisor (`h4-puerta-sio.md`
+> §3.4). Por eso la FujiNet **no se conecta al SIO del Atari** (ni encendida ni apagada) hasta que M3a haya medido,
+> **en el Atari solo**, que el nivel alto de MOTOR no supera lo que admite un pin del ESP32. Si la señal puede
+> superar ese límite, **no se autoriza ninguna conexión** hasta diseñar y validar una mitigación aprobada.
 
 ## 3. Etapas
 
@@ -63,8 +69,8 @@ Sin USB, sin Atari y con S5 apagado.
 | Medición | Esperado | Criterio |
 |---|---|---|
 | +3V3 | unos 3,3 V | 3,2–3,4 V |
-| VCC (cátodo de D4) | unos 4,6–4,7 V [I] | Registrar el valor |
-| VCC_BUF (U3/U4, pin 14) | ≈ VCC | **Comparar con el mínimo de 4,75 V del 74LS07** (riesgo R7) |
+| VCC (cátodo de D4) | Estimación: unos 4,6–4,7 V [I] | Registrar el valor medido; la estimación no lo sustituye |
+| VCC_BUF (U3/U4, pin 14) | ≈ VCC | **Comparar con el mínimo de 4,75 V del 74LS07** (riesgo R7, por confirmar) |
 | IO39 (U3, pin 2) | unos 3,3 V (R11, U3 con entrada flotante en alto) | Alto |
 | IO36 | unos 0 V (R2) | Bajo |
 | IO35 | unos 0 V (sin SIO_5V) | Bajo |
@@ -77,7 +83,29 @@ Sin USB, sin Atari y con S5 apagado.
 | VCC | Presente (USB por D4) |
 | VCC_BUF | **unos 0 V** (Q2 abierto) |
 
-### M3. Atari encendido, FujiNet apagada (S5 apagado, sin USB), con autorización
+### M3a. Atari solo, FujiNet desconectada del SIO: nivel de MOTOR y reposo del bus (punto de detención)
+
+Con autorización. **La FujiNet no está conectada al Atari.** Se mide en el conector SIO del propio Atari, o en un
+cable SIO de prueba sin ningún periférico, respecto de GND (pin 4 o 6).
+
+| Medición | Instrumento | Esperado | Criterio |
+|---|---|---|---|
+| Pin 8 (MOTOR) en reposo | Multímetro u osciloscopio con sonda 10× | Bajo [M] | Registrar el valor |
+| **Pin 8 (MOTOR) con el motor del casete encendido** (por ejemplo, una operación de casete desde el Atari) | **Osciloscopio con sonda 10×**: ver el nivel estable y cualquier pico | Desconocido: el manual solo dice "alto = encendido" [M] | **Punto de detención (abajo)** |
+| Pin 10 (+5V/READY) | Multímetro | unos 5 V | Registrar el valor |
+| Pines 7 (COMMAND), 5 (DATA OUT) y 3 (DATA IN) en reposo | Multímetro u osciloscopio | Altos (pull-ups del Atari) | Registrar el valor |
+
+**Punto de detención:**
+- **Seguir** solo si el nivel alto de MOTOR medido, **incluidos sus picos**, queda claramente por debajo de lo que
+  admite un pin del ESP32, que la hoja de datos fija en VDD + 0,3 V (unos 3,6 V con 3,3 V de alimentación), con
+  margen. Además hay que considerar que, con la FujiNet apagada, un nivel alto en IO36 podría entrar por las
+  protecciones del pin [I].
+- **Detener** si supera ese límite o no se puede determinar con confianza. Entonces no se autoriza ninguna
+  conexión de la FujiNet al Atari hasta diseñar, revisar y validar una mitigación, por ejemplo una adaptación de
+  nivel en la línea o la desconexión de MOTOR en el cable. Una mitigación implica cambios de hardware o de cableado
+  y requiere una aprobación aparte.
+
+### M3. Atari encendido, FujiNet apagada (S5 apagado, sin USB), con autorización y M3a aprobado
 
 | Medición (en J1/J2, respecto de GND) | Esperado |
 |---|---|
@@ -89,19 +117,16 @@ Sin USB, sin Atari y con S5 apagado.
 | VCC (por D5 desde SIO_5V) | Presente |
 | VCC_BUF | **unos 0 V** (sin +3V3, Q2 abierto): bus aislado |
 
-### M4. Atari encendido y FujiNet por USB con `1b1527d` (sin configuración SIO), con autorización
+### M4. Atari encendido y FujiNet por USB con `1b1527d` (sin configuración SIO), con autorización y M3a aprobado
 
 | Medición | Esperado | Criterio |
 |---|---|---|
 | COMMAND en J1 / en IO39 | Alto / unos 3,3 V | Polaridad conservada |
 | DATA IN en J1 | Alto (la placa no lo fuerza) | La placa no bloquea el bus |
-| DATA OUT en J1 / en IO33 | Alto / **indefinido** (sin pull-up) | Confirma la necesidad del pull-up interno (R3) |
-| **MOTOR en J1 y en IO36, con el motor del casete encendido** (por ejemplo, una operación de casete desde el Atari) | Desconocido [M] | **≤ 3,6 V en IO36.** Si lo supera, **detener** y abrir la mitigación R1 |
+| DATA OUT en J1 / en IO33 | Alto / **a medir** | El esquema no tiene pull-up en IO33. Se registra el nivel real; la hipótesis de entrada flotante se confirma o se descarta aquí (riesgo R3) |
+| MOTOR en IO36 en reposo | unos 0 V (R2) | Confirmación con los dos equipos conectados; el nivel alto ya se midió en M3a |
 
-Para el último punto, medir primero en J1, pin 8 con el osciloscopio. Repetirlo en IO36 solo si el nivel en J1 es
-seguro.
-
-### M5. Observación pasiva de COMMAND y DATA OUT (osciloscopio o analizador), con autorización
+### M5. Observación pasiva de COMMAND y DATA OUT (osciloscopio o analizador), con autorización y M3a aprobado
 
 Durante el arranque, el Atari consulta D1 y envía tramas de comando. RetroBridge **no responde**, porque DATA IN
 nunca se maneja, así que el Atari reintenta y termina por tiempo de espera. La observación es pasiva.
@@ -111,12 +136,12 @@ nunca se maneja, así que el Atari reintenta y termina por tiempo de espera. La 
 | Polaridad y duración de COMMAND | J1, pin 7 (5 V) e IO39 (3,3 V) | Osciloscopio de 2 canales |
 | Velocidad del bus (~19 200 ± 5 %) | J1, pin 5 | Osciloscopio o analizador con tolerancia a 5 V |
 | t0 (COMMAND↓ → primer bit) y t1 (último bit → COMMAND↑) | J1, pines 7 y 5 | Igual |
-| Flanco de subida en IO33 | IO33 (lado de 3,3 V) | Osciloscopio; **sin pull-up interno el nivel alto no está definido**, así que se registra como línea base |
+| Nivel y flanco de subida en IO33 | IO33 (lado de 3,3 V) | Osciloscopio. Línea base con el firmware actual, que no configura GPIO33. Determina si hace falta un pull-up y de qué tipo; la decisión se toma en H5 |
 
 Registrar en `docs/mediciones/sio-tiempos.md`, según la arquitectura §9.3: fecha, commit, Atari, NTSC/PAL, ROM,
 instrumento, frecuencia de muestreo, y mínimo, máximo y P99 sobre al menos 1 000 transacciones cuando aplique.
 
-### M6. Alimentación doble y corriente del pin 10, con autorización y cable de prueba
+### M6. Alimentación doble y corriente del pin 10, con autorización, cable de prueba y M3a aprobado
 
 | Medición | Esperado |
 |---|---|
@@ -126,7 +151,9 @@ instrumento, frecuencia de muestreo, y mínimo, máximo y P99 sobre al menos 1 0
 
 ## 4. Criterios para detener
 
-- Cualquier tensión mayor que 3,6 V en un GPIO (en especial IO36).
+- **MOTOR (M3a):** nivel alto, o picos, por encima de lo que admite un pin del ESP32, o imposible de determinar.
+  No se conecta la FujiNet al Atari sin una mitigación aprobada y validada.
+- Cualquier tensión mayor que 3,6 V en un GPIO.
 - Calor, olor o consumo anómalo.
 - VCC_BUF presente con S5 apagado (falla el aislamiento).
 - Una sonda o un instrumento sin tolerancia confirmada conectado a una línea de 5 V.

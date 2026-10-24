@@ -146,7 +146,7 @@ pull-ups [E][F]:
 | Señal | GPIO | Dirección en el ESP32 |
 |---|---|---|
 | COMMAND | 39 | entrada (vía 74LS07; pull-up R11 de 10 k) |
-| DATA OUT del Atari | 33 | entrada (vía 74LS07; **sin pull-up externo**, ver `h4-puerta-sio.md` §3.3) |
+| DATA OUT del Atari | 33 | entrada (vía 74LS07; el esquema **no muestra pull-up**, comportamiento real por medir, ver `h4-puerta-sio.md` §3.3) |
 | DATA IN hacia el Atari | 21 | salida a un 74LS07 de colector abierto |
 | CLOCK OUT | 32 | entrada |
 | CLOCK IN | 27 | salida |

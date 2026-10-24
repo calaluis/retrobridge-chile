@@ -30,6 +30,10 @@
 > - **H3c, validación física** (2026-10-24; rama `docs/h3c-validacion-fisica-2026-10-24`, en revisión): firmware
 >   `1b1527d` instalado en la placa con respaldo previo D5/D6; **Meta A cumplida en el equipo** (4 640/4 640 CRC32)
 >   (`docs/mediciones/h3c-validacion-fisica-2026-10-24.md`).
+> - **H4, preparación documental** (rama `docs/h4-puerta-hardware-sio`, en revisión; **H4 no aprobado**):
+>   pinout y adaptación eléctrica verificados en el esquema 1.3, riesgos, procedimiento de medición pasiva y
+>   checklist (`docs/hardware/h4-puerta-sio.md`); diseño preliminar de H5 solo recepción
+>   (`docs/diseno/h5-escucha-solo-recepcion.md`).
 > - Aún **no** se han implementado los adaptadores UART/GPIO del SIO, y el SIO no se ha probado con un Atari.
 > Fecha: 2026-10-23. Reemplaza a la v0.1 del mismo día.
 > Repositorio: `calaluis/retrobridge-chile` (privado por ahora). Licencia: GPL-3.0-only (ADR-013).

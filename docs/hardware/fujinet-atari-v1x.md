@@ -145,14 +145,14 @@ pull-ups [E][F]:
 
 | Señal | GPIO | Dirección en el ESP32 |
 |---|---|---|
-| COMMAND | 39 | entrada (vía 74LS07) |
-| DATA OUT del Atari | 33 | entrada |
+| COMMAND | 39 | entrada (vía 74LS07; pull-up R11 de 10 k) |
+| DATA OUT del Atari | 33 | entrada (vía 74LS07; el esquema **no muestra pull-up**, comportamiento real por medir, ver `h4-puerta-sio.md` §3.3) |
 | DATA IN hacia el Atari | 21 | salida a un 74LS07 de colector abierto |
 | CLOCK OUT | 32 | entrada |
 | CLOCK IN | 27 | salida |
 | PROCEED | 22 | salida |
 | INTERRUPT | 26 | salida |
-| MOTOR | 36 | entrada |
+| MOTOR | 36 | entrada, **conectada directamente** al bus con R2 de 10 k a GND (`h4-puerta-sio.md` §3.4) |
 | SIO 5V (divisor) | 35 | ADC |
 | AUDIO IN | 25 | DAC |
 
@@ -163,6 +163,9 @@ pull-ups [E][F]:
   H4 [P].
 - **Para H4/H5:** en la 1.3 SIO_DATAIN no tiene el pull-up de 4,7 k que agregó la 1.5. El nivel alto de la línea
   depende del lado del Atari.
+- **Análisis completo de H4** (polaridades, pull-ups, alimentación, erratas del ESP32 y riesgos):
+  `docs/hardware/h4-puerta-sio.md`. Las mediciones se describen en
+  `docs/hardware/procedimiento-medicion-pasiva-sio.md`.
 
 ## 6. Chip, flash, PSRAM y particiones
 

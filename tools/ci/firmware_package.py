@@ -76,6 +76,34 @@ TEXT_SUFFIXES = {".txt", ".json", ".csv", ".md", ""}
 IDENTITY_PATHS = ("main", "components", "partitions", "sdkconfig.defaults",
                   "sdkconfig.board.fujinet-atari-v1x", "CMakeLists.txt")
 
+# Bytes that exist only when a feature is linked in: string literals in the
+# application image (flash .rodata) and C++ symbols in the ELF symbol table.
+FEATURE_MARKERS = {
+    "hw_diag": {  # rb_hw_diag + EspSystemProbe + the "diag" console command (H4)
+        "app": (b"DIAG BEGIN format=%d source=retrobridge-hw-diag", b"diag status|memory|storage|events|report"),
+        "elf": (b"_ZN2rb6hwdiag12ReportWriter", b"_ZN2rb3esp14EspSystemProbe"),
+    },
+}
+
+
+@dataclass(frozen=True)
+class Variant:
+    """A closed set of package identities: no free-form names or commits from the command line."""
+    package: str
+    title: str
+    features: tuple = ()
+    version_matches_commit: bool = False  # esp_app_desc version must be a prefix of the pinned commit
+
+
+VARIANTS = {
+    # H3c, validated on the board: its name, provenance and checks stay as they were.
+    "h3c": Variant("retrobridge-fw-fujinet-atari-v1x", "firmware de diagnóstico para FujiNet Atari FN32ROV-1.3/1.5"),
+    # H4: the same diagnostic firmware plus the autonomous diagnostics (rb_hw_diag, "diag").
+    "diag": Variant("retrobridge-fw-diag-fujinet-atari-v1x",
+                    "firmware de diagnóstico con diagnóstico autónomo (rb_hw_diag) para FujiNet Atari FN32ROV-1.3/1.5",
+                    features=("hw_diag",), version_matches_commit=True),
+}
+
 
 @dataclass
 class Check:
@@ -347,14 +375,36 @@ def check_files(files: Files, log: CheckLog, build_relative=None) -> None:
     log.require("sin secretos", not secrets, ", ".join(secrets) or "ninguno")
 
 
-def check_build(src: Path, build: Path, source: SourceState, baseline: str) -> CheckLog:
+def check_variant(files: Files, variant: Variant, commit: str, log: CheckLog) -> None:
+    """Checks that only some packages make: the features linked in and the version/commit link."""
+    if not log.checks or "app_desc" not in log.facts:
+        return  # check_files already failed (missing files)
+    if variant.features:
+        app, elf = files.app.read_bytes(), files.elf.read_bytes()
+        for feature in variant.features:
+            markers = FEATURE_MARKERS[feature]
+            missing_app = [m.decode() for m in markers["app"] if m not in app]
+            missing_elf = [m.decode() for m in markers["elf"] if m not in elf]
+            log.require("diagnóstico incorporado (aplicación)", not missing_app,
+                        f"{feature}: " + (", ".join(missing_app) or "literales presentes en retrobridge.bin"))
+            log.require("diagnóstico incorporado (ELF)", not missing_elf,
+                        f"{feature}: " + (", ".join(missing_elf) or "símbolos presentes en retrobridge.elf"))
+    if variant.version_matches_commit:
+        version = str(log.facts["app_desc"].get("version", ""))
+        ok = len(version) >= 7 and all(c in "0123456789abcdef" for c in version) and commit.startswith(version)
+        log.require("versión = commit fijado", ok, f"esp_app_desc={version!r}, commit={commit}")
+
+
+def check_build(src: Path, build: Path, source: SourceState, baseline: str, variant: Variant = VARIANTS["h3c"]) -> CheckLog:
     log = CheckLog()
     log.require("commit del firmware", source.head == baseline, f"checkout={source.head}, fijado={baseline}")
     log.require("checkout limpio", not source.dirty, "sin cambios locales" if not source.dirty else "hay cambios")
     hits = scan_sources(src)
     log.require("sin GPIO/UART del SIO (código)", not hits, ", ".join(hits) or "ninguna llamada")
     sdk = parse_sdkconfig((build / "sdkconfig").read_text(encoding="utf-8")) if (build / "sdkconfig").is_file() else {}
-    check_files(build_files(build, src, sdk), log, build_relative=build)
+    files = build_files(build, src, sdk)
+    check_files(files, log, build_relative=build)
+    check_variant(files, variant, baseline, log)
     return log
 
 
@@ -395,8 +445,10 @@ def tool_versions() -> dict:
             "compiler": run("xtensa-esp32-elf-gcc", "--version"), "python": sys.version.split()[0]}
 
 
-def package(src: Path, build: Path, reports: Path, out: Path, source: SourceState, baseline: str, run: dict) -> CheckLog:
-    log = check_build(src, build, source, baseline)
+def package(src: Path, build: Path, reports: Path, out: Path, source: SourceState, baseline: str, run: dict,
+            variant: str = "h3c") -> CheckLog:
+    spec = VARIANTS[variant]  # KeyError for anything outside the closed set
+    log = check_build(src, build, source, baseline, spec)
     for name in ("size.txt", "size-components.txt"):
         log.require(f"informe {name}", (reports / name).is_file() and (reports / name).stat().st_size > 0, str(reports / name))
     if not log.ok:
@@ -426,7 +478,7 @@ def package(src: Path, build: Path, reports: Path, out: Path, source: SourceStat
     (out / "SOURCE_IDENTITY.txt").write_text("\n".join(identity) + "\n", encoding="utf-8")
 
     provenance = {
-        "package": "retrobridge-fw-fujinet-atari-v1x", "board_profile": PROFILE_KCONFIG,
+        "package": spec.package, "board_profile": PROFILE_KCONFIG,
         "firmware_source_commit": source.head, "baseline_commit": baseline,
         "workflow_commit": run.get("GITHUB_SHA"), "repository": run.get("GITHUB_REPOSITORY"),
         "run_id": run.get("GITHUB_RUN_ID"), "run_attempt": run.get("GITHUB_RUN_ATTEMPT"),
@@ -437,9 +489,12 @@ def package(src: Path, build: Path, reports: Path, out: Path, source: SourceStat
         "app_size": log.facts["app_size"], "factory_size": log.facts["factory_size"], "factory_free": log.facts["free"],
         "checks": [vars(c) for c in log.checks], "warnings": log.warnings,
     }
+    if variant != "h3c":  # the H3c record keeps exactly its original fields
+        provenance["variant"] = variant
+        provenance["features"] = list(spec.features)
     (out / "PROVENANCE.json").write_text(json.dumps(provenance, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (out / "reports" / "checks.txt").write_text(log.text(), encoding="utf-8")
-    (out / "LEEME.md").write_text(readme(provenance), encoding="utf-8")
+    (out / "LEEME.md").write_text(readme(provenance, spec.title), encoding="utf-8")
 
     published_secrets = []
     for path in out.rglob("*"):
@@ -486,12 +541,18 @@ def verify_package(root: Path) -> CheckLog:
     log.require("procedencia", provenance.get("firmware_source_commit") == provenance.get("baseline_commit")
                 and provenance.get("elf_sha256") == log.facts.get("elf_sha256"),
                 f"firmware={provenance.get('firmware_source_commit')}")
+    variant = provenance.get("variant", "h3c")
+    spec = VARIANTS.get(variant)
+    log.require("variante del paquete", spec is not None and provenance.get("package") == spec.package,
+                f"variant={variant}, package={provenance.get('package')}")
+    if spec is not None:
+        check_variant(package_files(root), spec, str(provenance.get("firmware_source_commit", "")), log)
     return log
 
 
-def readme(p: dict) -> str:
+def readme(p: dict, title: str = VARIANTS["h3c"].title) -> str:
     d = p["app_desc"]
-    return f"""# RetroBridge Chile: firmware de diagnóstico para FujiNet Atari FN32ROV-1.3/1.5
+    return f"""# RetroBridge Chile: {title}
 
 Paquete generado por GitHub Actions. **No flashear sin autorización explícita** ni sin un respaldo verificado de la
 flash (docs/hardware/procedimiento-instalacion-recuperacion.md).
@@ -539,13 +600,16 @@ def main(argv=None) -> int:
     p.add_argument("--reports", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--baseline", required=True)
+    p.add_argument("--variant", choices=sorted(VARIANTS), default="h3c",
+                   help="package identity: h3c (default, unchanged) or diag (H4, requires rb_hw_diag)")
     v = sub.add_parser("verify")
     v.add_argument("package_dir", type=Path)
     args = parser.parse_args(argv)
 
     if args.command == "package":
         run = {k: v for k, v in os.environ.items() if k.startswith("GITHUB_")}
-        log = package(args.src, args.build, args.reports, args.out, source_state(args.src), args.baseline, run)
+        log = package(args.src, args.build, args.reports, args.out, source_state(args.src), args.baseline, run,
+                      args.variant)
     else:
         log = verify_package(args.package_dir)
     sys.stdout.write(log.text())

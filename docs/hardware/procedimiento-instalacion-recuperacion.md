@@ -126,3 +126,53 @@ Para un volcado crudo, esptool no debe reescribir las cabeceras de flash; por es
 - `verify_flash` falla.
 - La revisión de la placa no coincide con el perfil.
 - Cualquier síntoma eléctrico (calor, consumo anómalo).
+
+## 6. Firmware H4 con diagnóstico autónomo: primera validación física (NO EJECUTAR todavía)
+
+Paquete `retrobridge-fw-diag-fujinet-atari-v1x-15b153f` (job `firmware-package-h4`, commit `15b153f`). Cada paso
+requiere una **autorización explícita**. La FujiNet se conecta **solo por USB**: **sin el Atari** y sin nada en el
+SIO, porque H4 eléctrico sigue EN PREPARACIÓN.
+
+**Precondiciones:**
+1. Respaldo D5/D6 verificado (`MANIFEST.sha256` en D: y E:), que sigue siendo la recuperación R1 hacia el firmware
+   WSS.
+2. Copia local verificada del paquete H3c `retrobridge-fw-fujinet-atari-v1x-1b1527d`, para volver al firmware
+   validado en H3c. El artefacto de GitHub caduca a los 90 días.
+3. Paquete H4 descargado, con estas verificaciones:
+   - el SHA-256 del zip coincide con el `artifact-digest` del resumen de la ejecución;
+   - `sha256sum -c SHA256SUMS` da OK;
+   - `python -I tools/ci/firmware_package.py verify <paquete>` da OK, con las comprobaciones "diagnóstico
+     incorporado" y "versión = commit fijado";
+   - `PROVENANCE.json` indica `variant: diag` y el commit `15b153f267cf6766978bd786eb1b463ea0e4ac50`.
+4. La misma microSD de pruebas de H3c, sin modificar.
+
+**Pasos:**
+1. **Identificación (lectura):** `esptool.py --chip esp32 -p COM3 flash_id` debe dar ESP32-D0WD v1.0, `c8`/`4018`
+   y 16 MB.
+2. **Escritura:** las tres imágenes de `flash/flash_args.paquete` (0x1000, 0x8000 y 0x10000), con esptool.py v4.5.1
+   y DIO a 40 MHz, y después `verify_flash`. No se usa `erase_flash`.
+3. **Diagnóstico** (consola UART0, 115 200 baudios):
+
+   | Comando | Esperado |
+   |---|---|
+   | `diag status` | `version=15b153f`, `board=fujinet-atari-v1.3/1.5`, motivo de reinicio coherente con el arranque y watchdog según el `sdkconfig` del paquete |
+   | `diag memory` | Cifras de heap; anotar el valor de referencia |
+   | `diag storage` | `mounted=yes`, sin fallos de montaje |
+   | `diag events` | `Boot` y `StorageMounted` |
+   | `diag report` | Informe completo. Se captura y se verifica con `python tools/check_diag_report.py <captura>` |
+
+4. **Regresión de H3c** (las funciones de microSD y ATR siguen operativas):
+   - `sd ls`;
+   - `atr info` de las cinco imágenes;
+   - `atr crc` de las cinco imágenes y `tools/compare_crc.py manifest.csv <registro>`, que debe dar **4 640/4 640**;
+   - `drive mount dd-720.atr`, `drive read 1`, `4` y `721` (este último con el error esperado `SectorOutOfRange`) y
+     `drive unmount`;
+   - `atr bench` en modos `seq` y `rand`.
+
+   Después, `diag storage` y `diag events` deben reflejar esas operaciones, incluido el error del sector 721, y
+   `diag report` debe volver a verificar.
+5. **Historial de reinicios:** un reinicio controlado (botón o auto-reset del monitor) y comprobar que `diag status`
+   lo refleja.
+6. **Registro:** resultados en `docs/mediciones/`, sin MAC ni datos privados.
+
+**Volver atrás:** reinstalar el paquete H3c verificado, o R1 con D5 para volver a WSS (§4).

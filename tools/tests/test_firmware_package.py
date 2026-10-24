@@ -47,12 +47,19 @@ def image_header(mode=2, speed=0, size=4, chip=0, segments=1) -> bytes:
                        0x40080000, 0xEE, b"\0\0\0", chip, 0, 0, 0xFFFF, b"\0" * 4, 1)
 
 
-def app_image(version="1b1527d", elf=ELF_BYTES, project="retrobridge", idf="v6.1", size=0x30000, **header) -> bytes:
+def app_image(version="1b1527d", elf=ELF_BYTES, project="retrobridge", idf="v6.1", size=0x30000, extra=b"",
+              **header) -> bytes:
     desc = struct.pack("<II8s32s32s16s16s32s32s", 0xABCD5432, 0, b"\0" * 8, version.encode(), project.encode(),
                        b"12:00:00", b"Oct 24 2026", idf.encode(), hashlib.sha256(elf).digest())
     desc += b"\0" * (256 - len(desc))
-    body = image_header(**header) + struct.pack("<II", 0x3F400020, len(desc)) + desc
+    body = image_header(**header) + struct.pack("<II", 0x3F400020, len(desc)) + desc + extra
     return body + b"\xA5" * (size - len(body))
+
+
+# H4 diagnostic firmware (variant "diag"): commit and the bytes that only exist when rb_hw_diag is linked in.
+H4_COMMIT = "15b153f267cf6766978bd786eb1b463ea0e4ac50"
+DIAG_APP_MARKERS = b"\0DIAG BEGIN format=%d source=retrobridge-hw-diag\0usage: diag status|memory|storage|events|report\0"
+DIAG_ELF = ELF_BYTES + b"\0_ZN2rb6hwdiag12ReportWriter11writeReportE\0_ZN2rb3esp14EspSystemProbe12registerBootEv\0"
 
 
 def partition_table(entries, corrupt_md5=False) -> bytes:
@@ -266,6 +273,106 @@ class FirmwarePackageTest(unittest.TestCase):
     def test_secret_in_published_text_is_rejected(self):
         write(self.f.build / "sdkconfig", SDKCONFIG + 'CONFIG_EXAMPLE_WIFI_PASSWORD="hunter2"\n')
         self.assert_fails("sin secretos")
+
+
+class PackageVariantTest(unittest.TestCase):
+    """H3c (default) and H4 diag packages: separate identities, and the diag one proves rb_hw_diag is inside."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.f = Fixture(Path(self._tmp.name))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def make_h4_build(self, markers=True, elf_markers=True, version="15b153f"):
+        write(self.f.build / "retrobridge.elf", DIAG_ELF if elf_markers else ELF_BYTES)
+        elf = DIAG_ELF if elf_markers else ELF_BYTES
+        write(self.f.build / "retrobridge.bin",
+              app_image(version=version, elf=elf, extra=DIAG_APP_MARKERS if markers else b""))
+        desc = json.loads((self.f.build / "project_description.json").read_text())
+        desc["project_version"] = version
+        write(self.f.build / "project_description.json", json.dumps(desc))
+        self.f.source = fp.SourceState(head=H4_COMMIT, dirty=False, trees={"main": "b" * 40})
+
+    def package(self, variant):
+        return fp.package(self.f.src, self.f.build, self.f.reports, self.f.out, self.f.source,
+                          self.f.source.head, run={}, variant=variant)
+
+    def failed(self, log):
+        return [c.name for c in log.checks if not c.ok]
+
+    def test_variants_have_distinct_names(self):
+        self.assertEqual(fp.VARIANTS["h3c"].package, "retrobridge-fw-fujinet-atari-v1x")
+        self.assertEqual(fp.VARIANTS["diag"].package, "retrobridge-fw-diag-fujinet-atari-v1x")
+        self.assertEqual(len({v.package for v in fp.VARIANTS.values()}), len(fp.VARIANTS))
+
+    def test_h3c_default_keeps_its_original_identity(self):
+        log = fp.package(self.f.src, self.f.build, self.f.reports, self.f.out, self.f.source, BASELINE, run={})
+        self.assertTrue(log.ok, self.failed(log))
+        provenance = json.loads((self.f.out / "PROVENANCE.json").read_text(encoding="utf-8"))
+        self.assertEqual(provenance["package"], "retrobridge-fw-fujinet-atari-v1x")
+        self.assertEqual(provenance["firmware_source_commit"], BASELINE)
+        self.assertNotIn("variant", provenance)
+        self.assertNotIn("features", provenance)
+        self.assertNotIn("hw_diag", [c["name"] for c in provenance["checks"]])
+        self.assertIn("# RetroBridge Chile: firmware de diagnóstico para FujiNet Atari FN32ROV-1.3/1.5",
+                      (self.f.out / "LEEME.md").read_text(encoding="utf-8"))
+
+    def test_diag_package_identity_points_to_h4(self):
+        self.make_h4_build()
+        log = self.package("diag")
+        self.assertTrue(log.ok, self.failed(log))
+        provenance = json.loads((self.f.out / "PROVENANCE.json").read_text(encoding="utf-8"))
+        self.assertEqual(provenance["package"], "retrobridge-fw-diag-fujinet-atari-v1x")
+        self.assertEqual(provenance["variant"], "diag")
+        self.assertEqual(provenance["firmware_source_commit"], H4_COMMIT)
+        self.assertEqual(provenance["app_desc"]["version"], "15b153f")
+        self.assertEqual(provenance["features"], ["hw_diag"])
+        self.assertIn(f"firmware_source_commit {H4_COMMIT}", (self.f.out / "SOURCE_IDENTITY.txt").read_text())
+        self.assertIn("diagnóstico autónomo", (self.f.out / "LEEME.md").read_text(encoding="utf-8"))
+        self.assertTrue(fp.verify_package(self.f.out).ok)
+
+    def test_diag_package_requires_rb_hw_diag_in_the_application(self):
+        self.make_h4_build(markers=False)
+        log = self.package("diag")
+        self.assertFalse(log.ok)
+        self.assertIn("diagnóstico incorporado (aplicación)", self.failed(log))
+        self.assertFalse((self.f.out / "SHA256SUMS").exists())
+
+    def test_diag_package_requires_rb_hw_diag_symbols_in_the_elf(self):
+        self.make_h4_build(elf_markers=False)
+        log = self.package("diag")
+        self.assertIn("diagnóstico incorporado (ELF)", self.failed(log))
+
+    def test_an_h3c_build_cannot_be_packaged_as_diag(self):
+        log = self.package("diag")  # H3c fixture: no markers, version 1b1527d, commit 1b1527d
+        self.assertFalse(log.ok)
+        self.assertIn("diagnóstico incorporado (aplicación)", self.failed(log))
+
+    def test_diag_version_must_be_a_prefix_of_the_pinned_commit(self):
+        self.make_h4_build(version="1b1527d")
+        log = self.package("diag")
+        self.assertIn("versión = commit fijado", self.failed(log))
+
+    def test_diag_version_with_dirty_suffix_is_rejected(self):
+        self.make_h4_build(version="15b153f-dirty")
+        log = self.package("diag")
+        self.assertIn("versión = commit fijado", self.failed(log))
+
+    def test_verify_rechecks_the_diag_markers(self):
+        self.make_h4_build()
+        self.assertTrue(self.package("diag").ok)
+        app = self.f.out / "firmware" / "retrobridge.bin"
+        app.write_bytes(app.read_bytes().replace(b"retrobridge-hw-diag", b"retrobridge-xx-diag"))
+        fp.write_manifest(self.f.out)  # even with a consistent manifest, the content check fails
+        log = fp.verify_package(self.f.out)
+        self.assertFalse(log.ok)
+        self.assertIn("diagnóstico incorporado (aplicación)", self.failed(log))
+
+    def test_unknown_variant_is_refused(self):
+        with self.assertRaises(KeyError):
+            self.package("cualquiera")
 
 
 if __name__ == "__main__":

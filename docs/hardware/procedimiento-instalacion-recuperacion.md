@@ -51,7 +51,9 @@ OBLIGATORIO antes de cualquier instalación física** (decisión del equipo, 202
 3. microSD **dedicada**, en FAT32, con las imágenes de `tools/make_atr.py`. No usar la tarjeta de FujiNet.
 4. Alimentación **solo por USB**. **Atari desconectado.** Nada conectado al conector SIO.
 5. **Respaldo D5/D6 del firmware WSS tomado y verificado (paso 3.2). Es obligatorio:** sin él no se instala nada.
-6. Firmware compilado con el perfil de la placa, y su `idf.py size` revisado en CI o en local:
+6. Firmware compilado con el perfil de la placa, y su `idf.py size` revisado. La vía prevista es el artefacto del
+   job `firmware-package` del CI, verificado con `sha256sum -c SHA256SUMS` y
+   `tools/ci/firmware_package.py verify` (`docs/toolchain.md`). En local sería:
    ```bash
    idf.py -B build-fujinet -D SDKCONFIG=build-fujinet/sdkconfig \
           -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board.fujinet-atari-v1x" build

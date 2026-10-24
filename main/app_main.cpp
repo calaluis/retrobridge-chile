@@ -18,6 +18,7 @@
 #include "rb/app/usecases/read_sector.hpp"
 #include "rb/app/usecases/unmount_disk_image.hpp"
 #include "rb/board/board_profile.hpp"
+#include "rb/board/fujinet_atari_v1x.hpp"
 #include "rb/console/diagnostic_console.hpp"
 #include "rb/core/toolchain_checks.hpp"
 #include "rb/esp/esp_clock.hpp"
@@ -30,6 +31,8 @@ constexpr const char* kTag = "retrobridge";
 
 #if defined(CONFIG_RB_BOARD_UNCONFIRMED)
 constexpr rb::board::BoardProfile kBoard = rb::board::unconfirmed_profile();
+#elif defined(CONFIG_RB_BOARD_FUJINET_ATARI_V1X)
+constexpr rb::board::BoardProfile kBoard = rb::board::fujinet_atari_v1x_profile();  // microSD only, no SIO pins
 #else
 #error "No board profile selected (see main/Kconfig.projbuild)"
 #endif

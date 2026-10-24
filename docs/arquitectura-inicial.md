@@ -13,12 +13,17 @@
 >   ante errores de transporte (`SioCommandDispatcher::abandon`) y temporización simulada.
 > - **H3a** (PR #6, fusionado en `main`, `0e1c6be`): adaptador de archivos portable `rb_file_storage` (ADR-015),
 >   herramientas `make_atr.py` y `compare_crc.py`, y Meta A en el host.
-> - **H3b** (rama `h3b-diagnostico-plataforma`, en revisión):
+> - **H3b** (PR #7, fusionado en `main`, `b3816f9`):
 >   - diagnóstico portable (`InspectImage`, `VerifySectors`, `BenchmarkReads`, `LatencyStats`);
 >   - `rb_board` (perfil `RB_BOARD_UNCONFIRMED` por defecto y validador de GPIO);
 >   - `InlineDriveMailbox`;
 >   - `rb_esp_platform`, `rb_esp_storage` (montaje bloqueado sin placa confirmada) y `rb_console`, que en el ESP32
 >     solo se compilan.
+> - **H3c, preparación** (rama `h3c-preparacion`, en revisión):
+>   - identificación del hardware (`docs/hardware/fujinet-atari-v1x.md`, revisión exacta pendiente);
+>   - perfil de microSD `fujinet-atari-v1.3/1.5` (SPI3, sin pines SIO), **no predeterminado**;
+>   - tabla de particiones propia de 16 MB;
+>   - procedimiento de instalación y recuperación, sin ejecutar.
 > - Aún **no** se han implementado los adaptadores UART/GPIO del SIO. No se ha realizado ningún flasheo de hardware.
 > Fecha: 2026-10-23. Reemplaza a la v0.1 del mismo día.
 > Repositorio: `calaluis/retrobridge-chile` (privado por ahora). Licencia: GPL-3.0-only (ADR-013).

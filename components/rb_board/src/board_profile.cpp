@@ -74,7 +74,8 @@ Result<uint8_t> validate_for_storage(const BoardProfile& profile) noexcept
     bool ok = true;
     switch (profile.sdInterface) {
     case SdInterface::Spi:
-        ok = checker.add({profile.spi.sck, true}) && checker.add({profile.spi.mosi, true}) &&
+        ok = (profile.spiHost == SpiHost::Spi2 || profile.spiHost == SpiHost::Spi3) &&
+             checker.add({profile.spi.sck, true}) && checker.add({profile.spi.mosi, true}) &&
              checker.add({profile.spi.miso, false}) && checker.add({profile.spi.cs, true});
         break;
     case SdInterface::Sdmmc4Bit:

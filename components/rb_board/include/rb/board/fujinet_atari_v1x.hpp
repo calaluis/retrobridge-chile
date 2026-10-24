@@ -1,0 +1,30 @@
+#pragma once
+
+#include "rb/board/board_profile.hpp"
+
+namespace rb::board {
+
+// microSD profile of the FujiNet Atari ESP32 board, revisions FN32ROV-1.3/1.5
+// (H3c preparation, docs/hardware/fujinet-atari-v1x.md).
+//
+// Source: the public FujiNet hardware schematics FN32ROV-1.3-Q24 and
+// FN32ROV-1.5-Q24 (fujinet-hardware repository, CERN OHL 2.0): microSD J4 in
+// SPI mode, CLK GPIO18, CMD/MOSI GPIO23, DAT0/MISO GPIO19, CD/DAT3/CS GPIO5;
+// no card-detect line before rev 1.6. Not taken from any FujiNet source code.
+//
+// Contains no SIO pin and configures nothing by itself. Selecting it
+// (RB_BOARD_FUJINET_ATARI_V1X) asserts that the board's silkscreen revision and
+// pinout were checked against this data; until then RB_BOARD_UNCONFIRMED stays
+// the default. GPIO5 is a strapping pin (validator warning).
+constexpr BoardProfile fujinet_atari_v1x_profile() noexcept
+{
+    return BoardProfile{"fujinet-atari-v1.3/1.5",
+                        true,  // asserted by whoever selects the profile (Kconfig help)
+                        true,  // ESP32-WROVER module: PSRAM on GPIO16/17
+                        SdInterface::Spi,
+                        SdSpiPins{18, 23, 19, 5},
+                        SpiHost::Spi3,  // VSPI: the native controller for these pins
+                        kNoPin};
+}
+
+}  // namespace rb::board

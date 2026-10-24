@@ -25,10 +25,24 @@ static esp_vfs_fat_mount_config_t mount_config(int max_files)
     return config;
 }
 
-esp_err_t rb_sd_mount_spi(const char* base_path, int sck, int mosi, int miso, int cs, int card_detect,
-                          int max_files, rb_sd_card_t** out_card)
+esp_err_t rb_sd_mount_spi(const char* base_path, rb_sd_spi_host_t spi_host, int sck, int mosi, int miso, int cs,
+                          int card_detect, int max_files, rb_sd_card_t** out_card)
 {
+    spi_host_device_t host_id;
+    switch (spi_host) {
+    case RB_SD_SPI2:
+        host_id = SPI2_HOST;
+        break;
+    case RB_SD_SPI3:
+        host_id = SPI3_HOST;
+        break;
+    default:
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* The same host_id is used for the SDSPI host, the bus and the device. */
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    host.slot = host_id;
     spi_bus_config_t bus = {
         .mosi_io_num = mosi,
         .miso_io_num = miso,
@@ -37,13 +51,13 @@ esp_err_t rb_sd_mount_spi(const char* base_path, int sck, int mosi, int miso, in
         .quadhd_io_num = -1,
         .max_transfer_sz = 4000,
     };
-    esp_err_t err = spi_bus_initialize((spi_host_device_t)host.slot, &bus, SPI_DMA_CH_AUTO);
+    esp_err_t err = spi_bus_initialize(host_id, &bus, SPI_DMA_CH_AUTO);
     if (err != ESP_OK) {
         return err;
     }
 
     sdspi_device_config_t slot = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slot.host_id = (spi_host_device_t)host.slot;
+    slot.host_id = host_id;
     slot.gpio_cs = (gpio_num_t)cs;
     slot.gpio_cd = card_detect < 0 ? SDSPI_SLOT_NO_CD : (gpio_num_t)card_detect;
 
@@ -51,12 +65,12 @@ esp_err_t rb_sd_mount_spi(const char* base_path, int sck, int mosi, int miso, in
     sdmmc_card_t* card = NULL;
     err = esp_vfs_fat_sdspi_mount(base_path, &host, &slot, &config, &card);
     if (err != ESP_OK) {
-        spi_bus_free((spi_host_device_t)host.slot);
+        spi_bus_free(host_id);
         return err;
     }
     s_card.card = card;
     s_card.spi = true;
-    s_card.spi_host = host.slot;
+    s_card.spi_host = (int)host_id;
     *out_card = &s_card;
     return ESP_OK;
 }

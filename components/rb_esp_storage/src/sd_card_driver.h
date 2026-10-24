@@ -16,8 +16,16 @@ extern "C" {
 
 typedef struct rb_sd_card rb_sd_card_t;  /* opaque: the mounted card */
 
-esp_err_t rb_sd_mount_spi(const char* base_path, int sck, int mosi, int miso, int cs, int card_detect,
-                          int max_files, rb_sd_card_t** out_card);
+/* SPI controller selector, mapped explicitly to SPI2_HOST / SPI3_HOST. One value
+ * drives the bus, the SDSPI host and the device so they always agree. */
+typedef enum {
+    RB_SD_SPI2 = 2,
+    RB_SD_SPI3 = 3,
+} rb_sd_spi_host_t;
+
+/* ESP_ERR_INVALID_ARG for any other host value. */
+esp_err_t rb_sd_mount_spi(const char* base_path, rb_sd_spi_host_t spi_host, int sck, int mosi, int miso, int cs,
+                          int card_detect, int max_files, rb_sd_card_t** out_card);
 
 esp_err_t rb_sd_mount_sdmmc(const char* base_path, int width, int max_files, rb_sd_card_t** out_card);
 

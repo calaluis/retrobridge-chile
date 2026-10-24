@@ -40,8 +40,21 @@ jobs:
     container: espressif/idf:v6.1   # D-12: pinned ESP-IDF release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Build firmware
+      - name: Build firmware (default profile)
         shell: bash
         run: |
           . "$IDF_PATH/export.sh"
           idf.py build
+          # The default build must keep the unconfirmed board profile (H3-11).
+          grep -q '^CONFIG_RB_BOARD_UNCONFIRMED=y' sdkconfig
+          idf.py size
+      - name: Build firmware (FujiNet Atari v1.3/1.5 microSD profile, compile only)
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          idf.py -B build-fujinet -D SDKCONFIG=build-fujinet/sdkconfig \
+                 -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board.fujinet-atari-v1x" build
+          grep -q '^CONFIG_RB_BOARD_FUJINET_ATARI_V1X=y' build-fujinet/sdkconfig
+          grep -q '^CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y' build-fujinet/sdkconfig
+          grep -q '^CONFIG_PARTITION_TABLE_CUSTOM=y' build-fujinet/sdkconfig
+          idf.py -B build-fujinet -D SDKCONFIG=build-fujinet/sdkconfig size

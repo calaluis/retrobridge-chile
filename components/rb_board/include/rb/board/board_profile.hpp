@@ -22,6 +22,16 @@ struct SdSpiPins {
     int8_t cs;
 };
 
+// SPI controller for SdInterface::Spi. On the ESP32, SPI2 (HSPI) and SPI3
+// (VSPI) are usable; GPIO 18/23/19/5 are the native VSPI pins. The storage
+// driver uses this one value for the bus, the SDSPI host and the device, so
+// they can never disagree (H3c).
+enum class SpiHost : uint8_t {
+    None,  // not SPI
+    Spi2,
+    Spi3,
+};
+
 // Everything the firmware may know about a board (H3-11). Deliberately has no
 // SIO pins: they are added only after the hardware gate H4.
 struct BoardProfile {
@@ -30,6 +40,7 @@ struct BoardProfile {
     bool hasPsram;           // PSRAM uses GPIO16/17 on ESP32 modules
     SdInterface sdInterface;
     SdSpiPins spi;           // only for SdInterface::Spi
+    SpiHost spiHost;         // only for SdInterface::Spi
     int8_t cardDetect;       // input, or kNoPin
 };
 
@@ -38,7 +49,7 @@ struct BoardProfile {
 constexpr BoardProfile unconfirmed_profile() noexcept
 {
     return BoardProfile{"unconfirmed", false, false, SdInterface::None, SdSpiPins{kNoPin, kNoPin, kNoPin, kNoPin},
-                        kNoPin};
+                        SpiHost::None, kNoPin};
 }
 
 // Warning flags returned by validate_for_storage().
@@ -51,8 +62,8 @@ constexpr uint8_t kFlashVoltageStrap = 0x02; // uses GPIO12 (MTDI): a pull-up ca
 // any storage driver call. Errors:
 //   BoardNotConfirmed    - hardware not confirmed (the default): touch nothing
 //   InvalidPinAssignment - no interface, missing/duplicate pin, nonexistent GPIO,
-//                          flash pins 6-11, PSRAM pins 16-17, or an output on an
-//                          input-only GPIO 34-39
+//                          flash pins 6-11, PSRAM pins 16-17, an output on an
+//                          input-only GPIO 34-39, or SPI without a valid host
 // On success returns PinWarning flags (warnings, not errors).
 rb::core::Result<uint8_t> validate_for_storage(const BoardProfile& profile) noexcept;
 

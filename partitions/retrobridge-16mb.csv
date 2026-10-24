@@ -1,0 +1,10 @@
+# RetroBridge Chile partition table for 16 MB flash boards (H3c preparation).
+# Independent of the FujiNet table already on the board; installing it replaces
+# FujiNet entirely (see docs/hardware/procedimiento-instalacion-recuperacion.md).
+# Bootloader at 0x1000 and this table at 0x8000 (ESP32 defaults).
+# The H3 diagnostic firmware does not initialise NVS; the area beyond the
+# factory app is left unused.
+# Name,   Type, SubType, Offset,   Size
+nvs,      data, nvs,     0x9000,   0x6000
+phy_init, data, phy,     0xf000,   0x1000
+factory,  app,  factory, 0x10000,  0x400000

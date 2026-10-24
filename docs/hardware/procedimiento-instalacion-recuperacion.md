@@ -127,7 +127,11 @@ Para un volcado crudo, esptool no debe reescribir las cabeceras de flash; por es
 - La revisión de la placa no coincide con el perfil.
 - Cualquier síntoma eléctrico (calor, consumo anómalo).
 
-## 6. Firmware H4 con diagnóstico autónomo: primera validación física (NO EJECUTAR todavía)
+## 6. Firmware H4 con diagnóstico autónomo: primera validación física
+
+> **Ejecutada parcialmente el 2026-10-24**, solo por USB y sin el Atari. Resultados, observaciones y pasos todavía
+> pendientes (por ejemplo, la regresión completa de H3c): `docs/mediciones/h4-validacion-diagnostico-2026-10-24.md`.
+> Cada repetición sigue requiriendo autorización explícita.
 
 Paquete `retrobridge-fw-diag-fujinet-atari-v1x-15b153f` (job `firmware-package-h4`, commit `15b153f`). Cada paso
 requiere una **autorización explícita**. La FujiNet se conecta **solo por USB**: **sin el Atari** y sin nada en el

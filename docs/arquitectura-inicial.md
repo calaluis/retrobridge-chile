@@ -19,8 +19,9 @@
 >   - `InlineDriveMailbox`;
 >   - `rb_esp_platform`, `rb_esp_storage` (montaje bloqueado sin placa confirmada) y `rb_console`, que en el ESP32
 >     solo se compilan.
-> - **H3c, preparación** (rama `h3c-preparacion`, en revisión):
->   - identificación del hardware (`docs/hardware/fujinet-atari-v1x.md`, revisión exacta pendiente);
+> - **H3c, preparación** (PR #8, fusionado en `main`, `13c708d`):
+>   - identificación del hardware (`docs/hardware/fujinet-atari-v1x.md`). La revisión quedó confirmada después
+>     (rama `h3c-identificacion`, en revisión): **FN32ROV-1.3-Q24** con ESP32-WROVER-B, por fotografías;
 >   - perfil de microSD `fujinet-atari-v1.3/1.5` (SPI3, sin pines SIO), **no predeterminado**;
 >   - tabla de particiones propia de 16 MB;
 >   - procedimiento de instalación y recuperación, sin ejecutar.

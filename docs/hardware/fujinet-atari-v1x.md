@@ -1,15 +1,24 @@
-# Identificación de hardware: FujiNet Atari ESP32 (H3c, preparación)
+# Identificación de hardware: FujiNet Atari ESP32 (H3c)
 
-> Estado: **revisión exacta PENDIENTE** (leer la serigrafía). `RB_BOARD_UNCONFIRMED` sigue siendo el perfil
-> predeterminado. Investigación solo de lectura, 2026-10-23: no se abrió el puerto serie, no se ejecutó esptool y
-> no se modificó la flash ni los eFuses.
+> Estado: **revisión confirmada: FN32ROV-1.3-Q24**, con módulo **ESP32-WROVER-B** y lector microSD integrado.
+> Evidencia: fotografías de ambas caras de la placa usada en el proyecto WSS, 2026-10-23. Las fotografías son
+> privadas y no se versionan.
+>
+> El perfil `RB_BOARD_FUJINET_ATARI_V1X` corresponde a esta placa. `RB_BOARD_UNCONFIRMED` sigue siendo el perfil
+> predeterminado del firmware.
+>
+> Trabajo solo documental: no se abrió el puerto serie, no se ejecutó esptool y no se modificó la flash ni los
+> eFuses. **Antes de cualquier instalación siguen siendo obligatorios los respaldos D5/D6 verificados del firmware
+> WSS** (`procedimiento-instalacion-recuperacion.md`).
 
 **Etiquetas:**
 
+- **[F]** confirmado por fotografía de la placa física (2026-10-23);
 - **[C]** confirmado por registros del propio equipo (pruebas TNFS/WSS, octubre de 2026);
 - **[E]** confirmado por el esquema público de la revisión indicada;
+- **[D]** confirmado por la hoja de datos del fabricante;
 - **[I]** inferido;
-- **[P]** pendiente de verificación física.
+- **[P]** pendiente de verificación física o de medición.
 
 **Política de fuentes (ADR-012):** los pines provienen de los **esquemas públicos de hardware** (CERN OHL 2.0) y de
 los registros del equipo. **No** se leyó código fuente de FujiNet; en particular, no se leyó la cabecera de pines del
@@ -21,23 +30,15 @@ objetivo `PINMAP_ATARIV1`.
 |---|---|---|
 | Objetivo de firmware usado en WSS | `fujinet-atari-v1` (placa `fujinet-v1`, flash de 16 MB, DIO, 40 MHz) | [C] |
 | Detección del firmware FujiNet | "Detected Hardware Version: 1.1-1.5" en el arranque | [C] |
-| **Revisión exacta** | **Pendiente.** El registro solo indica el grupo que el firmware asigna. **No prueba** que sea 1.3 ni 1.5. | [P] |
+| **Revisión de la PCB** | **FN32ROV-1.3-Q24** | **[F]** |
+| Módulo | **Espressif ESP32-WROVER-B** | **[F]** |
+| Lector microSD | Integrado en la placa (J4) | [F] / [E] |
 
-**Revisiones que el registro todavía permite:** todas las que el firmware clasifica como "1.1-1.5". Se desconoce
-el criterio de detección, porque no se leyó el código.
+**Coherencia:** el registro "1.1-1.5" solo indicaba un grupo de revisiones y por sí solo no permitía identificar la
+placa. La fotografía resuelve la duda y es compatible con ese grupo.
 
-| Revisión | Situación |
-|---|---|
-| 1.1, 1.2, 1.4 | Sin esquema público; podrían existir como prototipos o tiradas no publicadas |
-| **1.3-Q24** y **1.5-Q24** | Esquema público disponible |
-| Derivados o clones basados en esas revisiones | Posibles |
-
-Que no sea la 1.0 ni la 1.6 o posterior (la 1.6 agrega la detección de tarjeta en GPIO15) es una **suposición sobre
-el criterio del firmware** [I], no un hecho.
-
-**Para confirmarla [P]:** fotografiar ambas caras de la placa, leer la serigrafía de la revisión y la del módulo
-ESP32 (WROVER, WROVER-B, etc.), y comparar los componentes con el esquema correspondiente. Por ejemplo, la 1.5 tiene
-R17–R19 junto a la microSD, diodos TVS en el USB y R16 (4,7 k) en SIO_DATAIN.
+**Esquema de referencia:** desde ahora el esquema aplicable es **FN32ROV-1.3-Q24** [E]. Los datos de la 1.5 quedan
+solo como comparación.
 
 ## 2. Diferencias entre revisiones públicas (wiki oficial y README de `fujinet-hardware`)
 
@@ -50,7 +51,17 @@ R17–R19 junto a la microSD, diodos TVS en el USB y R16 (4,7 k) en SIO_DATAIN.
 - se quita el puerto JTAG (quedan puntos de prueba);
 - pull-down en MOTOR.
 
-Error conocido de la 1.3: en algunos equipos no se puede flashear, y hay una reparación de hardware publicada.
+Error conocido de la 1.3: en algunos equipos no se puede flashear, y hay una reparación de hardware publicada
+(`CP210x_RESET-BUG_FIX_FINAL.jpg` en la carpeta 1.3 del repositorio). **En esta unidad** el flasheo y la verificación
+con esptool funcionaron a 460 800 baudios durante las pruebas WSS (`write_flash` y `verify_flash` OK) [C]. No se sabe
+si la reparación está aplicada en esta placa [P], pero hasta ahora no ha hecho falta.
+
+**Lo que la 1.3 de esta placa NO tiene**, porque llegó con la 1.5 (lista siguiente):
+
+- divisor en VBUS y demás cambios de flasheo del CP2102;
+- diodos TVS en el USB;
+- pull-up de 4,7 k en SIO_DATAIN. Es relevante para H4/H5, no para H3c;
+- **pull-ups de 10 k en la microSD** (ver §3).
 
 **1.3 → 1.5** (no se limita a la microSD):
 
@@ -75,27 +86,45 @@ Error conocido de la 1.3: en algunos equipos no se puede flashear, y hay una rep
 
 ## 3. microSD
 
-En las revisiones **1.3 y 1.5** el bloque J4 (DM3D-SF) está cableado igual [E]:
+Cableado de J4 (DM3D-SF) en **FN32ROV-1.3-Q24**, la revisión confirmada. Es igual al de la 1.5 salvo los
+pull-ups [E][F]:
 
 | Señal | GPIO | Notas |
 |---|---|---|
 | CLK | 18 | Pin nativo de VSPI |
-| CMD (MOSI) | 23 | Pin nativo de VSPI |
-| DAT0 (MISO) | 19 | Pin nativo de VSPI |
-| CD/DAT3 (CS) | 5 | Pin nativo de VSPI. **Pin de arranque** (valor por defecto al arrancar: alto; en la 1.5 tiene un pull-up de 10 k) |
+| CMD (MOSI) | 23 | Pin nativo de VSPI. **Sin pull-up externo** en la 1.3 |
+| DAT0 (MISO) | 19 | Pin nativo de VSPI. **Sin pull-up externo** en la 1.3 |
+| CD/DAT3 (CS) | 5 | Pin nativo de VSPI. **Pin de arranque**. **Sin pull-up externo** en la 1.3 |
 | DAT1, DAT2 | — | Sin conectar → la tarjeta funciona en **modo SPI** |
-| Interruptor de tarjeta | — | Sin conectar en 1.3/1.5 (GPIO15 en la 1.6) |
+| Interruptor de tarjeta | — | Sin conectar (la detección en GPIO15 llega con la 1.6) |
 | Alimentación | 3,3 V | |
 
-- **Funcionamiento observado:** el firmware FujiNet montó la tarjeta y leyó imágenes ATR SD (720×128) y DD
-  (720×256) [C].
-- **Host SPI:** los cuatro pines son los nativos de VSPI, es decir, **`SPI3_HOST`** [E]. El perfil usa `SPI3_HOST`
-  y el controlador aplica **el mismo valor** al bus (`spi_bus_initialize`), al host SDSPI (`host.slot`), al
-  dispositivo (`slot.host_id`) y a la liberación (`spi_bus_free`).
-- **Si la placa es de otra revisión** permitida por el registro (1.1, 1.2, 1.4 o un derivado), el cableado no está
-  documentado y debe confirmarse antes de seleccionar el perfil [P].
+**Pull-ups de la microSD en la 1.3 (importante para H3c):**
 
-## 4. Alimentación y control (esquemas 1.3/1.5) [E]
+- La 1.3 **no tiene** las resistencias de 10 k (R17–R19) en MISO, MOSI y CS que agregó la 1.5 [E].
+- La guía de ESP-IDF *SD Pull-up Requirements* indica que en modo SPI las líneas CMD y DAT0–DAT3 deben tener
+  pull-ups de 10 kΩ [D].
+- Aun así, con esta misma placa el firmware FujiNet montó la tarjeta y leyó imágenes ATR SD (720×128) y DD (720×256)
+  de forma estable durante las pruebas WSS [C]. Con qué configuración de pull-ups internos lo logró es un detalle de
+  ese firmware que no se consultó.
+- **Para H3c [P]:**
+  1. Medir la fiabilidad del montaje y de las lecturas con la configuración por defecto del controlador SDSPI
+     (errores de `atr crc`, reintentos, latencias de `atr bench`), con al menos dos tarjetas.
+  2. Si aparecen fallos, una mitigación posible es habilitar los **pull-ups internos del ESP32** (débiles, del orden
+     de decenas de kΩ) **solo en GPIO 5, 18, 19 y 23**, nunca en pines del SIO. Requiere una decisión y aprobación
+     aparte, porque implica configurar GPIO de la microSD.
+  3. Una alternativa de hardware (agregar resistencias como en la 1.5) queda fuera del alcance del software.
+- **GPIO5 al arrancar:** sin pull-up externo, el nivel de arranque de GPIO5 depende de su pull-up interno por
+  defecto (alto) y de la carga de la tarjeta. Las pruebas WSS arrancaron con la tarjeta insertada sin problemas [C].
+  Se mantiene la advertencia de pin de arranque del validador.
+
+**Host SPI:**
+
+- Los cuatro pines son los nativos de VSPI, es decir, **`SPI3_HOST`** [E].
+- El perfil usa `SPI3_HOST`, y el controlador aplica **el mismo valor** al bus (`spi_bus_initialize`), al host
+  SDSPI (`host.slot`), al dispositivo (`slot.host_id`) y a la liberación (`spi_bus_free`).
+
+## 4. Alimentación y control (esquema 1.3, aplicable a esta placa) [E]
 
 - **Fuentes de alimentación:**
   - USB_5V y SIO_5V llegan a VCC mediante diodos Schottky PMEG2010;
@@ -104,13 +133,15 @@ En las revisiones **1.3 y 1.5** el bloque J4 (DM3D-SF) está cableado igual [E]:
 - **La placa puede alimentarse del +5 V del Atari**, cuyo pin 10 está especificado para 50 mA como máximo (Anexo A).
   Durante H3c: **solo USB y sin Atari conectado**.
 - **74LS07 (U3/U4):** se alimentan de VCC_BUF, conmutado por Q2/Q3, para aislar el bus con la placa apagada.
-- **Auto-reset:** el CP2102 controla EN/IO0 con DTR/RTS a través de Q1. El flasheo funcionó en las pruebas
-  anteriores [C].
+- **Auto-reset:** el CP2102 controla EN/IO0 con DTR/RTS a través de Q1. En la 1.3 los pull-ups de auto-reset son
+  de 1 k y no hay divisor en VBUS. En esta unidad el flasheo funcionó en las pruebas anteriores [C].
+- **Protección:** la 1.3 **no tiene** diodos TVS en la entrada USB, porque llegaron con la 1.5 [E]. Conviene
+  manipular la placa y el cable con precaución electrostática.
 - **Botones:** Safe Reset en GPIO14, ButtonA en GPIO0 y ButtonB en GPIO34.
 - **LED:** GPIO2, GPIO4 y GPIO13, activos en bajo.
 - **GPIO12 y GPIO15:** solo llegan a puntos de prueba en 1.3/1.5.
 
-## 5. Bus SIO (esquemas 1.3/1.5) [E], solo para descartar conflictos
+## 5. Bus SIO (esquema 1.3, aplicable a esta placa) [E], solo para descartar conflictos
 
 | Señal | GPIO | Dirección en el ESP32 |
 |---|---|---|
@@ -130,6 +161,8 @@ En las revisiones **1.3 y 1.5** el bloque J4 (DM3D-SF) está cableado igual [E]:
 - **Sin configurar nada:** RetroBridge no configura ninguno de esos GPIO del SIO. Con el ESP32 sin configurarlos, las
   entradas TTL de los 74LS07 se leen en alto y las salidas de colector abierto quedan liberadas [I]. Debe medirse en
   H4 [P].
+- **Para H4/H5:** en la 1.3 SIO_DATAIN no tiene el pull-up de 4,7 k que agregó la 1.5. El nivel alto de la línea
+  depende del lado del Atari.
 
 ## 6. Chip, flash, PSRAM y particiones
 
@@ -139,13 +172,18 @@ En las revisiones **1.3 y 1.5** el bloque J4 (DM3D-SF) está cableado igual [E]:
 | Flash | Fabricante 0xC8 (GigaDevice), dispositivo 0x4018, 16 MB | [C]; modelo GD25Q128 [I] |
 | Modo y frecuencia de las imágenes que corrieron | DIO, 40 MHz | [C] |
 | USB-serie | Silicon Labs CP210x (CP2102N-QFN24 en los esquemas) | [C] / [E] |
-| PSRAM | Heap inicial de 4 280 828 B con FujiNet, coherente con unos 4 MB direccionables | [C] |
-| Tamaño físico de la PSRAM | 8 MB según la wiki para la 1.0; el ESP32 mapea 4 MB directamente | [I]; serigrafía del módulo [P] |
+| Módulo | ESP32-WROVER-B | [F] |
+| Tamaño físico de la PSRAM | **8 MB**: todas las variantes del WROVER-B (N4R8, N8R8, N16R8) llevan 8 MB de PSRAM | [D] (variante exacta: [I] N16R8, por la flash de 16 MB detectada) |
+| PSRAM direccionable | Unos 4 MB mapeados directamente por el ESP32 (heap inicial de 4 280 828 B con FujiNet); el resto requiere himem | [C] |
 | Particiones de **FujiNet** instaladas | nvs 0x9000/28 KiB · main (factory) 0x10000/10 MiB · update 0xA10000/384 KiB · storage (LittleFS) 0xA70000/5,56 MiB · sin otadata | [C] (análisis del volcado D3) |
 
 RetroBridge **no** reutiliza esa tabla. Tiene la suya en `partitions/retrobridge-16mb.csv`.
 
-## 7. Perfil de microSD preparado
+## 7. Perfil de microSD de esta placa
+
+**Corresponde a esta placa:** el perfil `RB_BOARD_FUJINET_ATARI_V1X` se escribió para FN32ROV-1.3/1.5. Con la
+revisión confirmada como 1.3 [F], los pines, el host SPI3 y la ausencia de detección de tarjeta coinciden con el
+esquema 1.3. Los pull-ups de la microSD no forman parte del perfil (§3).
 
 - **Perfil:** `rb::board::fujinet_atari_v1x_profile()`, en `components/rb_board/include/rb/board/fujinet_atari_v1x.hpp`:
   - SPI con sck 18, mosi 23, miso 19 y cs 5;
@@ -161,6 +199,12 @@ RetroBridge **no** reutiliza esa tabla. Tiene la suya en `partitions/retrobridge
 
 ## Fuentes
 
+- **Fotografías de ambas caras de la placa** (2026-10-23, privadas, no versionadas): serigrafía FN32ROV-1.3-Q24,
+  módulo ESP32-WROVER-B y lector microSD integrado.
+- **Espressif, hoja de datos *ESP32-WROVER-B*:** variantes N4R8, N8R8 y N16R8, todas con 8 MB de PSRAM —
+  https://www.espressif.com/sites/default/files/documentation/esp32-wrover-b_datasheet_en.pdf
+- **Espressif, ESP-IDF *SD Pull-up Requirements*:** pull-ups de 10 kΩ en CMD y DAT0–DAT3 en modo SPI —
+  https://docs.espressif.com/projects/esp-idf/en/v5.1/esp32/api-reference/peripherals/sd_pullup_requirements.html
 - **Registros del equipo (locales, no versionados):**
   - esptool `flash_id`, `verify_flash`, `read_flash` y `write_flash`;
   - análisis del volcado D3;

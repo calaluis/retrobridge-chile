@@ -3,7 +3,8 @@
 > **NO EJECUTAR sin autorización explícita para cada paso** que use el puerto serie o esptool.
 >
 > Preparado el 2026-10-23 sin acceder al hardware: no se abrió COM3, no se ejecutó esptool y no se tocaron ni la
-> flash ni los eFuses. Placa: `docs/hardware/fujinet-atari-v1x.md` (revisión exacta pendiente).
+> flash ni los eFuses. Placa: `docs/hardware/fujinet-atari-v1x.md`, revisión **FN32ROV-1.3-Q24** con módulo
+> ESP32-WROVER-B (confirmada por fotografías el 2026-10-23).
 >
 > **Nunca:**
 > - modificar eFuses;
@@ -40,6 +41,9 @@ OBLIGATORIO antes de cualquier instalación física** (decisión del equipo, 202
 ## 2. Precondiciones
 
 1. Revisión de la placa confirmada por la serigrafía y coincidente con el perfil `fujinet-atari-v1.3/1.5`.
+   **Cumplida** (2026-10-23): FN32ROV-1.3-Q24. Antes de instalar, comprobar que la placa conectada es la misma unidad
+   fotografiada. La 1.3 no tiene pull-ups externos en la microSD; si `sd mount` o las lecturas fallan de forma
+   intermitente, registrarlo como hallazgo (ver el informe de hardware, §3) y no aplicar mitigaciones sin aprobación.
 2. Integridad de los respaldos comprobada otra vez inmediatamente antes de empezar (ver §1):
    ```bash
    sha256sum -c MANIFEST.sha256

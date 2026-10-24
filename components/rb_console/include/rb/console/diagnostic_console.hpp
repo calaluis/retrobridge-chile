@@ -10,14 +10,19 @@
 #include "rb/app/usecases/mount_disk_image.hpp"
 #include "rb/app/usecases/read_sector.hpp"
 #include "rb/app/usecases/unmount_disk_image.hpp"
+#include "rb/app/ports/clock.hpp"
 #include "rb/board/board_profile.hpp"
 #include "rb/esp/sd_card_storage.hpp"
+#include "rb/hwdiag/diagnostics_recorder.hpp"
+#include "rb/hwdiag/system_probe.hpp"
 #include "rb/storage/stdio_image_repository.hpp"
 
 namespace rb::console {
 
 constexpr std::size_t kImageSlots = 3;  // H3-4
 using ImageRepository = rb::storage::StdioImageRepository<kImageSlots>;
+
+constexpr uint32_t kSectorReadBudgetUs = 5000;  // architecture §9.3 / H3-12
 
 // Everything the console commands use, wired by the composition root (main).
 // The console task is the storage context (ADR-014). The `drive` commands run
@@ -36,6 +41,10 @@ struct ConsoleContext {
     rb::app::ApplyDriveRequest& applyRequest;
     rb::app::GetDriveStatus& driveStatus;
     rb::app::ReadSector& readSector;
+    // Autonomous diagnostics (H4): what the commands observe, and the platform's state.
+    rb::hwdiag::DiagnosticsRecorder& diagnostics;
+    const rb::hwdiag::SystemProbe& system;
+    rb::app::Clock& clock;
 };
 
 // CRC-32 of the ROM (esp_rom_crc32_le), as a Crc32Function for VerifySectors.

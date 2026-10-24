@@ -22,3 +22,5 @@ The repository is private for now; making it public is a separate, later decisio
 - H4 SIO hardware gate (in preparation, not approved): [analysis](docs/hardware/h4-puerta-sio.md),
   [passive measurement procedure](docs/hardware/procedimiento-medicion-pasiva-sio.md); H5 receive-only design
   proposal: [docs/diseno/h5-escucha-solo-recepcion.md](docs/diseno/h5-escucha-solo-recepcion.md)
+- Autonomous firmware diagnostics (`diag` console command, `rb_hw_diag`):
+  [docs/diseno/h4-diagnostico-autonomo.md](docs/diseno/h4-diagnostico-autonomo.md)

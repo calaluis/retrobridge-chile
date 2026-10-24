@@ -22,7 +22,9 @@
 #include "rb/console/diagnostic_console.hpp"
 #include "rb/core/toolchain_checks.hpp"
 #include "rb/esp/esp_clock.hpp"
+#include "rb/esp/esp_system_probe.hpp"
 #include "rb/esp/sd_card_storage.hpp"
+#include "rb/hwdiag/diagnostics_recorder.hpp"
 #include "sdkconfig.h"
 
 namespace {
@@ -57,9 +59,13 @@ rb::app::ApplyDriveRequest g_apply{g_bay, g_mailbox};
 rb::app::GetDriveStatus g_status{g_bay};
 rb::app::ReadSector g_read{g_bay};
 
+// Autonomous diagnostics (H4): internal state only, no SIO pin, no ADC.
+rb::esp::EspSystemProbe g_system{kBoard.name};
+rb::hwdiag::DiagnosticsRecorder g_diagnostics{rb::console::kSectorReadBudgetUs};
+
 rb::console::ConsoleContext g_console{kBoard,    g_storage, g_repository, g_inspect, g_verify,
                                       g_benchmark, g_mount, g_unmount,    g_collect, g_apply,
-                                      g_status,  g_read};
+                                      g_status,  g_read,    g_diagnostics, g_system, g_clock};
 
 }  // namespace
 
@@ -67,7 +73,15 @@ extern "C" void app_main(void)
 {
     ESP_LOGI(kTag, "RetroBridge Chile — diagnostic firmware (H3b), board profile '%s'", kBoard.name);
 
+    const rb::hwdiag::BootRecord boot = g_system.registerBoot();
+    g_diagnostics.recordBoot(boot, g_clock.nowMicros());
+    ESP_LOGI(kTag, "reset reason %s, boot %u since power-on (watchdog resets %u, panics %u)",
+             rb::hwdiag::reset_reason_name(boot.reason), static_cast<unsigned>(boot.bootsSincePowerOn),
+             static_cast<unsigned>(boot.watchdogResets), static_cast<unsigned>(boot.panicResets));
+
     const auto mounted = g_storage.mount(kBoard);  // refused without touching hardware if unconfirmed
+    g_diagnostics.recordMount(mounted.ok(), g_storage.lastEspError(),
+                              mounted.ok() ? 0 : static_cast<uint8_t>(mounted.error()), g_clock.nowMicros());
     if (!mounted.ok()) {
         if (!kBoard.hardwareConfirmed) {
             ESP_LOGW(kTag, "HARDWARE NOT VALIDATED: microSD, board GPIOs and SIO are disabled until the board "

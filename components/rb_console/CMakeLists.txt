@@ -6,7 +6,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/rb_build_flags.cmake)
 idf_component_register(
     SRCS "src/diagnostic_console.cpp"
     INCLUDE_DIRS "include"
-    REQUIRES rb_application rb_board rb_file_storage rb_esp_storage rb_esp_platform
+    REQUIRES rb_application rb_board rb_file_storage rb_esp_storage rb_esp_platform rb_hw_diag
     PRIV_REQUIRES console esp_rom vfs)
 
 rb_apply_build_flags(${COMPONENT_LIB})

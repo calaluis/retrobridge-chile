@@ -43,6 +43,12 @@ class CheckLayeringTest(unittest.TestCase):
         write(self.root, "components/rb_core/src/b.cpp", '#include "rb/sio/y.hpp"\n')
         self.assertEqual(len(check_layering.check_repo(self.root)), 2)
 
+    def test_hw_diag_stays_independent_of_platform_and_domain(self):
+        write(self.root, "components/rb_hw_diag/src/ok.cpp", '#include "rb/core/x.hpp"\n#include "rb/hwdiag/y.hpp"\n')
+        write(self.root, "components/rb_hw_diag/src/a.cpp", '#include "esp_system.h"\n')
+        write(self.root, "components/rb_hw_diag/src/b.cpp", '#include "rb/domain/disk_image.hpp"\n')
+        self.assertEqual(len(check_layering.check_repo(self.root)), 2)
+
     def test_infrastructure_components_are_not_checked(self):
         write(self.root, "components/rb_esp_sio/src/a.cpp", '#include "driver/uart.h"\n')
         self.assertEqual(check_layering.check_repo(self.root), [])

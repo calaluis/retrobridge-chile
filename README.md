@@ -19,3 +19,6 @@ The repository is private for now; making it public is a separate, later decisio
 - Sources consulted: [docs/fuentes.md](docs/fuentes.md)
 - Hardware notes: [docs/hardware/](docs/hardware/); measurements and validation reports: [docs/mediciones/](docs/mediciones/)
   (first physical validation, H3c: [2026-10-24](docs/mediciones/h3c-validacion-fisica-2026-10-24.md))
+- H4 SIO hardware gate (in preparation, not approved): [analysis](docs/hardware/h4-puerta-sio.md),
+  [passive measurement procedure](docs/hardware/procedimiento-medicion-pasiva-sio.md); H5 receive-only design
+  proposal: [docs/diseno/h5-escucha-solo-recepcion.md](docs/diseno/h5-escucha-solo-recepcion.md)

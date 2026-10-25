@@ -184,9 +184,12 @@ El orden coincide con la secuencia de §3.
 | 2026-10-24 | `boot reason=OtherWatchdog boots_since_power_on=1 watchdog_resets=1 panic_resets=0 brownout_resets=0` | Primer arranque tras el flasheo. Tras un ciclo controlado de USB: `PowerOn` y 0 watchdogs (`h4-validacion-diagnostico-2026-10-24.md` §4.1) |
 | **2026-10-25** | `boot reason=OtherWatchdog boots_since_power_on=1 watchdog_resets=1 panic_resets=0 brownout_resets=0` | Sesión **sin flasheo**. El firmware funcionó más de 20 minutos y completó todas las pruebas |
 
-- **Estado: pendiente y reiterada en una sesión posterior.** No hay evidencia de reinicios adicionales durante las
-  pruebas ni durante los benchmarks: el registro muestra un solo `Boot` (§4.6).
-- **Causa no determinada.** No se atribuye al hardware, al firmware, a ESP-IDF ni al reinicio por USB.
+- **Estado: caracterizada el 2026-10-25 como comportamiento conocido de esta unidad** (`arranque-rom-conocido-2026-10-25.md`). No hay
+  evidencia de reinicios adicionales durante las pruebas ni durante los benchmarks: el registro muestra un solo
+  `Boot` (§4.6).
+- **Origen identificado, causa raíz sin confirmar:** el `OtherWatchdog` corresponde al reinicio `RTCWDT` de la ROM
+  tras `flash read err, 1000`, anterior al bootloader y a RetroBridge; también ocurría con el firmware FujiNet
+  anterior (`arranque-rom-conocido-2026-10-25.md` §3).
 - **Lectura del registro [V]:** `boots_since_power_on=1` junto a `watchdog_resets=1` indica que en ese arranque la
   memoria RTC no traía un registro válido, como ocurre tras una pérdida de alimentación, y aun así el motivo
   informado fue un watchdog. El historial funcionó según su diseño (`h4-diagnostico-autonomo.md` §6).
@@ -194,12 +197,12 @@ El orden coincide con la secuencia de §3.
   - La errata **RES-3.8** del ESP32 (*ESP32 Series SoC Errata*) afecta a las revisiones v0.0, v1.0 y v1.1. Describe
     que, si el ESP32 lee la flash antes de que esté lista tras el encendido, el arranque puede fallar hasta que se
     produce un reinicio por watchdog, cuando la flash se alimenta de VDD_SDIO.
-  - El patrón sería compatible con O1 y con el `flash read err, 1000` transitorio del primer encendido en H3c
+  - El patrón es compatible con O1 y con el `flash read err, 1000` transitorio del primer encendido en H3c
     (`h3c-validacion-fisica-2026-10-24.md` §5, observación 1).
-  - Hay que confirmarlo o descartarlo con evidencia.
-- **Siguiente investigación:** capturar desde el encendido el registro de arranque de la ROM y del bootloader,
-  sobre todo la línea **`rst:`** y cualquier `flash read err`, en varios arranques en frío y tras reconectar el USB, y
-  compararlo con `diag status`. Es una captura pasiva de la consola, sin cambios de firmware.
+  - **Sigue sin confirmar**, y la errata no explica por sí sola los fallos tras un reset por EN/RTS
+    (`arranque-rom-conocido-2026-10-25.md` §4).
+- **Investigación realizada:** la captura propuesta aquí se hizo en T1 (2026-10-25). Resultados y decisión en
+  `arranque-rom-conocido-2026-10-25.md`.
 
 ## 6. Matriz de la regresión
 
@@ -212,7 +215,7 @@ El orden coincide con la secuencia de §3.
 | Heap durante los benchmarks | H3c §4.5 | Parcial: sin variación en cada ejecución | §4.4 |
 | Registro en `diag storage` y `diag events` | — | Aprobado | §4.5, §4.6 |
 | `diag report` final verificado en el PC | — | Aprobado (21 líneas) | §4.7 |
-| `OtherWatchdog` (O1) | — | Pendiente, reiterado | §5 |
+| `OtherWatchdog` (O1) | — | Comportamiento conocido; causa raíz sin confirmar | §5; `arranque-rom-conocido-2026-10-25.md` |
 | Estabilidad prolongada | — | Pendiente | — |
 | MOTOR CONTROL / GPIO36 (M3a), puerta eléctrica M0–M6 | — | Pendiente | `h4-puerta-sio.md` |
 | Recepción y transmisión SIO; pruebas con el Atari | — | Pendiente | H5–H7 |
@@ -225,8 +228,9 @@ El orden coincide con la secuencia de §3.
    - la unidad D1 con su límite y su recuperación;
    - un rendimiento de medias y máximos alrededor del 1 % de H3c.
 2. `rb_hw_diag` registra correctamente todas esas operaciones, y el informe final verifica con la herramienta de PC.
-3. El `OtherWatchdog` de arranque se repitió en una sesión sin flasheo. Su causa sigue indeterminada y se investigará
-   con la captura del registro de la ROM.
+3. El `OtherWatchdog` de arranque se repitió en una sesión sin flasheo. La captura posterior de la ROM (T1) lo
+   relacionó con el reinicio `RTCWDT` tras `flash read err, 1000`; se registró como comportamiento conocido
+   (`arranque-rom-conocido-2026-10-25.md`).
 4. **H4 eléctrico continúa EN PREPARACIÓN.** Esta regresión no aprueba la puerta de hardware SIO.
 
 ## 8. Trazabilidad y privacidad

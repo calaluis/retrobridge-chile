@@ -157,7 +157,7 @@ Se registran sin corregir; ninguna se da por resuelta.
 
 | # | Observación [H] | Análisis | Clasificación y acción propuesta |
 |---|---|---|---|
-| 1 | En el primer encendido apareció de forma transitoria `flash read err, 1000`, seguido de un arranque correcto. | `0x1000` es la dirección del bootloader. [I] Puede ser un error transitorio de la ROM al leer la flash durante el encendido o el auto-reset por USB. No se reprodujo ni se capturó el registro completo. | **[P]** Incidencia: registrar varios arranques en frío y con auto-reset, con y sin microSD, para ver si se repite. |
+| 1 | En el primer encendido apareció de forma transitoria `flash read err, 1000`, seguido de un arranque correcto. | `0x1000` es la dirección del bootloader. **Caracterizado el 2026-10-25:** el fallo ocurre en la ROM, antes del bootloader y de RetroBridge; se repitió en 9 de 9 encendidos con S5 (T1) y ya ocurría con el firmware FujiNet anterior tras cada reset por RTS. Causa raíz sin confirmar; RES-3.8 es una hipótesis compatible (`arranque-rom-conocido-2026-10-25.md`). | **Comportamiento conocido de esta unidad** (`arranque-rom-conocido-2026-10-25.md` §8). No bloquea. |
 | 2 | El perfil de almacenamiento informa `warnings 0x01`. | En el código es `PinWarning::kStrappingPin` (`components/rb_board/include/rb/board/board_profile.hpp`): el perfil usa un pin de arranque, **GPIO5** (CS de la microSD), como ya advertía `docs/hardware/fujinet-atari-v1x.md` §3. | **Aviso esperado, no un error.** Se mantiene; se relaciona con el seguimiento del nivel de GPIO5 al arrancar (§3 del informe de hardware). |
 | 3 | La consola imprime a veces dos veces `retrobridge>`. | Causa no confirmada. [I] Podría venir de la interacción entre el REPL de `esp_console` y los finales de línea del terminal. | **[P]** Incidencia: reproducir con distintos ajustes de fin de línea del terminal. |
 | 4 | Al salir de Miniterm, las tres luces de la FujiNet quedaron encendidas. | RetroBridge no configura los GPIO de los LED (2, 4 y 13; informe de hardware §5). [I] Su estado depende de los valores al arrancar o de las líneas DTR/RTS al cerrar el puerto. | **[P]** Caracterizar más adelante; no afecta al almacenamiento. Cualquier control de LED requiere un perfil y una decisión aparte. |
@@ -193,7 +193,7 @@ Se registran sin corregir; ninguna se da por resuelta.
 | Lectura por la unidad D1, límites y recuperación | H2/H3 (`VirtualDrive`, ADR-005) | Aprobada | §4.4 |
 | Lectura de sector ≤ 5 ms | §9.3, H3-12 | Aprobada como máximo observado | 3 953 µs en 1 200 lecturas; falta caracterizar el peor caso |
 | Lectura sin cambios en el heap | H3-13 | Parcial | Una ejecución de 1 000 lecturas sin cambio neto |
-| `flash read err, 1000` en el primer encendido | Observación 1 | Pendiente | §5 |
+| `flash read err, 1000` en el primer encendido | Observación 1 | Comportamiento conocido; causa raíz sin confirmar | §5; `arranque-rom-conocido-2026-10-25.md` |
 | Doble prompt en la consola | Observación 3 | Pendiente | §5 |
 | Estado de los LED al cerrar Miniterm | Observación 4 | Pendiente | §5 |
 | Estabilidad de la microSD en la revisión 1.3 | Observación 5 | Pendiente | §5 |
@@ -209,7 +209,8 @@ Se registran sin corregir; ninguna se da por resuelta.
 3. La lectura de sectores respeta la geometría ATR, rechaza los sectores fuera de rango y se recupera.
 4. La latencia de almacenamiento observada (máximo de 3 953 µs) queda dentro del presupuesto de 5 ms. No es un peor
    caso garantizado ni una medición del protocolo SIO.
-5. Quedan cinco observaciones abiertas (§5). Ninguna impidió las pruebas, pero deben caracterizarse antes de H4.
+5. Quedan cuatro observaciones abiertas (§5). Ninguna impidió las pruebas, pero deben caracterizarse antes de H4.
+   La observación 1 se caracterizó el 2026-10-25 como comportamiento conocido de esta unidad (`arranque-rom-conocido-2026-10-25.md`).
 
 ## 9. Trazabilidad y privacidad
 

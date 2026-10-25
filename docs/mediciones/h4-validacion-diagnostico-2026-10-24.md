@@ -159,15 +159,16 @@ Queda validado el formato, el número de líneas y el CRC-32 de un informe captu
 
 | # | Observación | Análisis | Estado |
 |---|---|---|---|
-| O1 | Primer arranque tras el flasheo con `boot reason=OtherWatchdog` (`ESP_RST_WDT`, "otros watchdogs"). En el arranque siguiente, tras el ciclo de USB: `PowerOn`, sin watchdog | **Causa indeterminada.** No se atribuye a esptool, al firmware ni al hardware sin más evidencia. [I] Posibles líneas de estudio: el reinicio por RTS del auto-reset tras la escritura, un watchdog de arranque de la ROM o del bootloader, u otro motivo | **[P]** Repetir un flasheo controlado y capturar el registro completo de arranque de la ROM (línea `rst:`) y de la aplicación, y varios arranques en frío |
+| O1 | Primer arranque tras el flasheo con `boot reason=OtherWatchdog` (`ESP_RST_WDT`, "otros watchdogs"). En el arranque siguiente, tras el ciclo de USB: `PowerOn`, sin watchdog | **Origen identificado el 2026-10-25:** es el reinicio `RTCWDT` (`rst:0x10`) de la ROM tras `flash read err, 1000`, capturado en 8 de 8 arranques de T1 (`arranque-rom-conocido-2026-10-25.md` §1 y §3.1). Ocurre antes del bootloader y de RetroBridge. Causa raíz sin confirmar | **Comportamiento conocido de esta unidad** (`arranque-rom-conocido-2026-10-25.md` §8) |
 | O2 | Diferencia de 88 bytes de heap alrededor de un benchmark de 100 lecturas | Medición puntual | **[P]** Seguimiento con más lecturas (H3-13; Meta B en H7) |
 | O3 | Informe de 13 líneas frente a los 4 eventos que mostró al final `diag events` | **Resuelta por la cronología confirmada** (§3, §4.6): el informe se generó con 2 eventos (11 + 2 = 13 líneas); `BenchmarkCompleted` y `VerifyCompleted` se agregaron después | **Resuelta**: no es una discrepancia |
 
-Siguen abiertas las observaciones de H3c (`h3c-validacion-fisica-2026-10-24.md` §5), entre ellas el
-`flash read err, 1000` del primer encendido de H3c. No hay evidencia de que esté relacionado con O1.
+Siguen abiertas las demás observaciones de H3c (`h3c-validacion-fisica-2026-10-24.md` §5). El
+`flash read err, 1000` del primer encendido de H3c y O1 resultaron ser el mismo fenómeno (`arranque-rom-conocido-2026-10-25.md`).
 
-**Seguimiento de O1:** el `OtherWatchdog` de arranque **se repitió el 2026-10-25**, en una sesión sin flasheo. El
-análisis y la hipótesis de trabajo (errata RES-3.8, sin confirmar) están en `h4-regresion-h3c-2026-10-25.md` §5.
+**Seguimiento de O1:** el `OtherWatchdog` de arranque **se repitió el 2026-10-25**, en una sesión sin flasheo
+(`h4-regresion-h3c-2026-10-25.md` §5). La captura de la ROM (T1) lo relacionó con el reinicio `RTCWDT` y se
+registró como comportamiento conocido: `arranque-rom-conocido-2026-10-25.md`. RES-3.8 sigue siendo una hipótesis, sin confirmar.
 
 ## 6. Matriz de pruebas
 
@@ -178,7 +179,7 @@ análisis y la hipótesis de trabajo (errata RES-3.8, sin confirmar) están en `
 | Identidad del firmware (`15b153f`) y perfil | Procedimiento §6 | Aprobada | §4.1 |
 | Configuración del watchdog | `h4-diagnostico-autonomo.md` §3 | Aprobada | §4.1 |
 | Historial de reinicios (encendido) | Ídem | Aprobada | `PowerOn`, arranque 1 (§4.1) |
-| Historial de reinicios (watchdog) | Ídem | Observado, sin reproducir | O1 |
+| Historial de reinicios (watchdog) | Ídem | Observado y explicado: `RTCWDT` de la ROM (2026-10-25) | O1; `arranque-rom-conocido-2026-10-25.md` |
 | `diag memory` | Ídem | Aprobada | §4.2 |
 | Benchmark y su registro en `diag storage` | Ídem | Aprobada | §4.3 |
 | Lectura ATR y su registro | Ídem | Aprobada | §4.4 |
@@ -203,7 +204,7 @@ USB, microSD y UART0.
 - la seguridad de los niveles de tensión del bus;
 - la integración con el Atari y la recepción y transmisión SIO (H5–H7);
 - la estabilidad de larga duración;
-- la causa del `OtherWatchdog` inicial.
+- la causa raíz del fallo de la ROM que produce el `OtherWatchdog` inicial (`arranque-rom-conocido-2026-10-25.md`).
 
 El software **no sustituye** a un multímetro ni a un osciloscopio, y **no protege** por sí mismo al ESP32 contra
 sobretensiones (`h4-diagnostico-autonomo.md` §6).

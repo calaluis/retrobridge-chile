@@ -24,4 +24,5 @@ The repository is private for now; making it public is a separate, later decisio
   proposal: [docs/diseno/h5-escucha-solo-recepcion.md](docs/diseno/h5-escucha-solo-recepcion.md)
 - Autonomous firmware diagnostics (`diag` console command, `rb_hw_diag`):
   [docs/diseno/h4-diagnostico-autonomo.md](docs/diseno/h4-diagnostico-autonomo.md); validated on the board over USB
-  (H4 software, not the SIO hardware gate): [2026-10-24](docs/mediciones/h4-validacion-diagnostico-2026-10-24.md)
+  (H4 software, not the SIO hardware gate): [2026-10-24](docs/mediciones/h4-validacion-diagnostico-2026-10-24.md);
+  H3c storage regression with the H4 firmware: [2026-10-25](docs/mediciones/h4-regresion-h3c-2026-10-25.md)

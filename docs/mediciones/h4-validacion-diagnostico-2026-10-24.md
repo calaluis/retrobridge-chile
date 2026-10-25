@@ -166,6 +166,9 @@ Queda validado el formato, el número de líneas y el CRC-32 de un informe captu
 Siguen abiertas las observaciones de H3c (`h3c-validacion-fisica-2026-10-24.md` §5), entre ellas el
 `flash read err, 1000` del primer encendido de H3c. No hay evidencia de que esté relacionado con O1.
 
+**Seguimiento de O1:** el `OtherWatchdog` de arranque **se repitió el 2026-10-25**, en una sesión sin flasheo. El
+análisis y la hipótesis de trabajo (errata RES-3.8, sin confirmar) están en `h4-regresion-h3c-2026-10-25.md` §5.
+
 ## 6. Matriz de pruebas
 
 | Prueba | Origen | Estado | Evidencia |
@@ -181,8 +184,8 @@ Siguen abiertas las observaciones de H3c (`h3c-validacion-fisica-2026-10-24.md` 
 | Lectura ATR y su registro | Ídem | Aprobada | §4.4 |
 | `diag events` | Ídem | Aprobada | §4.5 |
 | `diag report` verificado en el PC | Ídem, §4.1 | Aprobada | §4.6: 13 líneas y CRC `b83ae52b`, generado con 2 eventos según la cronología confirmada |
-| Comparación de los 720 CRC contra el manifiesto en esta sesión | Procedimiento §6.4 | No ejecutada | Hecha en H3c con `1b1527d` |
-| Regresión completa de H3c (5 imágenes, `drive read`, `seq`) | Procedimiento §6.4 | Parcial | Solo `dd-1440` en modo aleatorio y `dd-720` con `atr crc` |
+| Comparación de los 720 CRC contra el manifiesto en esta sesión | Procedimiento §6.4 | No ejecutada (24-10) | Hecha en H3c con `1b1527d`. Con H4, la comparación completa de 4 640 CRC se hizo el 2026-10-25 (`h4-regresion-h3c-2026-10-25.md`) |
+| Regresión completa de H3c (5 imágenes, `drive read`, `seq`) | Procedimiento §6.4 | Parcial (24-10) | Solo `dd-1440` en modo aleatorio y `dd-720` con `atr crc`. **Completada el 2026-10-25** en una campaña aparte (`h4-regresion-h3c-2026-10-25.md`) |
 | MOTOR CONTROL / GPIO36 (M3a) | `h4-puerta-sio.md` | Pendiente | — |
 | Niveles y aislamiento del bus SIO (M0–M6) | Ídem | Pendiente | — |
 | Recepción y transmisión SIO (H5–H7) | Arquitectura §11 | Pendiente | — |

@@ -37,9 +37,12 @@
 > - **H4, paquete de diagnóstico** (PR #14, fusionado en `main`, `ded3710`): job independiente
 >   `firmware-package-h4`, que empaqueta `15b153f` como `retrobridge-fw-diag-fujinet-atari-v1x-15b153f`; el paquete
 >   H3c no cambia.
-> - **H4, validación física del diagnóstico** (2026-10-24; rama `docs/h4-validacion-fisica-2026-10-24`, en
->   revisión): firmware `15b153f` (ejecución `40133891881`) en la placa, solo por USB y sin el Atari. `rb_hw_diag`
->   validado funcionalmente y `diag report` verificado con `check_diag_report.py`
+> - **H4, regresión de H3c** (2026-10-25; rama `docs/h4-regresion-h3c-2026-10-25`, en revisión): con el firmware
+>   `15b153f`, sin volver a flashear, se reprodujo la Meta A (4 640/4 640 CRC32), la unidad D1 y los benchmarks
+>   (`docs/mediciones/h4-regresion-h3c-2026-10-25.md`). `OtherWatchdog` de arranque reiterado y pendiente.
+> - **H4, validación física del diagnóstico** (2026-10-24; PR #15, fusionado en `main`, `8660f50`): firmware
+>   `15b153f` (ejecución `40133891881`) en la placa, solo por USB y sin el Atari. `rb_hw_diag` validado
+>   funcionalmente y `diag report` verificado con `check_diag_report.py`
 >   (`docs/mediciones/h4-validacion-diagnostico-2026-10-24.md`). **H4 eléctrico sigue en preparación.**
 > - **H4, diagnóstico autónomo** (PR #13, fusionado en `main`, `7ae22ea`): componente puro
 >   `rb_hw_diag` (reinicios, watchdog, memoria, microSD, errores de lectura, latencias y eventos) con el adaptador

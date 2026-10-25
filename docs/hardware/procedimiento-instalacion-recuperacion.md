@@ -129,9 +129,14 @@ Para un volcado crudo, esptool no debe reescribir las cabeceras de flash; por es
 
 ## 6. Firmware H4 con diagnóstico autónomo: primera validación física
 
-> **Ejecutada parcialmente el 2026-10-24**, solo por USB y sin el Atari. Resultados, observaciones y pasos todavía
-> pendientes (por ejemplo, la regresión completa de H3c): `docs/mediciones/h4-validacion-diagnostico-2026-10-24.md`.
-> Cada repetición sigue requiriendo autorización explícita.
+> **Ejecutada** en dos campañas, solo por USB y sin el Atari:
+> - pasos 1–3 (instalación y diagnóstico) el 2026-10-24: `docs/mediciones/h4-validacion-diagnostico-2026-10-24.md`;
+> - paso 4 (**regresión de H3c → H4**: cinco geometrías, 4 640/4 640 CRC32, unidad D1 y benchmarks) el 2026-10-25,
+>   sin volver a flashear: `docs/mediciones/h4-regresion-h3c-2026-10-25.md`.
+>
+> El paso 5 (reinicio controlado) se hizo el 2026-10-24 con un ciclo de USB (`PowerOn`). Pendiente: investigar la
+> causa del `OtherWatchdog` de arranque (observación O1), capturando la línea `rst:` de la ROM. Cada repetición sigue
+> requiriendo autorización explícita.
 
 Paquete `retrobridge-fw-diag-fujinet-atari-v1x-15b153f` (job `firmware-package-h4`, commit `15b153f`). Cada paso
 requiere una **autorización explícita**. La FujiNet se conecta **solo por USB**: **sin el Atari** y sin nada en el

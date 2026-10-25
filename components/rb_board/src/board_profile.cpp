@@ -57,20 +57,14 @@ public:
 
 private:
     bool psram_;
-    std::array<int8_t, 8> used_{};
+    std::array<int8_t, 12> used_{};  // up to 7 microSD pins plus 3 SIO pins
     std::size_t count_ = 0;
     uint8_t warnings_ = 0;
 };
 
-}  // namespace
-
-Result<uint8_t> validate_for_storage(const BoardProfile& profile) noexcept
+// Registers the microSD pins of a profile whose interface is not None.
+bool add_storage_pins(PinChecker& checker, const BoardProfile& profile) noexcept
 {
-    if (!profile.hardwareConfirmed) {
-        return Failure{ErrorCode::BoardNotConfirmed};
-    }
-
-    PinChecker checker{profile.hasPsram};
     bool ok = true;
     switch (profile.sdInterface) {
     case SdInterface::Spi:
@@ -86,15 +80,52 @@ Result<uint8_t> validate_for_storage(const BoardProfile& profile) noexcept
         break;
     case SdInterface::None:
     default:
-        return Failure{ErrorCode::InvalidPinAssignment};
+        return false;
     }
     if (ok && profile.cardDetect != kNoPin) {
         ok = checker.add({profile.cardDetect, false});
+    }
+    return ok;
+}
+
+}  // namespace
+
+Result<uint8_t> validate_for_storage(const BoardProfile& profile) noexcept
+{
+    if (!profile.hardwareConfirmed) {
+        return Failure{ErrorCode::BoardNotConfirmed};
+    }
+
+    PinChecker checker{profile.hasPsram};
+    if (!add_storage_pins(checker, profile)) {
+        return Failure{ErrorCode::InvalidPinAssignment};
+    }
+    return checker.warnings();
+}
+
+Result<uint8_t> check_sio_pins(const BoardProfile& profile, SioMode mode) noexcept
+{
+    PinChecker checker{profile.hasPsram};
+    // A board without microSD has no storage pins to collide with.
+    bool ok = profile.sdInterface == SdInterface::None || add_storage_pins(checker, profile);
+    ok = ok && checker.add({profile.sio.command, false}) && checker.add({profile.sio.rx, false});
+    if (mode == SioMode::ReceiveOnly) {
+        ok = ok && profile.sio.tx == kNoPin;  // DATA IN is never driven before H6
+    } else {
+        ok = ok && checker.add({profile.sio.tx, true});
     }
     if (!ok) {
         return Failure{ErrorCode::InvalidPinAssignment};
     }
     return checker.warnings();
+}
+
+Result<uint8_t> validate_for_sio(const BoardProfile& profile, SioMode mode) noexcept
+{
+    if (!profile.hardwareConfirmed || !profile.sioGateApproved) {
+        return Failure{ErrorCode::BoardNotConfirmed};
+    }
+    return check_sio_pins(profile, mode);
 }
 
 }  // namespace rb::board

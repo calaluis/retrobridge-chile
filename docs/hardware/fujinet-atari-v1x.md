@@ -135,6 +135,11 @@ pull-ups [E][F]:
 - **74LS07 (U3/U4):** se alimentan de VCC_BUF, conmutado por Q2/Q3, para aislar el bus con la placa apagada.
 - **Auto-reset:** el CP2102 controla EN/IO0 con DTR/RTS a través de Q1. En la 1.3 los pull-ups de auto-reset son
   de 1 k y no hay divisor en VBUS. En esta unidad el flasheo funcionó en las pruebas anteriores [C].
+- **Reparación publicada de la 1.3** (VIO–VDD de U2, R6/R7 a 10 k, condensadores en C5/C6): **sin confirmar en esta
+  unidad**. La inspección visual del 2026-10-25 no fue concluyente [P] (`../mediciones/arranque-rom-conocido-2026-10-25.md` §6).
+- **Comportamiento conocido de arranque:** la ROM falla la primera lectura de la flash (`flash read err, 1000`) y se
+  recupera con un reinicio `RTCWDT`, que `rb_hw_diag` informa como `OtherWatchdog` [C]. Causa raíz sin confirmar
+  (`../mediciones/arranque-rom-conocido-2026-10-25.md`).
 - **Protección:** la 1.3 **no tiene** diodos TVS en la entrada USB, porque llegaron con la 1.5 [E]. Conviene
   manipular la placa y el cable con precaución electrostática.
 - **Botones:** Safe Reset en GPIO14, ButtonA en GPIO0 y ButtonB en GPIO34.

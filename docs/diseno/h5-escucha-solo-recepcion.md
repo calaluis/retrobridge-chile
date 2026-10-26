@@ -6,6 +6,9 @@
 >
 > **Revisión técnica del 2026-10-25 (P2, P3 y P7, §8):** contrastada con la fuente de ESP-IDF v6.1 (etiqueta
 > `v6.1`). P7 confirmado; P2 y P3 condicionados. Es investigación documental: no inicia H5 ni aprueba H4.
+>
+> **Adenda del 2026-10-26 (§9):** correlación de COMMAND y bytes, riesgos de concurrencia y decisiones D1–D4,
+> pendientes de aprobación. Los entregables de host ya integrados (PR #21 y #22) no activan nada físico.
 
 **Etiquetas:**
 - **[D]** documentación de Espressif (ESP-IDF v6.1, hoja de datos, erratas);
@@ -222,3 +225,73 @@ rb_console (consola: "sio listen", "sio stats")       infraestructura
 | P5 | Velocidad real NTSC/PAL y su tolerancia | Analizador (M5) |
 | P6 | Umbral del filtro de COMMAND | Medición de t0 y de la duración de COMMAND (M5) |
 | P7 | Aprobación del cambio `CONFIG_UART_ISR_IN_IRAM=y` | **Confirmado técnicamente (2026-10-25)**: la opción existe y su alcance está en §2. Falta la aprobación del cambio de `sdkconfig` en la revisión de H5 |
+| P9 | Los 5 bytes deben estar disponibles al subir COMMAND pese al tiempo de espera de RX de la UART (10 caracteres por defecto) | Decisión D1 (§9.4) y medición en el equipo (M5) |
+
+## 9. Adenda: correlación de COMMAND y bytes (análisis del 2026-10-26)
+
+> Análisis documental. **No** inicia H5 físico, **no** aprueba H4 y **no** decide nada por sí mismo: D1–D4 quedan
+> pendientes de aprobación. Ningún punto autoriza a configurar GPIO, UART o interrupciones ni a cambiar `sdkconfig`.
+
+### 9.1 Estado de los componentes de host
+
+| Componente | Estado | Responsabilidad |
+|---|---|---|
+| `CommandLineTracker` (`rb_sio`) | Integrado (PR #21) | Clasificar cada bajo de COMMAND a partir de los instantes de bajada y subida: `Glitch`, `FrameWindow{fall, rise}`, `OverlongWindow`, `StuckLow`, `Recovered`, `Resync`, `Rejected` |
+| `SioCommandSource` / `CommandBytes` (`rb_application`) | Integrado (PR #22) | Entregar una trama **ya delimitada**: `bytes[5]`, `count` e instante de COMMAND↑ (`commandReleasedAtUs`), o `Timeout`/`TransportError` |
+| `SioListener` (`rb_sio`) | Integrado (PR #22) | Clasificar y registrar tramas ya delimitadas, sin transmitir (solo recibe `SioCommandSource`) |
+
+Son compatibles e independientes: no comparten tipos. Según el contrato de §4, **la correlación entre ventana y bytes
+corresponde al adaptador** (`EspSioTransport`): vacía el FIFO de RX en COMMAND↓ y lee al subir COMMAND. El tracker es
+una pieza interna de ese adaptador y `SioListener` solo consume el producto ya correlacionado.
+
+### 9.2 Casos de correlación
+
+La correlación es inequívoca **solo si** el adaptador vacía el FIFO en cada bajada y procesa cada subida antes de la
+bajada siguiente. `CommandBytes` no trae el instante de bajada ni la duración de la ventana, así que quien recibe la
+trama no puede verificarla. Dos marcas de tiempo cercanas **no** se suponen de la misma transacción [I].
+
+| Caso | Comportamiento seguro propuesto [I] | ¿Se prueba en host? |
+|---|---|---|
+| Flanco perdido (`Resync`) | Descartar los bytes acumulados; no entregar trama | Sí |
+| COMMAND bajo permanente (`StuckLow`) | No entregar tramas. Hoy el monitor solo vería `Timeout`, igual que en reposo (D2) | Sí (lógica) |
+| `Glitch` | Sin trama; los bytes, si los hay, se vacían en la bajada siguiente | Sí |
+| `OverlongWindow` con 5 bytes | Política pendiente (D4) | Sí |
+| Error de UART dentro de la ventana | Marcar la ventana como inválida y entregar `TransportError` al subir; nunca una trama parcial | Sí |
+| `Timeout` con una ventana a medias | Conservar el estado entre llamadas a `waitCommandFrame`; no perder la ventana | Sí |
+| Trama incompleta o demasiado larga | Ya cubierta por `count` y `SioListener` | Sí (hecho) |
+| Marcas de tiempo desordenadas | El tracker las rechaza (`Rejected`) sin perder el estado; el adaptador no debe mezclar canales sin orden común | Parcial |
+| Consumidor más lento que los eventos | Si llega la bajada siguiente antes de procesar la subida anterior: descartar ambas ventanas y contarlo; nunca asignar bytes a la ventana equivocada | Sí (política) |
+
+### 9.3 Riesgos de concurrencia y temporización
+
+1. **Bytes «tardíos» por la UART (riesgo principal).** En ESP-IDF v6.1 los valores por defecto son
+   `UART_FULL_THRESH_DEFAULT` = 120 y `UART_TOUT_THRESH_DEFAULT` = 10 (`components/esp_driver_uart/src/uart.c`) [D].
+   Con 5 bytes a 19 200 baudios, el controlador no los pasaría a su búfer hasta unos 10 caracteres (≈ 5,2 ms) después
+   del último, más tarde que COMMAND↑ (t1 ≤ 950 µs). Leer al subir COMMAND daría **0 bytes** [I]. Ver D1 y P9.
+2. **Dos canales sin orden común:** la ISR de COMMAND notifica a la tarea y la UART tiene su propia cola de eventos.
+   Leer los bytes desde la tarea al procesar la subida evita marcas de tiempo por byte, pero exige que la tarea responda
+   antes de la bajada siguiente; si no, se descarta (§9.2).
+3. **Desbordamiento de la cola ISR → tarea:** debe contarse y forzar el descarte de la ventana afectada.
+4. **Solo verificable en el equipo** (H4 M3–M5 y revisión de H5): pulsos reales de 80 ns, tiempos reales de los
+   flancos, tolerancia de velocidad, errata GPIO-3.14, latencia de la tarea y tamaño de las colas bajo carga real.
+
+### 9.4 Decisiones pendientes de aprobación
+
+| # | Decisión | Opciones | Recomendación [I] |
+|---|---|---|---|
+| D1 | Modelo de captura de la UART | (a) leer al subir COMMAND con `uart_set_rx_timeout()` a 1 carácter (≈ 0,52 ms, menor que t1 mínimo de 650 µs); (b) leer el FIFO por la HAL al subir; (c) esperar un margen tras la subida | (a) como hipótesis de partida, por usar solo API pública del controlador. **Requiere medición** (M5) y pruebas en el equipo; sin ellas no se elige definitivamente |
+| D2 | Cómo informar de `StuckLow` y de los fallos de línea | (a) un `ErrorCode` nuevo en `rb_core`; (b) estadísticas propias del adaptador o del ensamblador, consultables aparte; (c) a través de `TransportError` | (b): no cambia `rb_core` ni mezcla causas; el monitor sigue viendo tramas y `Timeout`, y la consola puede combinar ambas estadísticas |
+| D3 | Instante de bajada en `CommandBytes` | (a) añadir `commandAssertedAtUs` (COMMAND↓); (b) no ampliar el puerto | (a): cambio pequeño en el puerto que permite verificar la duración de la ventana a quien recibe la trama. `SioSession` y `ScriptedSioTransport` solo requieren ajustes de inicialización |
+| D4 | Ventana demasiado larga (`OverlongWindow`) con 5 bytes | (a) entregarla como trama; (b) descartarla y contarla | (b): nunca entregar una trama de una ventana fuera de los límites esperados; se pierde la trama, no la visibilidad (queda contada) |
+
+### 9.5 Tercer entregable de host (después de D1–D4)
+
+Aprobadas las decisiones, el siguiente entregable sería **`CommandFrameAssembler`** en `rb_sio`: el núcleo puro de
+`waitCommandFrame()`, sin ESP-IDF, para que el adaptador quede como una capa fina.
+
+- **Entradas:** `onFall(t)`, `onBytes(Span)`, `onReceiveError()`, `onRise(t)`, `poll(now)` y `onQueueOverflow()`.
+- **Salida:** `CommandBytes`, o un descarte con motivo; estadísticas con contadores saturados.
+- **Eventos perdidos o desordenados:** delega en `CommandLineTracker` (`Resync`, `Rejected`) y descarta los bytes
+  acumulados.
+- **Pruebas:** las filas «Sí» de §9.2, determinismo y ausencia de asignaciones.
+- **Dependencias:** D1–D4 y umbrales sin medir (P6), que siguen siendo parámetros.

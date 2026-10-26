@@ -70,7 +70,9 @@ struct AssemblerStats {
 // Preconditions the future adapter must meet (not provable in host tests):
 // one monotonic clock for all times; edges and bytes delivered to one task in
 // arrival order; complete() only after all bytes of the window arrived; RX
-// FIFO flushed on COMMAND falling; lost events reported with onQueueOverflow().
+// FIFO flushed on COMMAND falling; lost events reported with onQueueOverflow();
+// poll() called at least every stuckLowUs, since a COMMAND stuck low produces
+// no edges and is only detected there.
 // Not synchronised: one task only.
 class CommandFrameAssembler {
 public:

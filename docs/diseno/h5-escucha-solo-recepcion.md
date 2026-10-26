@@ -143,7 +143,7 @@ El puerto ya existe (`rb/app/ports/sio_transport.hpp`) [A]: `waitCommandFrame(ti
 | Evento | Acción en `EspSioTransport` (H5) |
 |---|---|
 | COMMAND↓ (`t_fall`) | Vaciar el FIFO de RX y empezar la trama |
-| COMMAND↑ (`t_rise`) | Leer los bytes recibidos; guardar los 5 primeros, contar el total y poner `commandReleasedAtUs = t_rise` |
+| COMMAND↑ (`t_rise`) | Leer los bytes recibidos; guardar los 5 primeros, contar el total y poner `commandReleasedAtUs = t_rise`. **Precisado por D1 (§9.4):** la ventana no se cierra en la subida sino al llamar a `complete()`, cuando el mecanismo de captura garantiza que llegaron todos los bytes; los que llegan después de COMMAND↑ y antes de `complete()` pertenecen a la ventana |
 | Error de trama u overrun en el UART | `TransportError` |
 | Sin COMMAND dentro de `timeoutUs` | `Timeout` |
 | `send()` | En H5 **no transmite**: devuelve error sin tocar GPIO21 |
@@ -314,4 +314,9 @@ Aprobadas las decisiones, el siguiente entregable sería **`CommandFrameAssemble
 - **Estado:** implementado en host tras aprobar D1–D4 (contrato con `complete()`, orden esperado por ventana
   `onFall` → `onBytes`* → `onRise` → `onBytes`* → `complete()`). Precondiciones del futuro adaptador, no
   demostrables en host: un único reloj monótono; flancos y bytes entregados a una sola tarea en orden de llegada;
-  `complete()` solo cuando llegaron todos los bytes; FIFO vaciado en COMMAND↓; desbordamientos notificados.
+  `complete()` solo cuando llegaron todos los bytes; FIFO vaciado en COMMAND↓; desbordamientos notificados;
+  `poll()` al menos cada `stuckLowUs`, porque un COMMAND bajo permanente no produce flancos y solo se detecta ahí.
+- **Pruebas de integración de host** (`test/host/sio/test_sio_listen_chain.cpp`): encadenan ensamblador y
+  `SioListener` mediante un adaptador **solo de prueba** que reproduce eventos con tiempo y aplica la traducción
+  prevista (`Frame` → `CommandBytes`, `ReceiveError` → `TransportError`, `Dropped` → seguir esperando, plazo
+  agotado → `Timeout` conservando la ventana abierta). No es código de producción ni fija el mecanismo de D1.

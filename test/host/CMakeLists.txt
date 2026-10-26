@@ -81,6 +81,7 @@ rb_add_abort_test(test_sio_listener_read_past_size_aborts test_sio_listener --re
 rb_add_host_test(test_sio_listener_allocations sio/test_sio_listener_allocations.cpp)
 rb_add_host_test(test_command_frame_assembler sio/test_command_frame_assembler.cpp)
 rb_add_host_test(test_command_frame_assembler_allocations sio/test_command_frame_assembler_allocations.cpp)
+rb_add_host_test(test_sio_listen_chain sio/test_sio_listen_chain.cpp)
 
 # rb_file_storage (H3a)
 rb_add_host_test(test_image_path storage/test_image_path.cpp)

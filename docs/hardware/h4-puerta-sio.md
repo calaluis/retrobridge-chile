@@ -4,9 +4,12 @@
 > adaptación eléctrica. Las mediciones físicas (`procedimiento-medicion-pasiva-sio.md`) y la revisión final de
 > seguridad siguen pendientes.
 >
-> Mientras H4 no esté aprobado, ningún pin del SIO se configura como salida, y el firmware instalado (`1b1527d`,
-> validado en H3c) no toca ninguno de esos GPIO. Este documento no cambia código, firmware, particiones ni
-> `sdkconfig`.
+> Mientras H4 no esté aprobado, ningún pin del SIO se configura como salida, y el firmware instalado (`15b153f`,
+> diagnóstico H4 validado en `h4-validacion-diagnostico-2026-10-24.md` y `h4-regresion-h3c-2026-10-25.md`) no toca
+> ninguno de esos GPIO. Este documento no cambia código, firmware, particiones ni `sdkconfig`.
+>
+> **Propuesta en revisión:** separar esta puerta en H4-L (escucha) y H4-T (transmisión):
+> `h4-puertas-escucha-transmision.md` (**PROPUESTA NO APROBADA**). Mientras no se apruebe, rige el §7 completo.
 
 **Etiquetas:**
 - **[E]** esquema público `FN32ROV-1.3-Q24_schematic.jpg`, revisado directamente el 2026-10-24;

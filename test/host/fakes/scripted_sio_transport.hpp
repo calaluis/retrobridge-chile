@@ -72,10 +72,14 @@ public:
         case Kind::ReceiveError:
             return rb::core::Failure{rb::core::ErrorCode::TransportError};
         case Kind::Frame:
-        default:
+        default: {
+            // This double does not model COMMAND edges: the wait start stands
+            // in for COMMAND going low.
+            const uint64_t asserted_at = clock_.nowMicros();
             clock_.advance(event.arrivalUs);
             last_released_at_ = clock_.nowMicros();
-            return rb::app::CommandBytes{event.bytes, event.count, last_released_at_};
+            return rb::app::CommandBytes{event.bytes, event.count, last_released_at_, asserted_at};
+        }
         }
     }
 

@@ -611,7 +611,7 @@ Se valida en H6/H7.
 | `ImageRepository` | Saliente | `Result<ImageByteSource*> open(const ImageLocation&)` · `void close(ImageByteSource*)` | Abrir y cerrar requiere conocer el medio (FATFS, TNFS). Slots fijos, sin heap. Solo se usa desde el contexto de almacenamiento. |
 | `DriveMailbox` | Entre contextos (ADR-014) | Almacenamiento: `submit(DriveRequest&)`, `takeReply()`. Unidad: `takeRequest()`, `putReply(DriveReply)` | Traspasa montajes y desmontajes al contexto de la unidad sin bloquear el bus. Un intercambio en curso; `submit` solo consume la solicitud si tiene éxito. |
 | `Clock` | Saliente | `uint64_t nowMicros() const` · `void waitUntil(uint64_t micros)` | Permite probar t2/t5 con un reloj falso. |
-| `SioCommandSource` | Saliente (desde `SioListener`, H5) | `Result<CommandBytes> waitCommandFrame(uint32_t timeoutUs)` (`Timeout`/`TransportError`; `CommandBytes` = 5 bytes, cantidad recibida e instante de COMMAND↑) | Lado solo de recepción. Quien lo recibe no puede transmitir ni tocar DATA IN por construcción (escucha pasiva de H5). |
+| `SioCommandSource` | Saliente (desde `SioListener`, H5) | `Result<CommandBytes> waitCommandFrame(uint32_t timeoutUs)` (`Timeout`/`TransportError`; `CommandBytes` = 5 bytes, cantidad recibida e instantes de COMMAND↑ y COMMAND↓) | Lado solo de recepción. Quien lo recibe no puede transmitir ni tocar DATA IN por construcción (escucha pasiva de H5). |
 | `SioTransport` | Saliente (desde `SioSession`) | Hereda `waitCommandFrame` de `SioCommandSource` · `Result<void> send(Span<const uint8_t>)` · `void releaseDataLine()` | Aísla UART, GPIO e ISR para probar la secuencia con un transporte simulado. |
 
 **Contratos** (verificados por pruebas de contrato, §10.3):

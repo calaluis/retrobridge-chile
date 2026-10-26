@@ -8,7 +8,8 @@
 > `v6.1`). P7 confirmado; P2 y P3 condicionados. Es investigación documental: no inicia H5 ni aprueba H4.
 >
 > **Adenda del 2026-10-26 (§9):** correlación de COMMAND y bytes, riesgos de concurrencia y decisiones D1–D4,
-> pendientes de aprobación. Los entregables de host ya integrados (PR #21 y #22) no activan nada físico.
+> aprobadas el mismo día salvo el mecanismo físico de D1 (condicionado a M5). Los entregables de host no activan
+> nada físico.
 
 **Etiquetas:**
 - **[D]** documentación de Espressif (ESP-IDF v6.1, hoja de datos, erratas);
@@ -229,8 +230,8 @@ rb_console (consola: "sio listen", "sio stats")       infraestructura
 
 ## 9. Adenda: correlación de COMMAND y bytes (análisis del 2026-10-26)
 
-> Análisis documental. **No** inicia H5 físico, **no** aprueba H4 y **no** decide nada por sí mismo: D1–D4 quedan
-> pendientes de aprobación. Ningún punto autoriza a configurar GPIO, UART o interrupciones ni a cambiar `sdkconfig`.
+> Análisis documental. **No** inicia H5 físico y **no** aprueba H4. La resolución de D1–D4 está en §9.4. Ningún
+> punto autoriza a configurar GPIO, UART o interrupciones ni a cambiar `sdkconfig`.
 
 ### 9.1 Estado de los componentes de host
 
@@ -275,7 +276,22 @@ trama no puede verificarla. Dos marcas de tiempo cercanas **no** se suponen de l
 4. **Solo verificable en el equipo** (H4 M3–M5 y revisión de H5): pulsos reales de 80 ns, tiempos reales de los
    flancos, tolerancia de velocidad, errata GPIO-3.14, latencia de la tarea y tamaño de las colas bajo carga real.
 
-### 9.4 Decisiones pendientes de aprobación
+### 9.4 Decisiones (aprobadas el 2026-10-26, salvo el mecanismo físico de D1)
+
+**Resolución del 2026-10-26:**
+
+- **D1 — contrato aprobado, mecanismo físico condicionado a M5.** La ventana solo se cierra con una llamada
+  explícita a `complete()` del ensamblador, que el adaptador hace cuando su mecanismo de captura garantiza que
+  llegaron todos los bytes; los bytes posteriores a COMMAND↑ y anteriores a `complete()` pertenecen a la ventana.
+  La elección entre (a), (b) y (c) sigue pendiente de medición.
+- **D2 — (b) aprobada:** estadísticas propias del ensamblador, sin `ErrorCode` nuevo; solo los errores de UART
+  llegan como `TransportError`.
+- **D3 — (a) aprobada:** `CommandBytes` añade `commandAssertedAtUs` y conserva `commandReleasedAtUs`.
+- **D4 — (b) aprobada:** una ventana demasiado larga se descarta y se cuenta aunque traiga 5 bytes con checksum
+  válido. Es distinto de una trama de más de 5 bytes, que se entrega y `SioListener` clasifica como `Overlong`.
+  El umbral sigue siendo un parámetro (P6).
+
+Opciones analizadas:
 
 | # | Decisión | Opciones | Recomendación [I] |
 |---|---|---|---|
@@ -284,7 +300,7 @@ trama no puede verificarla. Dos marcas de tiempo cercanas **no** se suponen de l
 | D3 | Instante de bajada en `CommandBytes` | (a) añadir `commandAssertedAtUs` (COMMAND↓); (b) no ampliar el puerto | (a): cambio pequeño en el puerto que permite verificar la duración de la ventana a quien recibe la trama. `SioSession` y `ScriptedSioTransport` solo requieren ajustes de inicialización |
 | D4 | Ventana demasiado larga (`OverlongWindow`) con 5 bytes | (a) entregarla como trama; (b) descartarla y contarla | (b): nunca entregar una trama de una ventana fuera de los límites esperados; se pierde la trama, no la visibilidad (queda contada) |
 
-### 9.5 Tercer entregable de host (después de D1–D4)
+### 9.5 Tercer entregable de host: `CommandFrameAssembler`
 
 Aprobadas las decisiones, el siguiente entregable sería **`CommandFrameAssembler`** en `rb_sio`: el núcleo puro de
 `waitCommandFrame()`, sin ESP-IDF, para que el adaptador quede como una capa fina.
@@ -294,4 +310,8 @@ Aprobadas las decisiones, el siguiente entregable sería **`CommandFrameAssemble
 - **Eventos perdidos o desordenados:** delega en `CommandLineTracker` (`Resync`, `Rejected`) y descarta los bytes
   acumulados.
 - **Pruebas:** las filas «Sí» de §9.2, determinismo y ausencia de asignaciones.
-- **Dependencias:** D1–D4 y umbrales sin medir (P6), que siguen siendo parámetros.
+- **Dependencias:** el mecanismo físico de D1 y los umbrales sin medir (P6), que siguen siendo parámetros.
+- **Estado:** implementado en host tras aprobar D1–D4 (contrato con `complete()`, orden esperado por ventana
+  `onFall` → `onBytes`* → `onRise` → `onBytes`* → `complete()`). Precondiciones del futuro adaptador, no
+  demostrables en host: un único reloj monótono; flancos y bytes entregados a una sola tarea en orden de llegada;
+  `complete()` solo cuando llegaron todos los bytes; FIFO vaciado en COMMAND↓; desbordamientos notificados.

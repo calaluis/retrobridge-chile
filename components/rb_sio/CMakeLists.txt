@@ -6,6 +6,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/rb_build_flags.cmake)
 
 set(rb_srcs
     "src/build_checks.cpp"
+    "src/command_frame_assembler.cpp"
     "src/command_line_tracker.cpp"
     "src/sio_command_dispatcher.cpp"
     "src/sio_listener.cpp"

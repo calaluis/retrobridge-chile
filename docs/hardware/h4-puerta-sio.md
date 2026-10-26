@@ -135,30 +135,66 @@ Datos técnicos para esa decisión [D][I]:
 
 ### 3.4 MOTOR: conexión directa a GPIO36 [E][M][D]
 
-- SIO_MCTL llega a IO36 **sin buffer ni divisor**, solo con R2 de 10 k a GND.
-- El manual de Atari solo dice "alto = encendido" y **no especifica la tensión**.
-- **Atari del equipo: 65XE NTSC (2026-10-26).** En su esquema (redibujo de terceros, hoja 5), MOTOR CONTROL
-  sale del colector de **Q7, un PNP con el emisor en +5 V**, hacia el pin 8 a través de L11 (bobina), **sin
-  resistencia en serie**; la base la controla el PIA (CA2) por R91. Con el motor encendido, el pin 8 quedaría a
-  unos **+5 V menos la saturación de Q7 (≈ 4,7–4,9 V)** y con capacidad de dar corriente [I]. Es **superior** a los
-  ≈ 3,6 V que admite IO36: lo previsible es que **M3a no pase el punto de detención** y haga falta una mitigación.
-  El esquema no es un documento oficial de Atari: **no sustituye a M3a**, que sigue siendo obligatoria para
-  confirmar el nivel y los picos.
+**Revisión de la auditoría eléctrica del 2026-10-26.** Además de las etiquetas del documento, esta sección usa
+**[E-Atari]** (esquema de terceros del 65XE o de la XC12), **[T]** (cálculo teórico) y **[H]** (registro histórico
+del equipo, proyecto WSS).
+
+**Recorrido en la FN32ROV-1.3-Q24 [E]** (esquema y BOM oficiales, `fujinet-hardware` en el commit `0e539b8`):
+
+| Elemento | Conexión |
+|---|---|
+| J1, pin 8 «MCTL» | Red `SIO_MCTL`; también va a J2, pin 8, de paso |
+| R2, 10 kΩ (BOM: «R2 10k RES_0402») | De `SIO_MCTL` a GND: fija el reposo en bajo |
+| U1, pin 4 (SENSOR_VP/IO36/ADC1_CH0) | **Directo** a `SIO_MCTL` |
+
+MOTOR **no** pasa por los 74LS07, ni por los transistores de aislamiento Q2/Q3, ni por ningún divisor o resistencia
+en serie [E]. El ESP32 admite como máximo **VDD + 0,3 V (unos 3,6 V)** en sus entradas [D].
+
+**Lado del Atari: 65XE NTSC del equipo (2026-10-26).** En su esquema (redibujo de terceros, hoja 5), MOTOR CONTROL
+sale del colector de **Q7, un PNP con el emisor en +5 V**, hacia el pin 8 a través de L11 (bobina), **sin resistencia
+en serie**; la base la controla el PIA (CA2) por R91 (≈ 2k7, legible solo en parte). El modelo de Q7 no es legible
+[E-Atari]. El manual de Atari solo dice "alto = encendido" y **no especifica la tensión** [M].
+
+**Tensión prevista, no medida:**
+- Con el motor encendido: **≈ 4,7–4,9 V** en el pin 8 (5 V menos la saturación de Q7, con la carga ligera de R2 y de
+  la casetera) [T]. Es una **previsión a partir de un esquema de terceros, no una medición** [P].
+- Sin resistencia en serie, la corriente disponible depende de Q7 y no está limitada por el circuito [T][I].
+- Con el motor apagado, Q7 queda abierto y el nivel lo fija la carga del periférico (R2 en la FujiNet) [I].
 - La carga del lado del casete no limita esa tensión: en la XC12, el pin 8 entra por R3 (27 k) a la base de un
-  transistor que conmuta el motor (esquema de terceros) [I].
-- El ESP32 admite como máximo **VDD + 0,3 V (unos 3,6 V)** en sus entradas [D].
-- **[P] Punto de detención:** la primera medición del nivel alto de MOTOR CONTROL se hace **en el Atari solo, con
-  la FujiNet desconectada del SIO** (procedimiento, etapa M3a), con el motor del casete encendido y un osciloscopio
-  para ver también los picos.
-  - No se conectan los dos equipos para descubrir después que la tensión supera el límite del ESP32.
-  - Con la FujiNet **apagada** pero conectada, un nivel alto en IO36 también podría entrar por las protecciones del
-    pin [I]; por eso la condición vale aunque la placa esté apagada.
+  transistor que conmuta el motor [E-Atari][I].
+
+**Riesgos (no son daños confirmados):**
+- **Exceso de tensión en IO36:** la tensión prevista supera el máximo admisible; con la placa alimentada, la
+  protección interna del pin conduciría hacia +3V3 sin limitación de corriente en el circuito [I].
+- **Alimentación parásita:** con la FujiNet apagada y MOTOR en alto, el ESP32 podría alimentarse parcialmente a través
+  de la protección del pin [I].
+- La forma de alimentar la placa (USB o +5 V del SIO) no cambia el recorrido de MOTOR [I].
+
+**Evidencia histórica [H] (proyecto WSS, G5-2, prueba T5, `FUJINET_WSS_P5_G5_2_REPORT.md` §4):**
+- El registro de la FujiNet muestra «MOTOR ON: activating cassette» a las 23:01:22 y la emisión del casete hasta
+  las 23:16:49: **MOTOR estuvo activo durante 15 min 27 s**, con la carga completada («PROGRAMA CARGADO») y la placa
+  funcionando después.
+- **Límites:** el informe no indica qué Atari se usó (65XE u 800XL) ni la alimentación exacta, y no hubo ninguna
+  medición eléctrica. Demuestra **funcionamiento satisfactorio en esas condiciones**, no que el nivel o la corriente
+  estén dentro de especificación ni la ausencia de degradación. **No sustituye a M3a.**
+
+**Revisiones posteriores de FujiNet [E]:** según el README de la FN32ROV-1.6, esa revisión **pasa MOTOR por un buffer**
+(«Run Motor Control signal through buffer»), con un pull-up de 10 k en el lado del ESP32 y un pull-down de 2 k en el
+lado del Atari. No se revisó el esquema de la 1.6; no se le atribuye nada más.
+
+**[P] Punto de detención (M3a, sin cambios):** la primera medición del nivel alto de MOTOR CONTROL se hace **en el
+Atari solo, con la FujiNet desconectada del SIO** (procedimiento, etapa M3a), con el motor del casete encendido y un
+osciloscopio para ver también los picos. Debe confirmar el nivel real y los picos en el 65XE físico, que puede no
+coincidir con un esquema de terceros.
+- No se conectan los dos equipos para descubrir después que la tensión supera el límite del ESP32.
 - **Si la señal puede superar los niveles admisibles del ESP32, no se autoriza ninguna conexión** de la FujiNet al
   Atari hasta diseñar, revisar y validar una mitigación aprobada.
-- [C] La placa ya funcionó con este Atari durante las pruebas WSS sin daño aparente. Eso **no** demuestra que el
-  nivel esté dentro del margen ni sustituye a la medición; lo más probable es que el motor del casete no se
-  activara durante esas pruebas, con MOTOR en bajo [I].
-- RetroBridge no necesita MOTOR en la v1, que no emula casete.
+
+**Alternativa de mitigación, pendiente de análisis y aprobación (no recomendada todavía):** excluir el pin 8 entre el
+Atari y la FujiNet, por ejemplo con un cable o adaptador de prueba sin ese pin. RetroBridge v1 no usa MOTOR, que no
+emula casete. Habría que analizar, entre otras cosas, el efecto sobre los equipos conectados después de la FujiNet
+(una casetera en J2 dejaría de recibir MOTOR) y cómo se validaría (por ejemplo, continuidad del pin 8 con multímetro).
+Implica un cambio de cableado o de hardware y requiere una aprobación aparte.
 
 ### 3.5 GPIO 34–39 y erratas del ESP32 [D]
 
@@ -220,7 +256,7 @@ Datos técnicos para esa decisión [D][I]:
 
 | # | Riesgo | Causa | Impacto | Prevención | Verificación |
 |---|---|---|---|---|---|
-| R1 | Sobretensión en GPIO36 | MOTOR directo a IO36 sin divisor. En el 65XE del equipo, el esquema indica un PNP saturado a +5 V sin resistencia en serie (≈ 4,7–4,9 V previstos, §3.4) [I]; nivel real sin medir | Daño del ESP32 | **Medir primero en el Atari solo, con la FujiNet desconectada; sin conexión si supera el límite** hasta tener una mitigación validada; no usar MOTOR en la v1 | M3a [P], punto de detención |
+| R1 | Sobretensión en GPIO36 y alimentación parásita | MOTOR (pin 8) directo a IO36, solo con R2 de 10 k a GND [E]. En el 65XE del equipo, el esquema indica un PNP saturado a +5 V sin resistencia en serie: ≈ 4,7–4,9 V **previstos, no medidos**, sin limitación de corriente (§3.4) [E-Atari][T][I]. Con la FujiNet apagada, posible alimentación parásita por la protección del pin [I]. Antecedente: MOTOR activo 15 min 27 s en G5-2 T5 con funcionamiento satisfactorio [H], sin medición eléctrica. La FN32ROV-1.6 pasó MOTOR por un buffer (README) | Riesgo de daño o degradación del ESP32 (no confirmado) | **Medir primero en el Atari solo, con la FujiNet desconectada; sin conexión si supera el límite** hasta tener una mitigación validada; no usar MOTOR en la v1. Alternativa pendiente de análisis y aprobación: excluir el pin 8 (§3.4) | M3a [P], punto de detención |
 | R2 | Bus bloqueado en bajo | GPIO21 configurado en bajo (o TX mal enrutado) | El Atari no puede comunicarse con ningún periférico | H5 sin TX; verificar con `gpio_dump_io_configuration` que GPIO21 no está asignado | Revisión de código y M5 |
 | R3 | Posible recepción errónea en DATA OUT [I] | El esquema no muestra pull-up en IO33; el comportamiento real no está medido | Tramas corruptas, si la hipótesis se confirma | Medir nivel y flanco; decidir en H5 (por ejemplo, el pull-up interno) | M4, M5 [P] |
 | R4 | Flancos falsos de COMMAND | Errata GPIO-3.11 (ADC) | Tramas fantasma | Sin ADC durante la escucha; filtro por duración | Pruebas de host y M5 |
@@ -280,6 +316,10 @@ H4 se aprueba **solo** cuando todos los puntos estén marcados y el equipo firme
 - Espressif, *ESP32 Series SoC Errata*: GPIO-3.6, GPIO-3.11 y GPIO-3.14.
 - Espressif, ESP-IDF v6.1: *GPIO & RTC GPIO* y *UART*; `components/esp_driver_uart/Kconfig`.
 - Atari, *Home Computer Technical Reference Notes* (C016555), §9: conector y especificaciones eléctricas.
+- `fujinet-hardware`, commit `0e539b8`: `FN32ROV-1.3-Q24_schematic.jpg`, `FN32ROV-1.3-Q24_BOM.ods` y
+  `README.md` de la 1.3, y `FN32ROV-1.6/README.md` (recorrido de MOTOR y cambio de la 1.6). El archivo DipTrace
+  `FN32ROV-1.3-Q24.dip` no se abrió. La BOM indica un ESP32-WROVER-E; la unidad del equipo tiene un WROVER-B.
+- Proyecto WSS, informe G5-2 §4 y registro `g5-2-03-T5-zorro-cas.txt`: MOTOR activo durante 15 min 27 s.
 - Esquemas del Atari 65XE (redibujo de Jerzy Sobola, 2003, 9 hojas) y de la casetera XC12 (mismo autor, 2002):
   MOTOR CONTROL (Q7) y conector SIO. Documentos de terceros, no oficiales de Atari.
 - Atari, *1010 Cassette Recorder Field Service Manual* y *1050 Field Service Manual* (escaneos, solo referencia).

@@ -195,6 +195,7 @@ Atari y la FujiNet, por ejemplo con un cable o adaptador de prueba sin ese pin. 
 emula casete. Habría que analizar, entre otras cosas, el efecto sobre los equipos conectados después de la FujiNet
 (una casetera en J2 dejaría de recibir MOTOR) y cómo se validaría (por ejemplo, continuidad del pin 8 con multímetro).
 Implica un cambio de cableado o de hardware y requiere una aprobación aparte.
+Especificación de esta alternativa: `mitigacion-c-motor-pin8.md` (**PROPUESTA NO APROBADA**).
 
 ### 3.5 GPIO 34–39 y erratas del ESP32 [D]
 

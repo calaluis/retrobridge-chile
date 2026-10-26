@@ -10,11 +10,13 @@ namespace rb::app {
 // What was received while COMMAND was low. `count` is the number of bytes
 // actually received (it may differ from 5 for an incomplete or overlong frame;
 // only the first 5 are kept). `commandReleasedAtUs` is when COMMAND went high,
-// the reference for t2.
+// the reference for t2; `commandAssertedAtUs` is when it went low, so a
+// receiver can check the window length (H5 design, decision D3).
 struct CommandBytes {
     std::array<uint8_t, 5> bytes;
     uint8_t count;
     uint64_t commandReleasedAtUs;
+    uint64_t commandAssertedAtUs;
 };
 
 // Receive-only side of the SIO bus: command frames, nothing else. A component

@@ -7,6 +7,7 @@
 #include "rb/app/ports/clock.hpp"
 #include "rb/app/ports/sio_command_source.hpp"
 #include "rb/core/assert.hpp"
+#include "rb/sio/saturating.hpp"
 
 namespace rb::sio {
 
@@ -37,12 +38,6 @@ struct ListenStats {
     uint32_t transportErrors;
     uint32_t overwritten;  // records lost because the ring was full
 };
-
-// Adds one to a counter, stopping at UINT32_MAX.
-constexpr uint32_t saturating_increment(uint32_t value) noexcept
-{
-    return value == UINT32_MAX ? value : value + 1;
-}
 
 // Passive SIO listener (H5, second host-only deliverable; H5 design section 5).
 // Its single reason to change is how received command frames are classified

@@ -75,6 +75,7 @@ rb_add_host_test(test_sio_dispatcher sio/test_sio_dispatcher.cpp)
 rb_add_abort_test(test_dispatcher_execute_without_accept_aborts test_sio_dispatcher --execute-without-accept)
 rb_add_host_test(test_sio_session sio/test_sio_session.cpp)
 rb_add_host_test(test_sio_session_allocations sio/test_sio_session_allocations.cpp)
+rb_add_host_test(test_command_line_tracker sio/test_command_line_tracker.cpp)
 
 # rb_file_storage (H3a)
 rb_add_host_test(test_image_path storage/test_image_path.cpp)

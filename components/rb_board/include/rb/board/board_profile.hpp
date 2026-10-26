@@ -39,7 +39,7 @@ enum class SpiHost : uint8_t {
 struct SioPins {
     int8_t command;  // COMMAND, input (input-only GPIO 34-39 allowed)
     int8_t rx;       // Atari DATA OUT, input (UART RX)
-    int8_t tx;       // Atari DATA IN, output (UART TX), or kNoPin while receive-only
+    int8_t tx;       // Atari DATA IN, output (UART TX), or kNoPin if the board has none
 };
 
 // How the SIO lines will be used: H5 only listens, H6 onwards also transmits.
@@ -96,19 +96,27 @@ rb::core::Result<uint8_t> validate_for_storage(const BoardProfile& profile) noex
 
 // Checks only the SIO pin rules for the given mode; ignores hardwareConfirmed
 // and sioGateApproved, so a candidate profile can be checked without approving
-// it. Never authorizes physical use. Errors:
+// it. Never authorizes physical use. A TX line the board has is checked in both
+// modes (it is wired even while unused). Errors:
 //   InvalidPinAssignment - missing/duplicate pin (also against the microSD
 //                          pins), nonexistent GPIO, flash pins 6-11, PSRAM
-//                          pins 16-17, TX on an input-only GPIO 34-39, TX set
-//                          in ReceiveOnly mode or missing in ReceiveTransmit
+//                          pins 16-17, TX on an input-only GPIO 34-39, or TX
+//                          missing in ReceiveTransmit
 // On success returns PinWarning flags for the SIO and microSD pins together.
 rb::core::Result<uint8_t> check_sio_pins(const BoardProfile& profile, SioMode mode) noexcept;
 
+// The SIO pins a driver may use, as granted by validate_for_sio().
+struct SioAssignment {
+    SioPins pins;      // tx is kNoPin in ReceiveOnly, whatever the board has
+    uint8_t warnings;  // PinWarning flags, as check_sio_pins()
+};
+
 // Authorizes physical use of the SIO pins: the hardware must be confirmed and
-// the H4 gate signed, then check_sio_pins() must pass. Must pass before any SIO
-// driver call. Errors:
+// the H4 gate signed, then check_sio_pins() must pass. SIO drivers take only
+// the returned assignment, so in ReceiveOnly they never get the TX line. Must
+// pass before any SIO driver call. Errors:
 //   BoardNotConfirmed    - hardware not confirmed, or the H4 gate not signed
 //   InvalidPinAssignment - as check_sio_pins()
-rb::core::Result<uint8_t> validate_for_sio(const BoardProfile& profile, SioMode mode) noexcept;
+rb::core::Result<SioAssignment> validate_for_sio(const BoardProfile& profile, SioMode mode) noexcept;
 
 }  // namespace rb::board

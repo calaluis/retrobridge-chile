@@ -2,16 +2,14 @@
 // deliverable, docs/diseno/h5-escucha-solo-recepcion.md section 5).
 //
 // The pin numbers below are test fixtures that exercise the ESP32 rules; the
-// SIO pinout of the real board is assigned in a later H4 step. The rule tests
-// use profiles whose H4 gate is NOT signed: checking pins never approves them.
+// real FujiNet pinout is tested in test_fujinet_profile.cpp. The rule tests use
+// profiles whose H4 gate is NOT signed: checking pins never approves them.
 
 #include "rb/board/board_profile.hpp"
-#include "rb/board/fujinet_atari_v1x.hpp"
 #include "unity.h"
 
 using rb::board::BoardProfile;
 using rb::board::check_sio_pins;
-using rb::board::fujinet_atari_v1x_profile;
 using rb::board::kNoPin;
 namespace PinWarning = rb::board::PinWarning;
 using rb::board::SdInterface;
@@ -83,26 +81,27 @@ static void test_unconfirmed_hardware_blocks_even_with_the_gate_signed(void)
 
 static void test_signed_gate_and_valid_pins_are_authorized(void)
 {
-    const auto result = validate_for_sio(approved(sio_board(SioPins{39, 33, kNoPin})), SioMode::ReceiveOnly);
+    const auto result = validate_for_sio(approved(sio_board(SioPins{39, 33, 21})), SioMode::ReceiveTransmit);
     TEST_ASSERT_TRUE(result.ok());
-    TEST_ASSERT_EQUAL_UINT8(0, result.value());
+    TEST_ASSERT_EQUAL_INT8(39, result.value().pins.command);
+    TEST_ASSERT_EQUAL_INT8(33, result.value().pins.rx);
+    TEST_ASSERT_EQUAL_INT8(21, result.value().pins.tx);
+    TEST_ASSERT_EQUAL_UINT8(0, result.value().warnings);
+}
+
+static void test_receive_only_never_grants_the_wired_tx(void)
+{
+    const auto result = validate_for_sio(approved(sio_board(SioPins{39, 33, 21})), SioMode::ReceiveOnly);
+    TEST_ASSERT_TRUE(result.ok());
+    TEST_ASSERT_EQUAL_INT8(39, result.value().pins.command);
+    TEST_ASSERT_EQUAL_INT8(33, result.value().pins.rx);
+    TEST_ASSERT_EQUAL_INT8(kNoPin, result.value().pins.tx);  // DATA IN is never handed to a driver
 }
 
 static void test_signed_gate_still_needs_valid_pins(void)
 {
-    TEST_ASSERT_TRUE(refusal(approved(sio_board(SioPins{39, 33, 21})), SioMode::ReceiveOnly) ==
-                     ErrorCode::InvalidPinAssignment);
-}
-
-static void test_fujinet_profile_has_no_sio_pins_and_is_blocked(void)
-{
-    const BoardProfile profile = fujinet_atari_v1x_profile();
-    TEST_ASSERT_FALSE(profile.sioGateApproved);  // H4 not approved
-    TEST_ASSERT_EQUAL_INT8(kNoPin, profile.sio.command);
-    TEST_ASSERT_EQUAL_INT8(kNoPin, profile.sio.rx);
-    TEST_ASSERT_EQUAL_INT8(kNoPin, profile.sio.tx);
-    TEST_ASSERT_TRUE(refusal(profile, SioMode::ReceiveOnly) == ErrorCode::BoardNotConfirmed);
-    TEST_ASSERT_TRUE(rejection(profile, SioMode::ReceiveOnly) == ErrorCode::InvalidPinAssignment);  // no pins yet
+    TEST_ASSERT_TRUE(refusal(approved(sio_board(SioPins{39, 33, 35})), SioMode::ReceiveOnly) ==
+                     ErrorCode::InvalidPinAssignment);  // wired TX on an input-only GPIO
 }
 
 // --- Pin rules: check_sio_pins() ---
@@ -115,10 +114,13 @@ static void test_valid_receive_only_pins(void)
     TEST_ASSERT_EQUAL_UINT8(0, result.value());  // no warnings
 }
 
-static void test_receive_only_forbids_tx(void)
+static void test_receive_only_accepts_and_checks_a_wired_tx(void)
 {
-    TEST_ASSERT_TRUE(rejection(sio_board(SioPins{39, 33, 21}), SioMode::ReceiveOnly) ==
-                     ErrorCode::InvalidPinAssignment);
+    TEST_ASSERT_TRUE(check_sio_pins(sio_board(SioPins{39, 33, 21}), SioMode::ReceiveOnly).ok());
+    TEST_ASSERT_TRUE(rejection(sio_board(SioPins{39, 33, 35}), SioMode::ReceiveOnly) ==
+                     ErrorCode::InvalidPinAssignment);  // input-only
+    TEST_ASSERT_TRUE(rejection(sio_board(SioPins{39, 33, 19}), SioMode::ReceiveOnly) ==
+                     ErrorCode::InvalidPinAssignment);  // MISO
 }
 
 static void test_receive_transmit_requires_an_output_capable_tx(void)
@@ -201,10 +203,10 @@ int main(void)
     RUN_TEST(test_valid_pins_are_not_authorized_without_the_h4_gate);
     RUN_TEST(test_unconfirmed_hardware_blocks_even_with_the_gate_signed);
     RUN_TEST(test_signed_gate_and_valid_pins_are_authorized);
+    RUN_TEST(test_receive_only_never_grants_the_wired_tx);
     RUN_TEST(test_signed_gate_still_needs_valid_pins);
-    RUN_TEST(test_fujinet_profile_has_no_sio_pins_and_is_blocked);
     RUN_TEST(test_valid_receive_only_pins);
-    RUN_TEST(test_receive_only_forbids_tx);
+    RUN_TEST(test_receive_only_accepts_and_checks_a_wired_tx);
     RUN_TEST(test_receive_transmit_requires_an_output_capable_tx);
     RUN_TEST(test_missing_command_or_rx_is_rejected);
     RUN_TEST(test_flash_psram_and_nonexistent_pins_are_rejected);

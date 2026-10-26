@@ -199,7 +199,10 @@ esquema 1.3. Los pull-ups de la microSD no forman parte del perfil (§3).
   - sin detección de tarjeta;
   - `hasPsram = true`.
 
-  **Sin pines SIO.** El validador lo acepta con la única advertencia de pin de arranque (GPIO5).
+  **Pines SIO (H4, etapa 2):** COMMAND 39, DATA OUT del Atari 33 y DATA IN del Atari 21, según el esquema 1.3
+  (`h4-puerta-sio.md` §2). Son solo datos: `sioGateApproved = false`, así que `validate_for_sio()` no autoriza
+  su uso físico mientras H4 no esté aprobado, y en modo solo recepción nunca entrega GPIO21. El validador de
+  almacenamiento lo acepta con la única advertencia de pin de arranque (GPIO5).
 - **Selección:** con la opción `RB_BOARD_FUJINET_ATARI_V1X` de `main/Kconfig.projbuild`, **que no es la
   predeterminada**, y el fragmento `sdkconfig.board.fujinet-atari-v1x` (16 MB, DIO, 40 MHz y tabla propia).
 - **CI:** compila ambos perfiles, solo para comprobar la compilación, y verifica que el predeterminado siga siendo

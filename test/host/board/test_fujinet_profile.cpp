@@ -1,9 +1,10 @@
-// The FujiNet Atari v1.x microSD profile (H3c preparation).
+// The FujiNet Atari v1.x profile: microSD (H3c) and SIO pinout (H4 stage 2).
 //
 // Data source: the public FujiNet hardware schematics FN32ROV-1.3-Q24 and
-// FN32ROV-1.5-Q24 (fujinet-hardware, CERN OHL 2.0), docs/hardware/fujinet-atari-v1x.md.
-// The exact revision of our unit is still pending (silkscreen), so this profile
-// is NOT the default: RB_BOARD_UNCONFIRMED stays selected (H3-11).
+// FN32ROV-1.5-Q24 (fujinet-hardware, CERN OHL 2.0), docs/hardware/fujinet-atari-v1x.md
+// and docs/hardware/h4-puerta-sio.md section 2. Our unit is an FN32ROV-1.3-Q24
+// (silkscreen). The profile is NOT the default: RB_BOARD_UNCONFIRMED stays
+// selected (H3-11), and its H4 gate is not signed.
 
 #include <array>
 #include <cstdint>
@@ -13,11 +14,15 @@
 #include "unity.h"
 
 using rb::board::BoardProfile;
+using rb::board::check_sio_pins;
 using rb::board::fujinet_atari_v1x_profile;
 using rb::board::kNoPin;
 using rb::board::SdInterface;
+using rb::board::SioMode;
 using rb::board::SpiHost;
+using rb::board::validate_for_sio;
 using rb::board::validate_for_storage;
+using rb::core::ErrorCode;
 namespace PinWarning = rb::board::PinWarning;
 
 namespace {
@@ -76,6 +81,59 @@ static void test_does_not_touch_sio_buttons_or_leds(void)
     TEST_ASSERT_FALSE(reserved(p.spi.cs));
 }
 
+static void test_sio_pins_follow_the_1_3_schematic(void)
+{
+    const BoardProfile p = fujinet_atari_v1x_profile();
+    TEST_ASSERT_EQUAL_INT8(39, p.sio.command);  // COMMAND through U3, R11 pull-up
+    TEST_ASSERT_EQUAL_INT8(33, p.sio.rx);       // Atari DATA OUT through U4
+    TEST_ASSERT_EQUAL_INT8(21, p.sio.tx);       // Atari DATA IN to U4 (output forbidden until H6)
+}
+
+static void test_h4_gate_is_not_signed(void)
+{
+    const BoardProfile p = fujinet_atari_v1x_profile();
+    TEST_ASSERT_TRUE(p.hardwareConfirmed);  // unchanged: asserted by selecting the profile
+    TEST_ASSERT_FALSE(p.sioGateApproved);   // H4 not approved
+}
+
+static void test_sio_pins_pass_the_rules_without_approving_h4(void)
+{
+    // No conflict with the microSD, flash or PSRAM pins; only the GPIO5 (microSD CS) warning.
+    const auto receive_only = check_sio_pins(fujinet_atari_v1x_profile(), SioMode::ReceiveOnly);
+    TEST_ASSERT_TRUE(receive_only.ok());
+    TEST_ASSERT_EQUAL_UINT8(PinWarning::kStrappingPin, receive_only.value());
+
+    const auto receive_transmit = check_sio_pins(fujinet_atari_v1x_profile(), SioMode::ReceiveTransmit);
+    TEST_ASSERT_TRUE(receive_transmit.ok());
+    TEST_ASSERT_EQUAL_UINT8(PinWarning::kStrappingPin, receive_transmit.value());
+
+    TEST_ASSERT_FALSE(fujinet_atari_v1x_profile().sioGateApproved);  // checking approved nothing
+}
+
+static void test_physical_sio_use_is_refused(void)
+{
+    const BoardProfile p = fujinet_atari_v1x_profile();
+    const auto receive_only = validate_for_sio(p, SioMode::ReceiveOnly);
+    TEST_ASSERT_FALSE(receive_only.ok());
+    TEST_ASSERT_TRUE(receive_only.error() == ErrorCode::BoardNotConfirmed);
+
+    const auto receive_transmit = validate_for_sio(p, SioMode::ReceiveTransmit);
+    TEST_ASSERT_FALSE(receive_transmit.ok());
+    TEST_ASSERT_TRUE(receive_transmit.error() == ErrorCode::BoardNotConfirmed);
+}
+
+static void test_receive_only_would_not_grant_gpio21(void)
+{
+    // Hypothetical, test-only copy with the gate signed: H4 itself stays unapproved.
+    BoardProfile signed_copy = fujinet_atari_v1x_profile();
+    signed_copy.sioGateApproved = true;
+    const auto result = validate_for_sio(signed_copy, SioMode::ReceiveOnly);
+    TEST_ASSERT_TRUE(result.ok());
+    TEST_ASSERT_EQUAL_INT8(39, result.value().pins.command);
+    TEST_ASSERT_EQUAL_INT8(33, result.value().pins.rx);
+    TEST_ASSERT_EQUAL_INT8(kNoPin, result.value().pins.tx);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -83,5 +141,10 @@ int main(void)
     RUN_TEST(test_uses_the_vspi_host_of_those_pins);
     RUN_TEST(test_validates_with_only_the_gpio5_strapping_warning);
     RUN_TEST(test_does_not_touch_sio_buttons_or_leds);
+    RUN_TEST(test_sio_pins_follow_the_1_3_schematic);
+    RUN_TEST(test_h4_gate_is_not_signed);
+    RUN_TEST(test_sio_pins_pass_the_rules_without_approving_h4);
+    RUN_TEST(test_physical_sio_use_is_refused);
+    RUN_TEST(test_receive_only_would_not_grant_gpio21);
     return UNITY_END();
 }

@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <type_traits>
 #include <utility>
 
@@ -285,8 +286,26 @@ static void test_same_script_gives_the_same_records(void)
     b.assert_passive();
 }
 
-int main(void)
+// Death test: reading past size() is a programming error, even when the slot
+// holds an old record (here, after clearRecords()).
+static int read_past_size(void)
 {
+    FakeClock clock;
+    ScriptedSioTransport transport{clock};
+    SioListener listener{transport, clock};
+    transport.push_frame(valid_frame(0x31, 0x53));
+    (void)listener.step(kWaitUs);
+    listener.clearRecords();
+    (void)listener.at(0);  // size() == 0
+    return 0;
+}
+
+int main(int argc, char** argv)
+{
+    if (argc > 1 && std::strcmp(argv[1], "--read-past-size") == 0) {
+        return read_past_size();
+    }
+
     UNITY_BEGIN();
     RUN_TEST(test_saturating_increment_stops_at_the_limit);
     RUN_TEST(test_consecutive_valid_frames_are_recorded_in_order);

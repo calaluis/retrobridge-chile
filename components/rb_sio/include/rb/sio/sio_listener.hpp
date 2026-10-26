@@ -6,6 +6,7 @@
 
 #include "rb/app/ports/clock.hpp"
 #include "rb/app/ports/sio_command_source.hpp"
+#include "rb/core/assert.hpp"
 
 namespace rb::sio {
 
@@ -74,9 +75,11 @@ public:
     void clearRecords() noexcept { size_ = 0; }              // keeps the statistics and the sequence
 
     std::size_t size() const noexcept { return size_; }
-    // i = 0 is the oldest record kept; i must be below size().
+    // i = 0 is the oldest record kept. i >= size() is a programming error: it
+    // aborts instead of silently returning a stale record (ADR-003).
     const ListenRecord& at(std::size_t i) const noexcept
     {
+        RB_ASSERT(i < size_);
         return records_[(next_ + kCapacity - size_ + i) % kCapacity];
     }
 

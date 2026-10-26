@@ -19,15 +19,17 @@ using rb::core::ErrorCode;
 
 namespace {
 
+constexpr rb::board::SioPins kNoSio{kNoPin, kNoPin, kNoPin};
+
 BoardProfile spi_board(SdSpiPins pins, bool psram = false, int8_t card_detect = kNoPin, SpiHost host = SpiHost::Spi2)
 {
-    return BoardProfile{"test-fixture", true, psram, SdInterface::Spi, pins, host, card_detect};
+    return BoardProfile{"test-fixture", true, psram, SdInterface::Spi, pins, host, card_detect, false, kNoSio};
 }
 
 BoardProfile sdmmc_board(SdInterface width)
 {
     return BoardProfile{"test-fixture", true, false, width, SdSpiPins{kNoPin, kNoPin, kNoPin, kNoPin}, SpiHost::None,
-                        kNoPin};
+                        kNoPin, false, kNoSio};
 }
 
 ErrorCode rejection(const BoardProfile& profile)

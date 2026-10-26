@@ -12,7 +12,8 @@ namespace rb::board {
 // SPI mode, CLK GPIO18, CMD/MOSI GPIO23, DAT0/MISO GPIO19, CD/DAT3/CS GPIO5;
 // no card-detect line before rev 1.6. Not taken from any FujiNet source code.
 //
-// Contains no SIO pin and configures nothing by itself. Selecting it
+// Has no SIO pins yet (assigned in a later H4 step) and its H4 gate is not
+// signed, so validate_for_sio() never authorizes it. Configures nothing by itself. Selecting it
 // (RB_BOARD_FUJINET_ATARI_V1X) asserts that the board's silkscreen revision and
 // pinout were checked against this data; until then RB_BOARD_UNCONFIRMED stays
 // the default. GPIO5 is a strapping pin (validator warning).
@@ -24,7 +25,9 @@ constexpr BoardProfile fujinet_atari_v1x_profile() noexcept
                         SdInterface::Spi,
                         SdSpiPins{18, 23, 19, 5},
                         SpiHost::Spi3,  // VSPI: the native controller for these pins
-                        kNoPin};
+                        kNoPin,
+                        false,  // H4 not approved (docs/hardware/h4-puerta-sio.md)
+                        SioPins{kNoPin, kNoPin, kNoPin}};
 }
 
 }  // namespace rb::board

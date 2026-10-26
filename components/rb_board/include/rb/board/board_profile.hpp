@@ -32,8 +32,26 @@ enum class SpiHost : uint8_t {
     Spi3,
 };
 
-// Everything the firmware may know about a board (H3-11). Deliberately has no
-// SIO pins: they are added only after the hardware gate H4.
+// SIO bus lines as seen from the ESP32 (H4 code deliverable, see
+// docs/diseno/h5-escucha-solo-recepcion.md section 5). Directions follow the
+// Atari naming: the Atari's DATA OUT is our receive line and its DATA IN our
+// transmit line.
+struct SioPins {
+    int8_t command;  // COMMAND, input (input-only GPIO 34-39 allowed)
+    int8_t rx;       // Atari DATA OUT, input (UART RX)
+    int8_t tx;       // Atari DATA IN, output (UART TX), or kNoPin while receive-only
+};
+
+// How the SIO lines will be used: H5 only listens, H6 onwards also transmits.
+enum class SioMode : uint8_t {
+    ReceiveOnly,
+    ReceiveTransmit,
+};
+
+// Everything the firmware may know about a board (H3-11). The SIO pins are
+// data only: nothing may use them until the hardware gate H4 is signed
+// (sioGateApproved) and validate_for_sio() accepts them; check_sio_pins()
+// checks the pin rules alone.
 struct BoardProfile {
     const char* name;
     bool hardwareConfirmed;  // pinout and power verified on the real board (Annex A)
@@ -42,14 +60,23 @@ struct BoardProfile {
     SdSpiPins spi;           // only for SdInterface::Spi
     SpiHost spiHost;         // only for SdInterface::Spi
     int8_t cardDetect;       // input, or kNoPin
+    bool sioGateApproved;    // H4 checklist signed (docs/hardware/h4-puerta-sio.md section 7)
+    SioPins sio;             // all kNoPin until the SIO pinout is assigned
 };
 
 // The only profile until the board is identified: blocks the microSD bus and
 // every board-specific GPIO.
 constexpr BoardProfile unconfirmed_profile() noexcept
 {
-    return BoardProfile{"unconfirmed", false, false, SdInterface::None, SdSpiPins{kNoPin, kNoPin, kNoPin, kNoPin},
-                        SpiHost::None, kNoPin};
+    return BoardProfile{"unconfirmed",
+                        false,
+                        false,
+                        SdInterface::None,
+                        SdSpiPins{kNoPin, kNoPin, kNoPin, kNoPin},
+                        SpiHost::None,
+                        kNoPin,
+                        false,
+                        SioPins{kNoPin, kNoPin, kNoPin}};
 }
 
 // Warning flags returned by validate_for_storage().
@@ -66,5 +93,22 @@ constexpr uint8_t kFlashVoltageStrap = 0x02; // uses GPIO12 (MTDI): a pull-up ca
 //                          input-only GPIO 34-39, or SPI without a valid host
 // On success returns PinWarning flags (warnings, not errors).
 rb::core::Result<uint8_t> validate_for_storage(const BoardProfile& profile) noexcept;
+
+// Checks only the SIO pin rules for the given mode; ignores hardwareConfirmed
+// and sioGateApproved, so a candidate profile can be checked without approving
+// it. Never authorizes physical use. Errors:
+//   InvalidPinAssignment - missing/duplicate pin (also against the microSD
+//                          pins), nonexistent GPIO, flash pins 6-11, PSRAM
+//                          pins 16-17, TX on an input-only GPIO 34-39, TX set
+//                          in ReceiveOnly mode or missing in ReceiveTransmit
+// On success returns PinWarning flags for the SIO and microSD pins together.
+rb::core::Result<uint8_t> check_sio_pins(const BoardProfile& profile, SioMode mode) noexcept;
+
+// Authorizes physical use of the SIO pins: the hardware must be confirmed and
+// the H4 gate signed, then check_sio_pins() must pass. Must pass before any SIO
+// driver call. Errors:
+//   BoardNotConfirmed    - hardware not confirmed, or the H4 gate not signed
+//   InvalidPinAssignment - as check_sio_pins()
+rb::core::Result<uint8_t> validate_for_sio(const BoardProfile& profile, SioMode mode) noexcept;
 
 }  // namespace rb::board

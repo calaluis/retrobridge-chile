@@ -109,9 +109,8 @@ Result<uint8_t> check_sio_pins(const BoardProfile& profile, SioMode mode) noexce
     // A board without microSD has no storage pins to collide with.
     bool ok = profile.sdInterface == SdInterface::None || add_storage_pins(checker, profile);
     ok = ok && checker.add({profile.sio.command, false}) && checker.add({profile.sio.rx, false});
-    if (mode == SioMode::ReceiveOnly) {
-        ok = ok && profile.sio.tx == kNoPin;  // DATA IN is never driven before H6
-    } else {
+    // A wired TX line is checked even in ReceiveOnly; it is required to transmit.
+    if (profile.sio.tx != kNoPin || mode == SioMode::ReceiveTransmit) {
         ok = ok && checker.add({profile.sio.tx, true});
     }
     if (!ok) {
@@ -120,12 +119,20 @@ Result<uint8_t> check_sio_pins(const BoardProfile& profile, SioMode mode) noexce
     return checker.warnings();
 }
 
-Result<uint8_t> validate_for_sio(const BoardProfile& profile, SioMode mode) noexcept
+Result<SioAssignment> validate_for_sio(const BoardProfile& profile, SioMode mode) noexcept
 {
     if (!profile.hardwareConfirmed || !profile.sioGateApproved) {
         return Failure{ErrorCode::BoardNotConfirmed};
     }
-    return check_sio_pins(profile, mode);
+    const auto checked = check_sio_pins(profile, mode);
+    if (!checked.ok()) {
+        return Failure{checked.error()};
+    }
+    SioPins granted = profile.sio;
+    if (mode == SioMode::ReceiveOnly) {
+        granted.tx = kNoPin;  // DATA IN is never driven before H6
+    }
+    return SioAssignment{granted, checked.value()};
 }
 
 }  // namespace rb::board

@@ -3,6 +3,9 @@
 > Estado: **PROPUESTA, NO APROBADA.** Planificación técnica, sin implementación. H5 empieza solo después de aprobar
 > H4 (`docs/hardware/h4-puerta-sio.md`, checklist §7) y de una autorización explícita. Ningún punto de este
 > documento autoriza a configurar GPIO, cambiar `sdkconfig` ni flashear.
+>
+> **Revisión técnica del 2026-10-25 (P2, P3 y P7, §8):** contrastada con la fuente de ESP-IDF v6.1 (etiqueta
+> `v6.1`). P7 confirmado; P2 y P3 condicionados. Es investigación documental: no inicia H5 ni aprueba H4.
 
 **Etiquetas:**
 - **[D]** documentación de Espressif (ESP-IDF v6.1, hoja de datos, erratas);
@@ -56,20 +59,34 @@ H5 solo **escucha**: decodifica las tramas de comando del Atari y mide los tiemp
 - **Pull-up de GPIO33: decisión pendiente.**
   - El esquema no muestra pull-up y el comportamiento real no está medido (`h4-puerta-sio.md` §3.3).
   - Si M4/M5 confirman un nivel alto indefinido o un flanco lento, la opción es el pull-up interno. ESP-IDF resuelve
-    la errata GPIO-3.6 para los pads RTC [D].
+    la errata GPIO-3.6 para los pads RTC [D]: `gpio_pullup_en()` usa `rtc_gpio_pullup_en()` en ellos
+    (`components/esp_driver_gpio/src/gpio.c`).
+  - **En v6.1, `uart_set_pin` ya no activa el pull-up de RX** [D] (P3): el camino de RX de `_uart_set_pin6`
+    (`components/esp_driver_uart/src/uart.c`) solo conecta la señal por la matriz GPIO o el IOMUX. ESP-IDF 5.4 sí
+    llamaba a `gpio_set_pull_mode(rx_io_num, GPIO_PULLUP_ONLY)`. Si se decide usar el pull-up, H5 debe llamar
+    **explícitamente** a `gpio_pullup_en(33)`; sin esa llamada, GPIO33 queda sin pull.
   - Esa decisión se toma en H5, con las mediciones.
 - **TX sin asignar:**
-  - [P] Hay que verificar en la fuente de ESP-IDF v6.1 que dejar TX sin asignar (`UART_PIN_NO_CHANGE`) no enruta
-    U2TXD a ningún pad.
+  - **Verificado en la fuente de ESP-IDF v6.1** [D] (P3): `_uart_set_pin6` solo configura el TX si
+    `tx_io_num >= 0`, y con `UART_PIN_NO_CHANGE` (−1) tampoco libera ni toca un TX anterior. El controlador no
+    enruta pines por su cuenta: la única otra llamada interna a `_uart_set_pin6` es la autodetección de velocidad,
+    que H5 no usa.
+  - El TX llega de `validate_for_sio()` (`SioAssignment`): en `ReceiveOnly` vale `kNoPin` (−1), el mismo valor que
+    `UART_PIN_NO_CHANGE`. La conversión debe escribirse de forma explícita en el adaptador [I].
   - En el equipo, `gpio_dump_io_configuration` debe mostrar que **GPIO21 no está conectado al TX de la UART
     elegida**, ni a ninguna otra salida, y que los pines por defecto de esa UART (17 para UART2, 10 para UART1) no se
     usaron.
 - **ISR del UART en IRAM:**
   - ESP-IDF v6.1 tiene `CONFIG_UART_ISR_IN_IRAM` (desactivado por defecto) [D], y la arquitectura pide la ISR del UART
     en IRAM (§9.1) [A].
+  - Alcance (P7) [D]: mueve a IRAM el manejador `uart_rx_intr_handler_default` y sus auxiliares (`UART_ISR_ATTR`,
+    `uart.c`) y `uart_hal_iram` (`components/esp_driver_uart/linker.lf`). Depende de
+    `!RINGBUF_PLACE_ISR_FUNCTIONS_INTO_FLASH` y activa `VFS_SELECT_IN_RAM` si hay `VFS_SUPPORT_SELECT`
+    (`components/esp_driver_uart/Kconfig`).
   - Activarlo es un cambio de `sdkconfig` que **se aprueba aparte** en H5.
-  - `uart_driver_install` no admite `ESP_INTR_FLAG_IRAM` en sus parámetros [D]; la ubicación depende solo de ese
-    Kconfig.
+  - `uart_driver_install` **acepta** `ESP_INTR_FLAG_IRAM`, pero lo ajusta al Kconfig [D]: lo añade si la opción está
+    activa y lo quita, con un aviso, si no lo está (`uart.c`, `uart_driver_install`). La ubicación depende solo de
+    ese Kconfig. *(Corrige la versión anterior de este documento, que decía que no lo admitía.)*
 - **Memoria:** los búferes del controlador se reservan una sola vez, en la inicialización, como permite el ADR-011.
   En la ruta de recepción no hay heap.
 
@@ -96,8 +113,23 @@ H5 solo **escucha**: decodifica las tramas de comando del Atari y mide los tiemp
      de la errata de una trama real de varios milisegundos (5 bytes a 19 200 baudios ≈ 2,6 ms);
    - un bajo **permanente** (Atari apagado, riesgo R12) se informa como estado y no como tramas.
 
-[P] Hay que confirmar en ESP-IDF v6.1 que `esp_timer_get_time`, el cambio de tipo de interrupción y la notificación
-son seguros desde una ISR en IRAM, incluso con la caché deshabilitada.
+**Resultado de P2 (ESP-IDF v6.1, 2026-10-25): condicionado.**
+
+| Operación en la ISR | Seguridad con la caché deshabilitada | Evidencia |
+|---|---|---|
+| `esp_timer_get_time()` | **Segura** [D] | Alias de `esp_timer_impl_get_time`, marcada `ESP_TIMER_IRAM_ATTR` (`components/esp_timer/src/esp_timer_impl_lac.c`). `ESP_TIMER_IN_IRAM` vale `y` y solo es configurable con `SPI_FLASH_AUTO_SUSPEND` (`components/esp_timer/Kconfig`), que el ESP32 no tiene [I] |
+| `xTaskNotifyFromISR` | **Segura** [D] | `xTaskGenericNotifyFromISR` y `vTaskGenericNotifyGiveFromISR` en IRAM (`components/freertos/linker.lf`) |
+| `gpio_set_intr_type()` | **No segura** [D] | Queda en flash: `CONFIG_GPIO_CTRL_FUNC_IN_IRAM` solo mueve `gpio_set_level`, `gpio_intr_disable`, `gpio_get_level` y `gpio_hal_intr_disable` (`components/esp_driver_gpio/linker.lf`) |
+| Despacho con `ESP_INTR_FLAG_IRAM` | La ISR puede ejecutarse con la caché deshabilitada [D] | `esp_intr_alloc.h`; `gpio_intr_service` es `IRAM_ATTR` (`gpio.c`) |
+
+El paso 1 («cambia a `GPIO_INTR_HIGH_LEVEL`») **no puede usar `gpio_set_intr_type()`** desde una ISR registrada
+con `ESP_INTR_FLAG_IRAM`. Con interrupción por nivel, la ISR **debe** desarmarla o cambiar el nivel, o se dispara
+sin parar. Alternativas, a decidir en la revisión de H5 [I]:
+
+- **(a)** `gpio_ll_set_intr_type()` de la HAL (`static inline`, queda dentro de la ISR); acopla el adaptador a la HAL.
+- **(b)** La ISR llama a `gpio_intr_disable()` (exige `CONFIG_GPIO_CTRL_FUNC_IN_IRAM=y`, cambio de `sdkconfig` a
+  aprobar) y la tarea rearma el nivel contrario; la latencia del rearme debe caber en la duración de COMMAND.
+- **(c)** No usar `ESP_INTR_FLAG_IRAM`: contradice la arquitectura (§9.1) [A].
 
 ## 4. Delimitación de la trama y contrato de `SioTransport`
 
@@ -128,18 +160,20 @@ rb_console (consola: "sio listen", "sio stats")       infraestructura
 - **`rb_esp_sio` (nuevo, infraestructura):**
   - una parte en C con la ISR y el UART;
   - el adaptador C++ `EspSioTransport`, que implementa `SioTransport`;
+  - **recibe solo el `SioAssignment` devuelto por `validate_for_sio()`**, nunca el `BoardProfile`: con la puerta
+    H4 sin firmar no se puede construir, y en `ReceiveOnly` no recibe el TX;
   - no conoce el dominio.
 - **Monitor de escucha en `rb_sio`:**
   - decodifica con `CommandFrame` (checksum, ID y comando) y registra las marcas de tiempo en un **búfer circular
     estático**;
   - no responde: **no usa `SioSession`** en H5, porque la sesión transmite ACK, NAK y COMPLETE;
   - respeta la regla de dependencias (ADR-002): `rb_sio` depende de los puertos de `rb_application`, no al revés.
-- **`rb_board`:** se agrega `SioPins` al `BoardProfile` y reglas de validación. Es el entregable de código de H4,
-  en un PR aparte:
-  - COMMAND puede ser un pin 34–39;
-  - RX debe admitir entrada;
-  - TX debe admitir salida y no puede ser 34–39;
-  - en modo solo recepción, TX debe quedar sin usar.
+- **`rb_board`:** entregable de código de H4, **ya integrado** (PR #18 y #19):
+  - `SioPins` en `BoardProfile` y `sioGateApproved` (falso mientras H4 no esté firmado);
+  - `check_sio_pins()`: solo reglas (COMMAND y RX como entradas, 34–39 admitidos; TX declarado como salida fuera
+    de 34–39, obligatorio en `ReceiveTransmit`);
+  - `validate_for_sio()`: autoriza el uso físico y devuelve `SioAssignment`, con `tx = kNoPin` en `ReceiveOnly`;
+  - perfil FN32ROV-1.3: COMMAND 39, RX 33 y TX 21.
 - **Kconfig:**
   - `RB_SIO_LISTEN` (nuevo, desactivado por defecto) habilita la escucha;
   - **no existe ninguna opción de TX hasta H6**.
@@ -181,10 +215,10 @@ rb_console (consola: "sio listen", "sio stats")       infraestructura
 | # | Pendiente | Cómo |
 |---|---|---|
 | P1 | H4 aprobado (checklist) | `h4-puerta-sio.md` §7 |
-| P2 | `esp_timer_get_time`, el cambio de tipo de interrupción y la notificación son seguros desde la ISR en IRAM | Fuente y documentación de ESP-IDF v6.1 |
-| P3 | `UART_PIN_NO_CHANGE` no enruta U2TXD; efecto de `uart_set_pin` sobre el pull-up de RX | Fuente de ESP-IDF v6.1 y `gpio_dump_io_configuration` |
+| P2 | `esp_timer_get_time`, el cambio de tipo de interrupción y la notificación son seguros desde la ISR en IRAM | **Condicionado (2026-10-25):** `esp_timer_get_time` y `xTaskNotifyFromISR` sí; `gpio_set_intr_type` no. Elegir (a), (b) o (c) de §3 en la revisión de H5 |
+| P3 | `UART_PIN_NO_CHANGE` no enruta U2TXD; efecto de `uart_set_pin` sobre el pull-up de RX | **Condicionado (2026-10-25):** TX sin asignar no se enruta [D]; v6.1 no activa el pull-up de RX, así que hace falta `gpio_pullup_en(33)` explícito si se decide (P4). Pendiente en el equipo: `gpio_dump_io_configuration` |
 | P4 | Nivel en reposo y flanco de subida de IO33 sin configurar; necesidad y tipo de pull-up | Osciloscopio (M4, M5); decisión en la revisión de H5 |
 | P8 | UART definitiva (UART2 propuesta, o UART1) | Revisión de H5 |
 | P5 | Velocidad real NTSC/PAL y su tolerancia | Analizador (M5) |
 | P6 | Umbral del filtro de COMMAND | Medición de t0 y de la duración de COMMAND (M5) |
-| P7 | Aprobación del cambio `CONFIG_UART_ISR_IN_IRAM=y` | Revisión de H5 |
+| P7 | Aprobación del cambio `CONFIG_UART_ISR_IN_IRAM=y` | **Confirmado técnicamente (2026-10-25)**: la opción existe y su alcance está en §2. Falta la aprobación del cambio de `sdkconfig` en la revisión de H5 |

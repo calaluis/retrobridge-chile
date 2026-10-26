@@ -8,6 +8,7 @@ set(rb_srcs
     "src/build_checks.cpp"
     "src/command_line_tracker.cpp"
     "src/sio_command_dispatcher.cpp"
+    "src/sio_listener.cpp"
     "src/sio_session.cpp")
 
 if(ESP_PLATFORM)

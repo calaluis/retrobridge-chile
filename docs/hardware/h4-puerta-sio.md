@@ -137,6 +137,15 @@ Datos técnicos para esa decisión [D][I]:
 
 - SIO_MCTL llega a IO36 **sin buffer ni divisor**, solo con R2 de 10 k a GND.
 - El manual de Atari solo dice "alto = encendido" y **no especifica la tensión**.
+- **Atari del equipo: 65XE NTSC (2026-10-26).** En su esquema (redibujo de terceros, hoja 5), MOTOR CONTROL
+  sale del colector de **Q7, un PNP con el emisor en +5 V**, hacia el pin 8 a través de L11 (bobina), **sin
+  resistencia en serie**; la base la controla el PIA (CA2) por R91. Con el motor encendido, el pin 8 quedaría a
+  unos **+5 V menos la saturación de Q7 (≈ 4,7–4,9 V)** y con capacidad de dar corriente [I]. Es **superior** a los
+  ≈ 3,6 V que admite IO36: lo previsible es que **M3a no pase el punto de detención** y haga falta una mitigación.
+  El esquema no es un documento oficial de Atari: **no sustituye a M3a**, que sigue siendo obligatoria para
+  confirmar el nivel y los picos.
+- La carga del lado del casete no limita esa tensión: en la XC12, el pin 8 entra por R3 (27 k) a la base de un
+  transistor que conmuta el motor (esquema de terceros) [I].
 - El ESP32 admite como máximo **VDD + 0,3 V (unos 3,6 V)** en sus entradas [D].
 - **[P] Punto de detención:** la primera medición del nivel alto de MOTOR CONTROL se hace **en el Atari solo, con
   la FujiNet desconectada del SIO** (procedimiento, etapa M3a), con el motor del casete encendido y un osciloscopio
@@ -147,7 +156,8 @@ Datos técnicos para esa decisión [D][I]:
 - **Si la señal puede superar los niveles admisibles del ESP32, no se autoriza ninguna conexión** de la FujiNet al
   Atari hasta diseñar, revisar y validar una mitigación aprobada.
 - [C] La placa ya funcionó con este Atari durante las pruebas WSS sin daño aparente. Eso **no** demuestra que el
-  nivel esté dentro del margen ni sustituye a la medición.
+  nivel esté dentro del margen ni sustituye a la medición; lo más probable es que el motor del casete no se
+  activara durante esas pruebas, con MOTOR en bajo [I].
 - RetroBridge no necesita MOTOR en la v1, que no emula casete.
 
 ### 3.5 GPIO 34–39 y erratas del ESP32 [D]
@@ -210,7 +220,7 @@ Datos técnicos para esa decisión [D][I]:
 
 | # | Riesgo | Causa | Impacto | Prevención | Verificación |
 |---|---|---|---|---|---|
-| R1 | Sobretensión en GPIO36 | MOTOR directo a IO36 sin divisor; nivel de Atari desconocido | Daño del ESP32 | **Medir primero en el Atari solo, con la FujiNet desconectada; sin conexión si supera el límite** hasta tener una mitigación validada; no usar MOTOR en la v1 | M3a [P], punto de detención |
+| R1 | Sobretensión en GPIO36 | MOTOR directo a IO36 sin divisor. En el 65XE del equipo, el esquema indica un PNP saturado a +5 V sin resistencia en serie (≈ 4,7–4,9 V previstos, §3.4) [I]; nivel real sin medir | Daño del ESP32 | **Medir primero en el Atari solo, con la FujiNet desconectada; sin conexión si supera el límite** hasta tener una mitigación validada; no usar MOTOR en la v1 | M3a [P], punto de detención |
 | R2 | Bus bloqueado en bajo | GPIO21 configurado en bajo (o TX mal enrutado) | El Atari no puede comunicarse con ningún periférico | H5 sin TX; verificar con `gpio_dump_io_configuration` que GPIO21 no está asignado | Revisión de código y M5 |
 | R3 | Posible recepción errónea en DATA OUT [I] | El esquema no muestra pull-up en IO33; el comportamiento real no está medido | Tramas corruptas, si la hipótesis se confirma | Medir nivel y flanco; decidir en H5 (por ejemplo, el pull-up interno) | M4, M5 [P] |
 | R4 | Flancos falsos de COMMAND | Errata GPIO-3.11 (ADC) | Tramas fantasma | Sin ADC durante la escucha; filtro por duración | Pruebas de host y M5 |
@@ -238,7 +248,7 @@ Datos técnicos para esa decisión [D][I]:
 | 10 | Requisitos eléctricos del manual | **Contrastados** [M][D]; IIL del 74LS07 fuera de especificación (§4) |
 | 11 | Sin suponer tolerancia a 5 V en el ESP32 | **Cumplido en el análisis**; el riesgo restante es MOTOR (R1) |
 | 12 | Niveles en reposo medidos con el Atari encendido | **Pendiente** (M3, M4) |
-| 13–15 | Atari (modelo, NTSC/PAL, ROM), otros dispositivos, instrumentos | **Pendiente** (lo aporta el equipo) |
+| 13–15 | Atari (modelo, NTSC/PAL, ROM), otros dispositivos, instrumentos | **Parcial (2026-10-26):** Atari **65XE NTSC**, ampliado a **128 KB** de RAM; otros dispositivos SIO: disquetera **1050** y caseteras **XC12** y **1010**; **sin instrumentos** para M3a. Pendiente: versión de la ROM del sistema operativo y si alguna casetera, con una cinta, permite activar MOTOR para M3a |
 | 16–17 | microSD FAT32 e imágenes ATR con derechos claros | **Completo** (H3c; imágenes sintéticas de `make_atr.py`) |
 
 ## 7. Checklist de aceptación de H4
@@ -270,5 +280,8 @@ H4 se aprueba **solo** cuando todos los puntos estén marcados y el equipo firme
 - Espressif, *ESP32 Series SoC Errata*: GPIO-3.6, GPIO-3.11 y GPIO-3.14.
 - Espressif, ESP-IDF v6.1: *GPIO & RTC GPIO* y *UART*; `components/esp_driver_uart/Kconfig`.
 - Atari, *Home Computer Technical Reference Notes* (C016555), §9: conector y especificaciones eléctricas.
+- Esquemas del Atari 65XE (redibujo de Jerzy Sobola, 2003, 9 hojas) y de la casetera XC12 (mismo autor, 2002):
+  MOTOR CONTROL (Q7) y conector SIO. Documentos de terceros, no oficiales de Atari.
+- Atari, *1010 Cassette Recorder Field Service Manual* y *1050 Field Service Manual* (escaneos, solo referencia).
 
 El detalle, con fechas y URL, está en `docs/fuentes.md`.

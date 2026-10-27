@@ -119,4 +119,36 @@ struct SioAssignment {
 //   InvalidPinAssignment - as check_sio_pins()
 rb::core::Result<SioAssignment> validate_for_sio(const BoardProfile& profile, SioMode mode) noexcept;
 
+class SioListenAssignment;
+
+// Authorizes passive listening only (H5, design of rb_esp_sio, delivery E1):
+// exactly validate_for_sio(profile, ReceiveOnly), keeping COMMAND and RX alone.
+// Same errors:
+//   BoardNotConfirmed    - hardware not confirmed, or the H4 gate not signed
+//   InvalidPinAssignment - as check_sio_pins() in ReceiveOnly
+rb::core::Result<SioListenAssignment> validate_for_sio_listen(const BoardProfile& profile) noexcept;
+
+// The pins a passive listener may use: COMMAND and RX, never TX. There is no
+// transmit line to read, and only validate_for_sio_listen() can create one, so
+// a listener driver that takes this type cannot be handed DATA IN by
+// construction. Copyable, so it can travel in a Result.
+class SioListenAssignment {
+public:
+    int8_t command() const noexcept { return command_; }
+    int8_t rx() const noexcept { return rx_; }
+    uint8_t warnings() const noexcept { return warnings_; }  // PinWarning flags, as check_sio_pins()
+
+private:
+    constexpr SioListenAssignment(int8_t command, int8_t rx, uint8_t warnings) noexcept
+        : command_(command), rx_(rx), warnings_(warnings)
+    {
+    }
+
+    friend rb::core::Result<SioListenAssignment> validate_for_sio_listen(const BoardProfile& profile) noexcept;
+
+    int8_t command_;
+    int8_t rx_;
+    uint8_t warnings_;
+};
+
 }  // namespace rb::board

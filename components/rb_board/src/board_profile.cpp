@@ -135,4 +135,15 @@ Result<SioAssignment> validate_for_sio(const BoardProfile& profile, SioMode mode
     return SioAssignment{granted, checked.value()};
 }
 
+Result<SioListenAssignment> validate_for_sio_listen(const BoardProfile& profile) noexcept
+{
+    // The same gate and rules as any receive-only use; only the TX line is left out.
+    const auto granted = validate_for_sio(profile, SioMode::ReceiveOnly);
+    if (!granted.ok()) {
+        return Failure{granted.error()};
+    }
+    const SioAssignment& assignment = granted.value();
+    return SioListenAssignment{assignment.pins.command, assignment.pins.rx, assignment.warnings};
+}
+
 }  // namespace rb::board

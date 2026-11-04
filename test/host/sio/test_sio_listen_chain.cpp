@@ -336,6 +336,52 @@ static void test_a_second_complete_delivers_nothing(void)
     TEST_ASSERT_EQUAL_UINT32(1, c.assembler.stats().frames);
 }
 
+// HUMENGIA pilot: an already CLOSED COMMAND window must survive a wait deadline
+// until the adapter explicitly completes it (H5 / P9-D1). These are synthetic
+// host timestamps; no physical timing or hardware permission is inferred.
+static void test_closed_window_with_late_bytes_survives_wait_deadline(void)
+{
+    Chain c;
+    const auto bytes = valid_frame(0xC1);
+    c.source.fall(15000);
+    c.source.bytes(16000, bytes.data(), 3);
+    c.source.rise(19000);  // closed before the first 20 ms deadline
+    c.source.bytes(20500, bytes.data() + 3, 2);  // final bytes after the deadline
+    c.source.complete(21600);  // D1: capture completes explicitly
+
+    TEST_ASSERT_TRUE(c.listener.step(kWaitUs) == ListenOutcome::Timeout);
+    TEST_ASSERT_EQUAL_UINT(0, c.listener.size());
+    TEST_ASSERT_TRUE(c.listener.step(kWaitUs) == ListenOutcome::Frame);
+    TEST_ASSERT_EQUAL_UINT(1, c.listener.size());
+    TEST_ASSERT_EQUAL_UINT8(5, c.listener.at(0).count);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(bytes.data(), c.listener.at(0).bytes.data(), 5);
+    TEST_ASSERT_EQUAL_UINT64(19000, c.listener.at(0).atUs);
+    TEST_ASSERT_EQUAL_UINT32(1, c.assembler.stats().frames);
+    TEST_ASSERT_EQUAL_UINT32(1, c.listener.stats().timeouts);
+}
+
+// An event-queue overflow AFTER COMMAND rises must still invalidate the closed
+// window, even if the five payload bytes and checksum were otherwise valid.
+static void test_overflow_after_rise_drops_window_then_recovers(void)
+{
+    Chain c;
+    const auto bytes = valid_frame(0xC2);
+    c.source.fall(1000);
+    c.source.bytes(2000, bytes.data(), 5);
+    c.source.rise(5000);
+    c.source.queue_overflow(5300);  // closed, but complete() not yet called
+    c.source.complete(5600);
+    c.window(30000, bytes.data(), 5, 4000);
+
+    TEST_ASSERT_TRUE(c.listener.step(kWaitUs) == ListenOutcome::Timeout);
+    TEST_ASSERT_EQUAL_UINT(0, c.listener.size());
+    TEST_ASSERT_EQUAL_UINT32(1, c.assembler.stats().queueOverflows);
+    TEST_ASSERT_EQUAL_UINT32(0, c.assembler.stats().frames);
+    TEST_ASSERT_TRUE(c.listener.step(kWaitUs) == ListenOutcome::Frame);
+    TEST_ASSERT_EQUAL_UINT(1, c.listener.size());
+    TEST_ASSERT_EQUAL_UINT32(1, c.assembler.stats().frames);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -348,5 +394,7 @@ int main(void)
     RUN_TEST(test_byte_level_problems_are_classified_by_the_listener);
     RUN_TEST(test_repeated_errors_then_recovery);
     RUN_TEST(test_a_second_complete_delivers_nothing);
+    RUN_TEST(test_closed_window_with_late_bytes_survives_wait_deadline);
+    RUN_TEST(test_overflow_after_rise_drops_window_then_recovers);
     return UNITY_END();
 }

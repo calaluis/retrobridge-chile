@@ -49,6 +49,14 @@ class CheckLayeringTest(unittest.TestCase):
         write(self.root, "components/rb_hw_diag/src/b.cpp", '#include "rb/domain/disk_image.hpp"\n')
         self.assertEqual(len(check_layering.check_repo(self.root)), 2)
 
+    def test_netsio_has_no_sockets_and_does_not_depend_on_sio(self):
+        write(self.root, "components/rb_netsio/src/ok.cpp",
+              '#include "rb/app/ports/sio_transport.hpp"\n#include "rb/netsio/netsio_codec.hpp"\n')
+        write(self.root, "components/rb_netsio/src/a.cpp", "#include <sys/socket.h>\n")
+        write(self.root, "components/rb_netsio/src/b.cpp", '#include "lwip/sockets.h"\n')
+        write(self.root, "components/rb_netsio/src/c.cpp", '#include "rb/sio/sio_session.hpp"\n')
+        self.assertEqual(len(check_layering.check_repo(self.root)), 3)
+
     def test_infrastructure_components_are_not_checked(self):
         write(self.root, "components/rb_esp_sio/src/a.cpp", '#include "driver/uart.h"\n')
         self.assertEqual(check_layering.check_repo(self.root), [])

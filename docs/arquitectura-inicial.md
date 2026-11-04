@@ -641,6 +641,7 @@ Puertos **que no se crean**, y por qué:
 | `StdioImageRepository` / `StdioByteSource` (ADR-015) | `ImageRepository` / `ImageByteSource` | `rb_file_storage`: portable; en el ESP32 pasa por VFS → FATFS sobre la microSD montada por `rb_esp_storage`; en el host, archivos reales | Sí |
 | `EspSioTransport` | `SioTransport` | `rb_esp_sio`: C++ para la tarea, C para la ISR y la inicialización del controlador | Sí |
 | `EspClock` | `Clock` | `rb_esp_platform` | Sí |
+| `NetSioSioTransport` (ADR-016) | `SioTransport` | `rb_netsio`: puro; NetSIO (FEP-003) sobre el puerto `DatagramPort`, para servir a un Atari emulado desde el PC | Sí (modalidad emulada) |
 | `MemoryByteSource`, `FakeClock`, `ScriptedSioTransport` | Ídem | `test/host/fakes` | Solo pruebas |
 | `TnfsImageRepository` / `TnfsByteSource` | `ImageRepository` / `ImageByteSource` | `rb_net_tnfs` (futuro) | **No** |
 
@@ -690,6 +691,7 @@ retrobridge-chile/
 │   │   │                             # sio_command_dispatcher.hpp, sio_session.hpp
 │   │   └── src/
 │   ├── rb_file_storage/              # portable: StdioImageRepository/ByteSource, política de rutas (ADR-015)
+│   ├── rb_netsio/                    # C++17 puro: códec NetSIO y NetSioSioTransport sobre DatagramPort (ADR-016)
 │   ├── rb_esp_platform/              # ESP-IDF: EspClock, diagnóstico de memoria, backend de RB_LOG
 │   ├── rb_esp_storage/               # ESP-IDF: inicialización de la microSD y montaje FAT en la VFS (sin lógica de archivos)
 │   ├── rb_esp_sio/                   # ESP-IDF: EspSioTransport (C++), sio_isr.c (C, IRAM)

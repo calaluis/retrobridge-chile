@@ -23,6 +23,7 @@ PURE_LAYERS = {
     "rb_sio": ("rb/core/", "rb/domain/", "rb/app/", "rb/sio/"),
     "rb_board": ("rb/core/", "rb/board/"),
     "rb_hw_diag": ("rb/core/", "rb/hwdiag/"),  # autonomous diagnostics: no Atari domain, no ESP-IDF
+    "rb_netsio": ("rb/core/", "rb/app/", "rb/netsio/"),  # NetSIO transport (ADR-016): no sockets, no rb_sio
 }
 
 FORBIDDEN_PLATFORM = re.compile(

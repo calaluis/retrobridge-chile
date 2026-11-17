@@ -27,3 +27,13 @@ rb_apply_build_flags(retrobridge_host)
 if(WIN32)
     target_link_libraries(retrobridge_host PRIVATE ws2_32)
 endif()
+
+# Regression of the executable itself: --log must never write into the image
+# (host/tests/test_log_collision.py). Run with: ctest --test-dir build/retrobridge_host
+enable_testing()
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME retrobridge_host_log_collision
+             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_LIST_DIR}/tests/test_log_collision.py
+                     $<TARGET_FILE:retrobridge_host>)
+endif()

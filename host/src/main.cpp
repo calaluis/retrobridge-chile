@@ -21,10 +21,12 @@
 #include "rb/app/image_location.hpp"
 #include "rb/app/inline_drive_mailbox.hpp"
 #include "rb/app/usecases/apply_drive_request.hpp"
+#include "rb/core/span.hpp"
 #include "rb/domain/disk_image.hpp"
 #include "rb/netsio/netsio_sio_transport.hpp"
 #include "rb/sio/sio_command_dispatcher.hpp"
 #include "rb/sio/sio_session.hpp"
+#include "rb/storage/image_path.hpp"
 #include "rb/storage/stdio_image_repository.hpp"
 #include "udp_datagram_port.hpp"
 
@@ -119,11 +121,34 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "retrobridge_host: invalid image path\n");
         return 2;
     }
+    // Drive D1 with the image mounted before the bus starts.
+    static rb::storage::StdioImageRepository<1> repository{base};
+    const auto location = rb::app::ImageLocation::from(name);
+    if (!location.ok()) {
+        std::fprintf(stderr, "retrobridge_host: invalid image name\n");
+        return 2;
+    }
+    // The file the repository opens is base + '/' + location, built by the same
+    // function it uses. On POSIX "images\disk.atr" is split at the '\' and opened
+    // as "images/disk.atr", so the --image text does not name that file.
+    char imagePath[rb::storage::kMaxImagePath + 1];
+    if (!rb::storage::build_image_path(base, location.value(), rb::core::Span<char>{imagePath}).ok()) {
+        std::fprintf(stderr, "retrobridge_host: invalid image path\n");
+        return 2;
+    }
+    const auto source = repository.open(location.value());
+    if (!source.ok()) {
+        std::fprintf(stderr, "retrobridge_host: cannot open image %s\n", imagePath);
+        return 1;
+    }
+
     // The log is opened for append: if it named the image, every line would be
-    // written into the ATR being served. Compare file identity, not spelling, and
-    // refuse before anything is opened for writing.
-    if (rb::host::compareFiles(options.log, options.image) == rb::host::FileIdentity::Same) {
-        std::fprintf(stderr, "retrobridge_host: --log names the same file as --image; refusing to write into the image\n");
+    // written into the ATR being served. The image is open read-only, so it
+    // exists; compare --log with the effective image path by file identity, not
+    // spelling, and refuse before the log is opened.
+    if (rb::host::compareFiles(options.log, imagePath) == rb::host::FileIdentity::Same) {
+        std::fprintf(stderr, "retrobridge_host: --log names the image file %s; refusing to write into the image\n",
+                     imagePath);
         return 2;
     }
     std::FILE* logFile = std::fopen(options.log, "a");
@@ -135,18 +160,6 @@ int main(int argc, char** argv)
     rb::host::HostClock clock;
     rb::host::JsonlLog log{logFile, clock};
 
-    // Drive D1 with the image mounted before the bus starts.
-    static rb::storage::StdioImageRepository<1> repository{base};
-    const auto location = rb::app::ImageLocation::from(name);
-    if (!location.ok()) {
-        std::fprintf(stderr, "retrobridge_host: invalid image name\n");
-        return 2;
-    }
-    const auto source = repository.open(location.value());
-    if (!source.ok()) {
-        std::fprintf(stderr, "retrobridge_host: cannot open image %s\n", options.image);
-        return 1;
-    }
     auto image = rb::domain::DiskImage::open(*source.value());
     if (!image.ok()) {
         std::fprintf(stderr, "retrobridge_host: not a valid ATR image\n");

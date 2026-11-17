@@ -33,8 +33,15 @@ private:
     std::size_t atrSeen_ = 0;
 };
 
+// True if the name ends in ".atr" (any case), whatever else it contains.
+bool hasAtrExtension(const char* fileName) noexcept;
+
 // True if the name ends in ".atr" (any case) and is a valid ImageLocation.
 bool isCatalogName(const char* fileName) noexcept;
+
+// Calls visit for every regular file of the directory (any name, no limit).
+// false if the directory cannot be read.
+bool forEachRegularFile(const char* directory, void (*visit)(const char* fileName, void* context), void* context);
 
 // Case-insensitive ASCII comparison; ties broken byte by byte, so the order is total.
 int compareNames(const char* a, const char* b) noexcept;

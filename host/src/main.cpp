@@ -141,6 +141,29 @@ bool logNamesImage(const char* log, const char* base, const char* name)
     return false;
 }
 
+// --images: true if --log is, by file identity, any .atr file of the folder,
+// listed in the menu or not, valid image name or not (on Windows, names outside
+// the ANSI code page included). A folder that cannot be listed or an .atr that
+// cannot be identified while the log exists also refuses: fail closed.
+bool logNamesFolderAtr(const char* log, const char* folder)
+{
+    char match[512];
+    switch (rb::host::findAtrIdenticalTo(log, folder, match, sizeof match)) {
+    case rb::host::FolderCheck::Matches:
+        std::fprintf(stderr, "retrobridge_host: --log names the image file %s/%s; refusing to write into the image\n",
+                     folder, match);
+        return true;
+    case rb::host::FolderCheck::Unreadable:
+        std::fprintf(stderr,
+                     "retrobridge_host: cannot check every .atr of %s against --log; refusing to write into the image\n",
+                     folder);
+        return true;
+    case rb::host::FolderCheck::Clear:
+    default:
+        return false;
+    }
+}
+
 // NetSIO observer of --images: logs every datagram and tells the menu about
 // each inbound COLD_RESET (FF), the only event that brings the menu back.
 class ResetWatch final : public rb::netsio::NetSioObserver {
@@ -317,10 +340,10 @@ int runMenu(const Options& options)
         std::fprintf(stderr, "retrobridge_host: no .atr images in %s\n", options.images);
         return 2;
     }
-    for (std::size_t i = 0; i < catalog.count(); ++i) {
-        if (logNamesImage(options.log, options.images, catalog.name(i))) {
-            return 2;
-        }
+    // Protect every .atr of the folder, not only the kMaxEntries the menu shows:
+    // a file beyond the list is still an image the user keeps there.
+    if (logNamesFolderAtr(options.log, options.images)) {
+        return 2;
     }
     std::FILE* logFile = std::fopen(options.log, "a");
     if (logFile == nullptr) {

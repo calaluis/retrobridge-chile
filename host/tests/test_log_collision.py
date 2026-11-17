@@ -106,6 +106,61 @@ class ImagesFolderTest(HostCase):
         self.assert_image_intact()
         self.assertEqual(self.entries(), before, "a file was created")
 
+    def make_21_images(self):
+        """images/ with 21 ATRs: disk.atr plus img00..img19. In menu order disk.atr is
+        the first entry and img19.atr the 21st, outside the 20 the menu shows."""
+        for n in range(20):
+            (self.root / "images" / f"img{n:02d}.atr").write_bytes(ATR)
+        outside = self.root / "images" / "img19.atr"
+        return outside, outside.stat().st_mtime_ns
+
+    def test_log_naming_the_atr_beyond_the_menu_limit_is_refused(self):
+        outside, mtime = self.make_21_images()
+        before = self.entries()
+        result = self.run_folder("images", "images/img19.atr")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("refusing to write into the image", result.stderr)
+        self.assertIn("img19.atr", result.stderr)
+        self.assertEqual(outside.read_bytes(), ATR, "the ATR beyond the limit changed")
+        self.assertEqual(outside.stat().st_mtime_ns, mtime, "the ATR beyond the limit was written")
+        self.assert_image_intact()
+        self.assertEqual(self.entries(), before, "a file was created")
+
+    @unittest.skipUnless(os.name == "nt", "8.3 aliases and ANSI listings are Windows behaviour")
+    def test_log_as_8dot3_alias_of_a_non_ansi_atr_is_refused(self):
+        # A name outside the ANSI code page comes back from FindFirstFileA with '?',
+        # so it cannot be opened by that name; the check must still see it.
+        import ctypes
+        target = self.root / "images" / "juego Ω largo nombre.atr"
+        target.write_bytes(ATR)
+        mtime = target.stat().st_mtime_ns
+        buffer = ctypes.create_unicode_buffer(1024)
+        if ctypes.windll.kernel32.GetShortPathNameW(str(target), buffer, 1024) == 0:
+            self.skipTest("no short name available")
+        alias = Path(buffer.value).name
+        if alias == target.name:
+            self.skipTest("8.3 names are disabled on this volume")
+        before = self.entries()
+        result = self.run_folder("images", "images/" + alias)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        # The match path, not the "cannot check" refusal, and the long (wide) name.
+        self.assertIn("--log names the image file", result.stderr)
+        self.assertIn("largo nombre.atr", result.stderr)
+        self.assertEqual(target.read_bytes(), ATR, "the non-ANSI ATR changed")
+        self.assertEqual(target.stat().st_mtime_ns, mtime, "the non-ANSI ATR was written")
+        self.assertEqual(self.entries(), before, "a file was created")
+
+    def test_the_menu_still_shows_twenty_of_twenty_one(self):
+        self.make_21_images()
+        result = self.run_folder("images", "run.jsonl")
+        self.assertNotEqual(result.returncode, 2, result.stderr)
+        log = (self.root / "run.jsonl").read_text(encoding="utf-8")
+        entries = [line for line in log.splitlines() if '"name":"menu_entry"' in line]
+        self.assertEqual(len(entries), 20)
+        self.assertIn("entries=20 atr_seen=21", log)
+        self.assertIn('"detail":"T img18.atr"', log)
+        self.assertNotIn("img19.atr", log)
+
     def test_folder_without_atr_files_is_refused(self):
         (self.root / "empty").mkdir()
         (self.root / "empty" / "notes.txt").write_text("x")

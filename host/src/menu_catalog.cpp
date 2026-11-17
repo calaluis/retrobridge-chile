@@ -37,14 +37,19 @@ int compareNames(const char* a, const char* b) noexcept
     return exact < 0 ? -1 : (exact > 0 ? 1 : 0);
 }
 
-bool isCatalogName(const char* fileName) noexcept
+bool hasAtrExtension(const char* fileName) noexcept
 {
     const std::size_t length = std::strlen(fileName);
-    if (length <= 4 || length > MenuCatalog::kMaxName) {
+    if (length <= 4) {
         return false;
     }
     const char* ext = fileName + length - 4;
-    if (ext[0] != '.' || lower(ext[1]) != 'a' || lower(ext[2]) != 't' || lower(ext[3]) != 'r') {
+    return ext[0] == '.' && lower(ext[1]) == 'a' && lower(ext[2]) == 't' && lower(ext[3]) == 'r';
+}
+
+bool isCatalogName(const char* fileName) noexcept
+{
+    if (!hasAtrExtension(fileName) || std::strlen(fileName) > MenuCatalog::kMaxName) {
         return false;
     }
     // build_image_path also refuses ':' and '\'; such a file could be listed but never opened.
@@ -83,6 +88,13 @@ bool MenuCatalog::offer(const char* fileName)
 
 bool readCatalog(const char* directory, MenuCatalog& catalog)
 {
+    return forEachRegularFile(
+        directory, [](const char* name, void* context) { static_cast<MenuCatalog*>(context)->offer(name); },
+        &catalog);
+}
+
+bool forEachRegularFile(const char* directory, void (*visit)(const char* fileName, void* context), void* context)
+{
 #ifdef _WIN32
     char pattern[MAX_PATH];
     const int written = std::snprintf(pattern, sizeof pattern, "%s\\*", directory);
@@ -96,7 +108,7 @@ bool readCatalog(const char* directory, MenuCatalog& catalog)
     }
     do {
         if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
-            catalog.offer(entry.cFileName);
+            visit(entry.cFileName, context);
         }
     } while (FindNextFileA(find, &entry));
     FindClose(find);
@@ -112,7 +124,7 @@ bool readCatalog(const char* directory, MenuCatalog& catalog)
         struct stat info {};
         if (written > 0 && static_cast<std::size_t>(written) < sizeof path && stat(path, &info) == 0 &&
             S_ISREG(info.st_mode)) {
-            catalog.offer(entry->d_name);
+            visit(entry->d_name, context);
         }
     }
     closedir(dir);

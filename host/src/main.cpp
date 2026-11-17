@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "file_identity.hpp"
 #include "host_clock.hpp"
 #include "jsonl_log.hpp"
 #include "rb/app/drive_bay.hpp"
@@ -118,6 +119,13 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "retrobridge_host: invalid image path\n");
         return 2;
     }
+    // The log is opened for append: if it named the image, every line would be
+    // written into the ATR being served. Compare file identity, not spelling, and
+    // refuse before anything is opened for writing.
+    if (rb::host::compareFiles(options.log, options.image) == rb::host::FileIdentity::Same) {
+        std::fprintf(stderr, "retrobridge_host: --log names the same file as --image; refusing to write into the image\n");
+        return 2;
+    }
     std::FILE* logFile = std::fopen(options.log, "a");
     if (logFile == nullptr) {
         std::fprintf(stderr, "retrobridge_host: cannot open log %s\n", options.log);
@@ -163,7 +171,10 @@ int main(int argc, char** argv)
     rb::app::ApplyDriveRequest apply{bay, mailbox};
     rb::sio::SioSession session{transport, clock, dispatcher, apply};
 
-    char detail[160];
+    // Worst case: 127-byte name, "netsiohub", two ports of up to 10 digits (196
+    // bytes with the literals). Sized from the name buffer so GCC's
+    // -Wformat-truncation can prove the output fits.
+    char detail[sizeof name + 96];
     std::snprintf(detail, sizeof detail, "image=%s peer=%s local=127.0.0.1:%u hub=127.0.0.1:%u", name,
                   options.profile == rb::netsio::PeerProfile::NetsiohubTrailingByte ? "netsiohub" : "fep003",
                   port.localPort(), options.port);

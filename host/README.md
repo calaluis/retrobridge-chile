@@ -29,5 +29,9 @@ cmake --build build/retrobridge_host
 Opciones: `--port` (UDP del hub, 9997), `--peer netsiohub|fep003` (perfil explícito; por defecto FEP-003 estricto),
 `--log` (JSONL con cada datagrama, cada transacción y un resumen) y `--seconds N` (0 = sin límite).
 
+El log se abre para agregar. Si `--log` nombra el mismo archivo que `--image`, aunque se escriba con otra ruta,
+otra capitalización, un nombre corto 8.3 o un enlace duro, el programa termina con código 2 sin abrir nada para
+escritura. La comparación usa la identidad del archivo en disco, no el texto de la ruta.
+
 El socket se enlaza a `127.0.0.1` y solo acepta datagramas del puerto del hub. El hub, en cambio, escucha en
 `0.0.0.0:9997`: limitarlo con el firewall del laboratorio.

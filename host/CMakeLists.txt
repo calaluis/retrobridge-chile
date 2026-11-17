@@ -19,6 +19,7 @@ add_subdirectory(${rb_root}/components/rb_netsio rb_netsio)
 
 add_executable(retrobridge_host
     src/main.cpp
+    src/file_identity.cpp
     src/udp_datagram_port.cpp
     src/jsonl_log.cpp)
 target_link_libraries(retrobridge_host PRIVATE rb_sio rb_file_storage rb_netsio)

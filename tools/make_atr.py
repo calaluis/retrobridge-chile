@@ -34,7 +34,129 @@ IMAGES = (
     ("dd-720", 720, 256, 0),
     ("dd-1440", 1440, 256, 0),       # non-standard double density
     ("sd-trailing", 720, 128, 50),   # partial trailing sector: header/file mismatch
+    ("rb-boot", 720, 128, 0),        # bootable: sector 1 holds BOOT_PROGRAM (E1c, Issue #32)
 )
+
+# --- Bootable image (E1c, decision D4) ---------------------------------------
+#
+# Sector 1 of "rb-boot" is a disk boot record followed by an original 6502
+# program (written for RetroBridge; no code from FujiNet or emulators, ADR-012).
+# The OS loads BOOT_LOAD_SECTORS sectors at BOOT_ORG and calls BOOT_ORG + 6.
+# The program XORs the 256 bytes of sectors 2 and 3, compares the result with the
+# value this generator computed, and shows its own one-line display list:
+# "RETROBRIDGE D1 OK" if they match, "RETROBRIDGE D1 ERR" otherwise. Then it
+# loops forever. A message on screen therefore means sectors 1 to 3 reached the
+# Atari's memory intact.
+
+BOOT_IMAGE = "rb-boot"
+BOOT_ORG = 0x0700
+BOOT_LOAD_SECTORS = 3
+BOOT_OK_TEXT = "RETROBRIDGE D1 OK"
+BOOT_ERR_TEXT = "RETROBRIDGE D1 ERR"
+BOOT_TEXT_WIDTH = 20        # ANTIC mode 7: 20 characters per line
+RTCLOK_LOW = 0x14           # OS frame counter, advanced by the vertical blank
+SDLSTL = 0x0230             # OS shadow of the display list pointer
+
+
+def screen_codes(text: str) -> bytes:
+    """ATASCII 0x20-0x5F to ANTIC screen codes, centred in BOOT_TEXT_WIDTH columns."""
+    if len(text) > BOOT_TEXT_WIDTH or any(not 0x20 <= ord(c) <= 0x5F for c in text):
+        raise ValueError(f"text not representable in one mode 7 line: {text!r}")
+    left = (BOOT_TEXT_WIDTH - len(text)) // 2
+    line = " " * left + text + " " * (BOOT_TEXT_WIDTH - left - len(text))
+    return bytes(ord(c) - 0x20 for c in line)
+
+
+def assemble(program: list, org: int) -> bytes:
+    """Two-pass assembly of a list of byte strings, ("label", name) marks and
+    operand placeholders: ("lo", name), ("hi", name), ("abs", name) (2 bytes, LSB
+    first) and ("rel", name) (1-byte branch offset from the next instruction)."""
+    sizes = {"lo": 1, "hi": 1, "abs": 2, "rel": 1}
+    labels, pc = {}, org
+    for item in program:
+        if isinstance(item, tuple) and item[0] == "label":
+            labels[item[1]] = pc
+        else:
+            pc += sizes[item[0]] if isinstance(item, tuple) else len(item)
+    out, pc = bytearray(), org
+    for item in program:
+        if isinstance(item, tuple):
+            kind, name = item
+            if kind == "label":
+                continue
+            value = labels[name]
+            if kind == "lo":
+                out.append(value & 0xFF)
+            elif kind == "hi":
+                out.append(value >> 8)
+            elif kind == "abs":
+                out += bytes([value & 0xFF, value >> 8])
+            else:
+                offset = value - (pc + 1)
+                if not -128 <= offset <= 127:
+                    raise ValueError(f"branch to {name} out of range")
+                out.append(offset & 0xFF)
+            pc += sizes[kind]
+        else:
+            out += item
+            pc += len(item)
+    return bytes(out)
+
+
+def boot_program(expected_xor: int) -> bytes:
+    """Sector 1 of rb-boot: boot record plus program, padded to 128 bytes."""
+    data_start = BOOT_ORG + BOOT_SECTOR_SIZE          # sectors 2 and 3: 256 bytes
+    program = [
+        # Boot record: flags, sectors to load, load address, init address (DOSINI).
+        bytes([0x00, BOOT_LOAD_SECTORS, BOOT_ORG & 0xFF, BOOT_ORG >> 8]), ("abs", "init"),
+        # XOR of the 256 bytes loaded from sectors 2 and 3.
+        b"\xA2\x00",                                  # LDX #0
+        b"\x8A",                                      # TXA
+        ("label", "sum"),
+        bytes([0x5D, data_start & 0xFF, data_start >> 8]),  # EOR data_start,X
+        b"\xE8",                                      # INX
+        b"\xD0", ("rel", "sum"),                      # BNE sum
+        bytes([0xC9, expected_xor]),                  # CMP #expected
+        b"\xF0", ("rel", "show"),                     # BEQ show
+        b"\xA9", ("lo", "err_text"),                  # LDA #<err_text
+        b"\x8D", ("abs", "dl_lms"),                   # STA dl_lms
+        b"\xA9", ("hi", "err_text"),                  # LDA #>err_text
+        b"\x8D", ("abs", "dl_lms_hi"),                # STA dl_lms+1
+        ("label", "show"),
+        # Wait for a vertical blank so both pointer bytes change within one frame.
+        bytes([0xA5, RTCLOK_LOW]),                    # LDA RTCLOK
+        ("label", "wait"),
+        bytes([0xC5, RTCLOK_LOW]),                    # CMP RTCLOK
+        b"\xF0", ("rel", "wait"),                     # BEQ wait
+        b"\xA9", ("lo", "dl"),                        # LDA #<dl
+        bytes([0x8D, SDLSTL & 0xFF, SDLSTL >> 8]),    # STA SDLSTL
+        b"\xA9", ("hi", "dl"),                        # LDA #>dl
+        bytes([0x8D, (SDLSTL + 1) & 0xFF, (SDLSTL + 1) >> 8]),  # STA SDLSTL+1
+        ("label", "halt"),
+        b"\x4C", ("abs", "halt"),                     # JMP halt
+        ("label", "init"),
+        b"\x60",                                      # RTS (DOSINI on RESET)
+        # Display list: 80 blank lines, one mode 7 line with LMS, jump and wait for VBL.
+        ("label", "dl"),
+        bytes([0x70] * 10),
+        b"\x47",
+        ("label", "dl_lms"), ("lo", "ok_text"),
+        ("label", "dl_lms_hi"), ("hi", "ok_text"),
+        b"\x41", ("abs", "dl"),
+        ("label", "ok_text"), screen_codes(BOOT_OK_TEXT),
+        ("label", "err_text"), screen_codes(BOOT_ERR_TEXT),
+    ]
+    code = assemble(program, BOOT_ORG)
+    if len(code) > BOOT_SECTOR_SIZE:
+        raise ValueError(f"boot program is {len(code)} bytes, sector 1 holds {BOOT_SECTOR_SIZE}")
+    return code + bytes(BOOT_SECTOR_SIZE - len(code))
+
+
+def xor_bytes(data: bytes) -> int:
+    value = 0
+    for byte in data:
+        value ^= byte
+    return value
 
 
 def sector_length(sector: int, sector_size: int) -> int:
@@ -68,9 +190,13 @@ def build_image(name: str, sectors: int, sector_size: int, trailing: int, seed: 
     nominal = data_size(sectors, sector_size)
     out = bytearray(header(nominal, sector_size))
     rows = []
+    contents = {n: sector_content(image_seed, n, sector_length(n, sector_size)) for n in range(1, sectors + 1)}
+    if name == BOOT_IMAGE:
+        loaded = b"".join(contents[n] for n in range(2, BOOT_LOAD_SECTORS + 1))
+        contents[1] = boot_program(xor_bytes(loaded))
     for sector in range(1, sectors + 1):
         length = sector_length(sector, sector_size)
-        content = sector_content(image_seed, sector, length)
+        content = contents[sector]
         rows.append((name, sector, len(out), length, zlib.crc32(content) & 0xFFFFFFFF))
         out += content
     out += bytes([0xEE]) * trailing

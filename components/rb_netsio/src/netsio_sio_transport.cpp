@@ -65,6 +65,10 @@ void NetSioSioTransport::disconnect()
         (void)transmitSignal(id::kDeviceDisconnected);  // best effort: the hub also expires silent devices
         connected_ = false;
     }
+    // State of the registration just closed must not reach the next one (P1): its
+    // credit must be granted again, and a frame it cut must never be completed.
+    credit_ = 0;
+    inFrame_ = false;
 }
 
 Result<CommandBytes> NetSioSioTransport::waitCommandFrame(uint32_t timeoutUs)

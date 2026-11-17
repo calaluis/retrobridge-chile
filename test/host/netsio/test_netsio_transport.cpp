@@ -324,6 +324,51 @@ static void test_without_credit_the_transport_asks_and_waits(void)
     TEST_ASSERT_EQUAL_UINT32(1, h.transport.stats().creditRequests);
 }
 
+// P1 (Issue #32): credit granted to a previous registration must not survive a
+// disconnect. The hub grants credit per connection; after C0 and a new C1 with no
+// fresh C7, the COMPLETE must wait for credit (C6) instead of spending the old one.
+static void test_reconnect_without_new_credit_asks_before_completing(void)
+{
+    NetSioHarness h;
+    FakeByteSource sd = sd_image();
+    h.mount(sd);
+    h.connect(3);  // C7 = 3 on the first registration
+    TEST_ASSERT_TRUE(h.session.step() == StepOutcome::Idle);  // the idle wait takes in the C7
+    TEST_ASSERT_EQUAL_UINT8(3, h.transport.credit());
+    h.transport.disconnect();
+    h.connect(0);  // same instance: C3 again, no new C7
+    h.push_frame(kStatusD1, 0x15);
+    h.port.push({0xC7, 0x01}, 2000);
+
+    TEST_ASSERT_TRUE(h.session.step() == StepOutcome::Completed);
+    TEST_ASSERT_EQUAL_size_t(3, h.port.sent_count());
+    h.assert_sent(0, {0x81, 0x15, 0x01, 0x41, 0x00, 0x00});
+    h.assert_sent(1, {0xC6, 0x00});
+    h.assert_sent(2, {0x02, 0x43, 0x00, 0xFF, 0xE0, 0x00, 0xE0});
+    TEST_ASSERT_EQUAL_UINT8(0, h.transport.credit());
+    TEST_ASSERT_EQUAL_UINT32(1, h.transport.stats().creditRequests);
+}
+
+// P1 review: a frame cut by a disconnect must not be completed by a sync that
+// arrives after the next registration.
+static void test_partial_frame_does_not_survive_a_reconnect(void)
+{
+    NetSioHarness h;
+    FakeByteSource sd = sd_image();
+    h.mount(sd);
+    h.connect(3);
+    h.from_atari({0x11});
+    h.from_atari({0x02, 0x31, 0x53, 0x00, 0x00, 0x84});
+    TEST_ASSERT_TRUE(h.session.step() == StepOutcome::Idle);  // frame open, no sync yet
+    h.transport.disconnect();
+    h.connect(3);
+    h.from_atari({0x18, 0x16});  // sync of the new session, with no COMMAND ON before it
+
+    TEST_ASSERT_TRUE(h.session.step() == StepOutcome::Idle);
+    TEST_ASSERT_EQUAL_size_t(1, h.port.sent_count());
+    h.assert_sent(0, {0x81, 0x16, 0x00, 0x00, 0x00, 0x00});
+}
+
 static void test_credit_timeout_drops_the_transaction_and_the_next_one_succeeds(void)
 {
     NetSioHarness h;
@@ -422,6 +467,8 @@ int main(void)
     RUN_TEST(test_write_data_sync_is_released_empty);
     RUN_TEST(test_trailer_gaps_are_counted);
     RUN_TEST(test_without_credit_the_transport_asks_and_waits);
+    RUN_TEST(test_reconnect_without_new_credit_asks_before_completing);
+    RUN_TEST(test_partial_frame_does_not_survive_a_reconnect);
     RUN_TEST(test_credit_timeout_drops_the_transaction_and_the_next_one_succeeds);
     RUN_TEST(test_failed_ack_is_released_with_an_empty_sync_response);
     RUN_TEST(test_receive_error_is_a_transport_failure);

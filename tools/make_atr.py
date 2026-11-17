@@ -15,6 +15,7 @@ Outputs, in --out (outside the repository; build/ is git-ignored):
   images.csv     image,sectors,sector_size,file_size,header_mismatch,trailing_bytes
 
 Usage: python tools/make_atr.py --out build/test-images [--seed N]
+       python tools/make_atr.py --out build/boot-image --boot   (only rb-boot.atr, E1c)
 """
 
 import argparse
@@ -34,7 +35,13 @@ IMAGES = (
     ("dd-720", 720, 256, 0),
     ("dd-1440", 1440, 256, 0),       # non-standard double density
     ("sd-trailing", 720, 128, 50),   # partial trailing sector: header/file mismatch
-    ("rb-boot", 720, 128, 0),        # bootable: sector 1 holds BOOT_PROGRAM (E1c, Issue #32)
+)
+
+# --boot: the bootable image alone (E1c, Issue #32), with its own manifest. It is
+# kept out of IMAGES so the Meta A set (H3, test_meta_a and the firmware
+# diagnostics) stays exactly as it is.
+BOOT_IMAGES = (
+    ("rb-boot", 720, 128, 0),        # sector 1 holds the boot program below
 )
 
 # --- Bootable image (E1c, decision D4) ---------------------------------------
@@ -204,11 +211,11 @@ def build_image(name: str, sectors: int, sector_size: int, trailing: int, seed: 
     return bytes(out), rows, info
 
 
-def generate(out_dir: Path, seed: int) -> None:
+def generate(out_dir: Path, seed: int, images=IMAGES) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     manifest_rows = []
     image_rows = []
-    for name, sectors, sector_size, trailing in IMAGES:
+    for name, sectors, sector_size, trailing in images:
         data, rows, info = build_image(name, sectors, sector_size, trailing, seed)
         (out_dir / f"{name}.atr").write_bytes(data)
         manifest_rows.extend(rows)
@@ -230,9 +237,12 @@ def main(argv: list) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", required=True, type=Path, help="output directory (outside the repository)")
     parser.add_argument("--seed", type=int, default=0, help="content seed (default 0)")
+    parser.add_argument("--boot", action="store_true",
+                        help="write only the bootable rb-boot image (E1c), not the Meta A set")
     args = parser.parse_args(argv)
-    generate(args.out, args.seed)
-    print(f"make_atr: {len(IMAGES)} images written to {args.out}")
+    images = BOOT_IMAGES if args.boot else IMAGES
+    generate(args.out, args.seed, images)
+    print(f"make_atr: {len(images)} image(s) written to {args.out}")
     return 0
 
 

@@ -174,6 +174,18 @@ class BootImageTest(unittest.TestCase):
         row = next(r for r in self.rows if r[1] == 1)
         self.assertEqual(row[4], zlib.crc32(self.sector(1)) & 0xFFFFFFFF)
 
+    def test_meta_a_set_is_unchanged_and_boot_set_is_separate(self):
+        # test_meta_a (H3) and the firmware diagnostics expect exactly these five images.
+        self.assertEqual([i[0] for i in make_atr.IMAGES], ["sd-720", "ed-1040", "dd-720", "dd-1440", "sd-trailing"])
+        with tempfile.TemporaryDirectory() as out:
+            make_atr.main(["--out", out, "--boot"])
+            self.assertEqual(sorted(p.name for p in Path(out).glob("*.atr")), ["rb-boot.atr"])
+            with (Path(out) / "manifest.csv").open(newline="") as f:
+                rows = list(csv.DictReader(f))
+            self.assertEqual({r["image"] for r in rows}, {"rb-boot"})
+            self.assertEqual(len(rows), 720)
+            self.assertEqual((Path(out) / "rb-boot.atr").read_bytes(), self.atr)
+
     def test_other_sectors_keep_the_standard_content(self):
         s720 = self.sector(720)
         self.assertEqual(s720[0] | (s720[1] << 8), 720)

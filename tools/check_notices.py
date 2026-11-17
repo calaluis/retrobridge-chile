@@ -28,7 +28,11 @@ LICENSE_FILE = re.compile(r"^(LICEN[CS]E|COPYING)(\..*)?$", re.IGNORECASE)
 
 
 def versionable_files(root: Path):
-    """Tracked files plus untracked files not ignored by .gitignore; None outside git."""
+    """Tracked files plus untracked files not ignored by .gitignore; None outside git.
+
+    Git lists a nested repository or a submodule as a single directory entry; the
+    caller expands it. A tracked file deleted from disk is still listed.
+    """
     try:
         result = subprocess.run(
             ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others",
@@ -36,15 +40,28 @@ def versionable_files(root: Path):
             capture_output=True, check=True)
     except (OSError, subprocess.CalledProcessError):
         return None
-    return [root / name for name in result.stdout.decode("utf-8").split("\0") if name]
+    names = result.stdout.decode("utf-8", errors="surrogateescape").split("\0")
+    return [root / name for name in names if name]
+
+
+def _skipped(root: Path, path: Path) -> bool:
+    return any(part in SKIP_DIRS for part in path.relative_to(root).parts)
 
 
 def walk(root: Path):
     files = versionable_files(root)
-    for path in (files if files is not None else root.rglob("*")):
-        if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
+    if files is None:
+        files = root.rglob("*")
+    for path in files:
+        if _skipped(root, path):
             continue
-        yield path
+        if path.is_dir():
+            # Nested repository or submodule: inspect everything inside it.
+            for inner in path.rglob("*"):
+                if not _skipped(root, inner):
+                    yield inner
+        elif path.exists():
+            yield path
 
 
 def vendored_dirs(root: Path) -> list:

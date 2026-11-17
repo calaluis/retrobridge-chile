@@ -84,6 +84,25 @@ class CheckNoticesTest(unittest.TestCase):
         self.assertEqual(check_notices.main(["x", str(self.root)]), 1)
 
     @unittest.skipUnless(shutil.which("git"), "git is not available")
+    def test_nested_repository_is_inspected(self):
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        subprocess.run(["git", "init", "-q", str(self.root / "components" / "vend")], check=True)
+        write(self.root, "components/vend/deep/LICENSE", "MIT\n")        # inside a nested repo
+        write(self.root, "THIRD_PARTY_NOTICES.md", "nothing\n")
+        self.assertEqual(check_notices.vendored_dirs(self.root), ["components/vend/deep"])
+        self.assertEqual(check_notices.main(["x", str(self.root)]), 1)
+
+    @unittest.skipUnless(shutil.which("git"), "git is not available")
+    def test_tracked_file_deleted_from_disk_is_skipped(self):
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        write(self.root, "main/idf_component.yml", 'dependencies:\n  espressif/foo: "1.0.0"\n')
+        write(self.root, "THIRD_PARTY_NOTICES.md", "nothing\n")
+        subprocess.run(["git", "-C", str(self.root), "add", "-A"], check=True)
+        (self.root / "main" / "idf_component.yml").unlink()
+        self.assertEqual(check_notices.manifest_dependencies(self.root), [])
+        self.assertEqual(check_notices.main(["x", str(self.root)]), 0)
+
+    @unittest.skipUnless(shutil.which("git"), "git is not available")
     def test_only_committed_gitignore_hides_local_copies(self):
         git = ["git", "-C", str(self.root)]
         subprocess.run(["git", "init", "-q", str(self.root)], check=True)

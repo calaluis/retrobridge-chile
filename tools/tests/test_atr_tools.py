@@ -191,6 +191,37 @@ class BootImageTest(unittest.TestCase):
         self.assertEqual(s720[0] | (s720[1] << 8), 720)
 
 
+class DemoImagesTest(BootImageTest):
+    """--demo (Issue #38): two bootable images with different messages and one invalid ATR."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.atr, cls.rows, _ = make_atr.build_image("demo-uno", 720, 128, 0, 0)
+
+    def test_intact_sectors_show_ok(self):
+        self.assertEqual(self.boot(), "DEMO UNO OK")
+
+    def test_the_two_bootable_images_show_different_messages(self):
+        dos = DemoImagesTest("test_boot_record")
+        dos.atr = make_atr.build_image("demo-dos", 720, 128, 0, 0)[0]
+        self.assertEqual(dos.boot(), "DEMO DOS OK")
+        self.assertNotEqual(self.boot(), dos.boot())
+
+    def test_rota_is_not_an_atr(self):
+        rota = make_atr.build_image("rota", 720, 128, 0, 0)[0]
+        self.assertEqual(rota[0:2], bytes(2))
+        self.assertNotEqual(rota[0:2], bytes([0x96, 0x02]))
+
+    def test_demo_set_is_separate(self):
+        with tempfile.TemporaryDirectory() as out:
+            make_atr.main(["--out", out, "--demo"])
+            self.assertEqual(sorted(p.name for p in Path(out).glob("*.atr")),
+                             ["demo-dos.atr", "demo-uno.atr", "rota.atr"])
+
+    # The Meta A check belongs to rb-boot only.
+    test_meta_a_set_is_unchanged_and_boot_set_is_separate = None
+
+
 def host_log(*datagrams, image="rb-boot.atr"):
     """A retrobridge_host JSONL with a start event and the given (dir, hex) datagrams."""
     lines = [json.dumps({"kind": "event", "name": "start", "detail": f"image={image} peer=netsiohub"})]

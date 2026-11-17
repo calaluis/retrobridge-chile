@@ -92,7 +92,21 @@ void JsonlLog::step(StepOutcome outcome)
 void JsonlLog::event(const char* name, const char* detail)
 {
     begin("event");
-    std::fprintf(file_, ",\"name\":\"%s\",\"detail\":\"%s\"", name, detail);
+    std::fprintf(file_, ",\"name\":\"%s\",\"detail\":\"", name);
+    // The detail may carry a file name of the images folder (Issue #38): escape
+    // what JSON does not allow raw in a string.
+    for (const char* p = detail; *p != '\0'; ++p) {
+        const unsigned char c = static_cast<unsigned char>(*p);
+        if (c == '"' || c == '\\') {
+            std::fputc('\\', file_);
+            std::fputc(c, file_);
+        } else if (c < 0x20 || c >= 0x80) {  // bytes >= 0x80 (ANSI paths) as Latin-1, so the line stays UTF-8
+            std::fprintf(file_, "\\u%04X", c);
+        } else {
+            std::fputc(c, file_);
+        }
+    }
+    std::fputc('"', file_);
     end();
 }
 

@@ -16,6 +16,7 @@ Outputs, in --out (outside the repository; build/ is git-ignored):
 
 Usage: python tools/make_atr.py --out build/test-images [--seed N]
        python tools/make_atr.py --out build/boot-image --boot   (only rb-boot.atr, E1c)
+       python tools/make_atr.py --out build/menu-demo --demo     (boot menu demo, Issue #38)
 """
 
 import argparse
@@ -43,6 +44,24 @@ IMAGES = (
 BOOT_IMAGES = (
     ("rb-boot", 720, 128, 0),        # sector 1 holds the boot program below
 )
+
+# --demo: the boot menu demonstration (Issue #38). Two bootable images that show
+# different messages, so the screen tells which one booted, and one image whose
+# header is not an ATR header, which the host must refuse when it is chosen.
+DEMO_IMAGES = (
+    ("demo-uno", 720, 128, 0),
+    ("demo-dos", 720, 128, 0),
+    ("rota", 720, 128, 0),
+)
+
+# Bootable images and the message their program shows when sectors 2 and 3 match.
+BOOT_TEXTS = {
+    "rb-boot": "RETROBRIDGE D1 OK",
+    "demo-uno": "DEMO UNO OK",
+    "demo-dos": "DEMO DOS OK",
+}
+# Images whose ATR magic is overwritten with zeros: not valid ATR files.
+INVALID_IMAGES = frozenset({"rota"})
 
 # --- Bootable image (E1c, decision D4) ---------------------------------------
 #
@@ -110,8 +129,8 @@ def assemble(program: list, org: int) -> bytes:
     return bytes(out)
 
 
-def boot_program(expected_xor: int) -> bytes:
-    """Sector 1 of rb-boot: boot record plus program, padded to 128 bytes."""
+def boot_program(expected_xor: int, ok_text: str = BOOT_OK_TEXT, err_text: str = BOOT_ERR_TEXT) -> bytes:
+    """Sector 1 of a bootable image: boot record plus program, padded to 128 bytes."""
     data_start = BOOT_ORG + BOOT_SECTOR_SIZE          # sectors 2 and 3: 256 bytes
     program = [
         # Boot record: flags, sectors to load, load address, init address (DOSINI).
@@ -150,8 +169,8 @@ def boot_program(expected_xor: int) -> bytes:
         ("label", "dl_lms"), ("lo", "ok_text"),
         ("label", "dl_lms_hi"), ("hi", "ok_text"),
         b"\x41", ("abs", "dl"),
-        ("label", "ok_text"), screen_codes(BOOT_OK_TEXT),
-        ("label", "err_text"), screen_codes(BOOT_ERR_TEXT),
+        ("label", "ok_text"), screen_codes(ok_text),
+        ("label", "err_text"), screen_codes(err_text),
     ]
     code = assemble(program, BOOT_ORG)
     if len(code) > BOOT_SECTOR_SIZE:
@@ -198,9 +217,11 @@ def build_image(name: str, sectors: int, sector_size: int, trailing: int, seed: 
     out = bytearray(header(nominal, sector_size))
     rows = []
     contents = {n: sector_content(image_seed, n, sector_length(n, sector_size)) for n in range(1, sectors + 1)}
-    if name == BOOT_IMAGE:
+    if name in BOOT_TEXTS:
         loaded = b"".join(contents[n] for n in range(2, BOOT_LOAD_SECTORS + 1))
-        contents[1] = boot_program(xor_bytes(loaded))
+        contents[1] = boot_program(xor_bytes(loaded), BOOT_TEXTS[name])
+    if name in INVALID_IMAGES:
+        out[0:2] = bytes(2)
     for sector in range(1, sectors + 1):
         length = sector_length(sector, sector_size)
         content = contents[sector]
@@ -237,10 +258,13 @@ def main(argv: list) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", required=True, type=Path, help="output directory (outside the repository)")
     parser.add_argument("--seed", type=int, default=0, help="content seed (default 0)")
-    parser.add_argument("--boot", action="store_true",
-                        help="write only the bootable rb-boot image (E1c), not the Meta A set")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--boot", action="store_true",
+                       help="write only the bootable rb-boot image (E1c), not the Meta A set")
+    group.add_argument("--demo", action="store_true",
+                       help="write the boot menu demo set (Issue #38), not the Meta A set")
     args = parser.parse_args(argv)
-    images = BOOT_IMAGES if args.boot else IMAGES
+    images = BOOT_IMAGES if args.boot else DEMO_IMAGES if args.demo else IMAGES
     generate(args.out, args.seed, images)
     print(f"make_atr: {len(images)} image(s) written to {args.out}")
     return 0

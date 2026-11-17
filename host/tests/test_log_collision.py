@@ -36,7 +36,9 @@ def make_atr_bytes() -> bytes:
 ATR = make_atr_bytes()
 
 
-class LogCollisionTest(unittest.TestCase):
+class HostCase(unittest.TestCase):
+    """A temporary folder with images/disk.atr; helpers to run the host there."""
+
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
@@ -62,6 +64,8 @@ class LogCollisionTest(unittest.TestCase):
         self.assertEqual(self.image.read_bytes(), ATR, "the ATR changed")
         self.assertEqual(self.image.stat().st_mtime_ns, self.mtime, "the ATR was written")
 
+
+class LogCollisionTest(HostCase):
     def assert_refused(self, image_arg, log_arg):
         before = self.entries()
         result = self.run_host(image_arg, log_arg)
@@ -82,6 +86,55 @@ class LogCollisionTest(unittest.TestCase):
         self.assert_image_intact()
         log = (self.root / "run.jsonl").read_text(encoding="utf-8")
         self.assertIn('"name":"start"', log)
+
+
+class ImagesFolderTest(HostCase):
+    """--images (Issue #38): the same protection for every image of the folder,
+    and clear refusals for folders the menu cannot serve."""
+
+    def run_folder(self, folder_arg, log_arg):
+        return subprocess.run(
+            [EXE, "--images", folder_arg, "--log", log_arg, "--port", "9", "--seconds", "1"],
+            cwd=self.root, capture_output=True, text=True, timeout=60)
+
+    def test_log_naming_an_image_of_the_folder_is_refused(self):
+        (self.root / "images" / "a-first.atr").write_bytes(ATR)
+        before = self.entries()
+        result = self.run_folder("images", "images\\DISK.ATR" if os.name == "nt" else "images/disk.atr")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("refusing to write into the image", result.stderr)
+        self.assert_image_intact()
+        self.assertEqual(self.entries(), before, "a file was created")
+
+    def test_folder_without_atr_files_is_refused(self):
+        (self.root / "empty").mkdir()
+        (self.root / "empty" / "notes.txt").write_text("x")
+        result = self.run_folder("empty", "run.jsonl")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("no .atr images", result.stderr)
+        self.assertFalse((self.root / "run.jsonl").exists())
+
+    def test_missing_folder_is_refused(self):
+        result = self.run_folder("nowhere", "run.jsonl")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("cannot read images folder", result.stderr)
+
+    def test_image_and_images_together_are_refused(self):
+        result = subprocess.run([EXE, "--image", "images/disk.atr", "--images", "images"],
+                                cwd=self.root, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("usage", result.stderr)
+
+    def test_other_log_lists_the_catalog_and_leaves_images_untouched(self):
+        (self.root / "images" / "B.ATR").write_bytes(ATR)
+        result = self.run_folder("images", "run.jsonl")
+        self.assertNotEqual(result.returncode, 2, result.stderr)
+        self.assert_image_intact()
+        log = (self.root / "run.jsonl").read_text(encoding="utf-8")
+        self.assertIn('"name":"menu_entry","detail":"A B.ATR"', log)
+        self.assertIn('"name":"menu_entry","detail":"B disk.atr"', log)
+        # Nobody answers on port 9, so no step runs: the menu is requested, not yet applied.
+        self.assertIn('"name":"menu_return","detail":"cold reset: menu requested for D1"', log)
 
 
 if __name__ == "__main__":

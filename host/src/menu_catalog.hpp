@@ -1,0 +1,46 @@
+#pragma once
+
+// Catalog of the boot menu (Issue #38): the .atr files of the --images folder,
+// in case-insensitive alphabetical order, at most kMenuMaxEntries. Fixed
+// storage; names longer than an ImageLocation or with characters outside
+// printable ASCII are skipped, so every entry can be opened by the repository.
+
+#include <array>
+#include <cstddef>
+
+#include "rb/app/image_location.hpp"
+
+namespace rb::host {
+
+class MenuCatalog {
+public:
+    static constexpr std::size_t kMaxEntries = 20;
+    static constexpr std::size_t kMaxName = rb::app::ImageLocation::kMaxLength;
+
+    // Offers one directory entry. Returns true if it was kept (for now: a later,
+    // alphabetically smaller name can push it out of the first kMaxEntries).
+    bool offer(const char* fileName);
+
+    std::size_t count() const noexcept { return count_; }
+    const char* name(std::size_t index) const noexcept { return names_[index].data(); }
+
+    // Number of .atr names offered, including those beyond kMaxEntries.
+    std::size_t atrSeen() const noexcept { return atrSeen_; }
+
+private:
+    std::array<std::array<char, kMaxName + 1>, kMaxEntries> names_{};
+    std::size_t count_ = 0;
+    std::size_t atrSeen_ = 0;
+};
+
+// True if the name ends in ".atr" (any case) and is a valid ImageLocation.
+bool isCatalogName(const char* fileName) noexcept;
+
+// Case-insensitive ASCII comparison; ties broken byte by byte, so the order is total.
+int compareNames(const char* a, const char* b) noexcept;
+
+// Lists the regular files of a directory into the catalog. false if the
+// directory cannot be read.
+bool readCatalog(const char* directory, MenuCatalog& catalog);
+
+}  // namespace rb::host

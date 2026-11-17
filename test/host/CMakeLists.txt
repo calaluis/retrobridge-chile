@@ -141,3 +141,16 @@ set_tests_properties(check_diag_report_sample PROPERTIES FIXTURES_REQUIRED diag_
 
 rb_add_abort_test(test_repository_close_attached_aborts test_port_contracts --close-attached-source)
 rb_add_abort_test(test_mailbox_reply_without_request_aborts test_drive_mailbox --reply-without-request)
+
+# retrobridge_host boot menu (Issue #38, ADR-017): the host's menu sources are
+# plain C++ over the components, so CI tests them here without building host/.
+set(rb_menu_images ${CMAKE_CURRENT_BINARY_DIR}/menu-images)
+add_test(NAME generate_menu_images
+         COMMAND ${Python3_EXECUTABLE} -I ${rb_root}/tools/make_atr.py --out ${rb_menu_images} --demo)
+set_tests_properties(generate_menu_images PROPERTIES FIXTURES_SETUP menu_images)
+rb_add_host_test(test_host_menu menu/test_host_menu.cpp
+                 ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
+                 ${rb_root}/host/src/menu_controller.cpp ${rb_root}/host/src/menu_sio_transport.cpp)
+target_include_directories(test_host_menu PRIVATE ${rb_root}/host/src)
+target_compile_definitions(test_host_menu PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
+set_tests_properties(test_host_menu PROPERTIES FIXTURES_REQUIRED menu_images)

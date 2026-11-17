@@ -1,6 +1,6 @@
 # retrobridge_host
 
-Ejecutable de PC que sirve una ATR como unidad D1 a un Atari emulado por NetSIO (Issue #32, E1b; ADR-016).
+Ejecutable de PC que sirve una ATR (o un menú para elegirla, `--images`) como unidad D1 a un Atari emulado por NetSIO (Issue #32, E1b; ADR-016).
 Reutiliza `rb_netsio`, `SioSession`, el despachador SIO y el dominio de RetroBridge. Es una unidad de solo lectura.
 No es firmware: no ejerce UART, GPIO ni temporización SIO real; los tiempos son del PC.
 
@@ -62,6 +62,40 @@ los datos no coinciden).
    ```
 
    Sale con 0 solo si cada READ se respondió con COMPLETE, un checksum SIO válido y el CRC32 del manifiesto.
+
+## Elegir la imagen desde el Atari: menú de arranque (Issue #38)
+
+Con `--images <carpeta>`, en lugar de `--image`, RetroBridge sirve su propio menú como D1 tras cada reinicio en
+frío. El menú lista los `.atr` de la carpeta (como máximo 20, en orden alfabético). Al pulsar la letra de una
+imagen, RetroBridge la valida y la monta como D1, y el Atari arranca desde ella. Shift+F5 vuelve al menú. Si la
+imagen no es una ATR válida, el menú muestra el motivo y espera otra letra. El protocolo está en ADR-017.
+
+1. Generar las imágenes de demostración (dos arrancables con mensajes distintos y una inválida):
+
+   ```bash
+   python -I tools/make_atr.py --out build/menu-demo --demo
+   ```
+
+2. Preparar Altirra y el hub como en «Usar con Altirra».
+3. Servir la carpeta:
+
+   ```bash
+   retrobridge_host --images build/menu-demo --peer netsiohub --log menu.jsonl
+   ```
+
+4. Reiniciar en frío Altirra (Shift+F5). Aparece el menú:
+   - `A`: arranca `DEMO-DOS.ATR` y muestra `DEMO DOS OK`;
+   - `B`: arranca `DEMO-UNO.ATR` y muestra `DEMO UNO OK`;
+   - `C`: `ROTA.ATR` no es una ATR; el menú muestra `ERROR: ATR INVALIDA`.
+
+   Shift+F5 vuelve al menú en cualquier momento. F5 (reinicio en caliente) conserva la imagen.
+
+El log registra el catálogo (`menu_entry`), cada elección (`menu_select`), cada cambio de D1 (`menu_mount`) y cada
+vuelta al menú (`menu_return`). `--log` no puede nombrar ninguna imagen de la carpeta. Una carpeta sin `.atr`
+termina con código 2.
+
+El programa 6502 del menú se genera con `python -I tools/make_menu.py --out host/src/menu_program.inc`; las
+pruebas de `tools/` fallan si el archivo versionado no coincide.
 
 El socket se enlaza a `127.0.0.1` y solo acepta datagramas del puerto del hub. El hub, en cambio, escucha en
 `0.0.0.0:9997`: limitarlo con el firewall del laboratorio.

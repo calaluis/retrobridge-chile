@@ -7,10 +7,19 @@ Two kinds of dependencies are detected:
   * ESP-IDF component manager dependencies: every name under `dependencies:` in
     an idf_component.yml, except `idf` itself, must appear in the notices.
 
+Only files the repository can version are examined: tracked files plus untracked
+files not ignored by a committed .gitignore. Copies that a local tool generates and
+the repository's .gitignore excludes (e.g. the rsc harness under .rsc/,
+.claude/skills/<id>, .codex/rsc/<id>) are machine state, not distributed code.
+Machine-local rules (.git/info/exclude, core.excludesFile) are deliberately NOT
+honoured, so they cannot hide vendored code from this check. Outside a git work
+tree every file is examined.
+
 Usage: python tools/check_notices.py [repo_root]
 """
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -18,8 +27,21 @@ SKIP_DIRS = {".git", "build", "managed_components"}
 LICENSE_FILE = re.compile(r"^(LICEN[CS]E|COPYING)(\..*)?$", re.IGNORECASE)
 
 
+def versionable_files(root: Path):
+    """Tracked files plus untracked files not ignored by .gitignore; None outside git."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others",
+             "--exclude-per-directory=.gitignore"],
+            capture_output=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return [root / name for name in result.stdout.decode("utf-8").split("\0") if name]
+
+
 def walk(root: Path):
-    for path in root.rglob("*"):
+    files = versionable_files(root)
+    for path in (files if files is not None else root.rglob("*")):
         if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
             continue
         yield path

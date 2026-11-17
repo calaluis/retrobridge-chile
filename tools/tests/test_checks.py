@@ -3,6 +3,8 @@
 Run with: python -m unittest discover -s tools/tests
 """
 
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -79,6 +81,23 @@ class CheckNoticesTest(unittest.TestCase):
     def test_unlisted_vendored_dir_fails(self):
         write(self.root, "third_party/foo/COPYING", "GPL\n")
         write(self.root, "THIRD_PARTY_NOTICES.md", "nothing\n")
+        self.assertEqual(check_notices.main(["x", str(self.root)]), 1)
+
+    @unittest.skipUnless(shutil.which("git"), "git is not available")
+    def test_only_committed_gitignore_hides_local_copies(self):
+        git = ["git", "-C", str(self.root)]
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        write(self.root, ".gitignore", ".rsc/\n.claude/skills/tool\nthird_party/\n")
+        write(self.root, ".rsc/skills/tool/kit/LICENSE", "MIT\n")        # ignored local copy
+        write(self.root, ".claude/skills/tool/kit/LICENSE", "MIT\n")     # ignored local copy
+        write(self.root, "components/foo/LICENSE", "GPL\n")              # untracked, not ignored
+        write(self.root, "third_party/bar/LICENSE", "GPL\n")             # ignored, but added to git
+        subprocess.run(git + ["add", "-f", "third_party/bar/LICENSE"], check=True)
+        write(self.root, ".git/info/exclude", "/vendor/\n")
+        write(self.root, "vendor/baz/COPYING", "GPL\n")                  # hidden only by info/exclude
+        write(self.root, "THIRD_PARTY_NOTICES.md", "nothing\n")
+        self.assertEqual(check_notices.vendored_dirs(self.root),
+                         ["components/foo", "third_party/bar", "vendor/baz"])
         self.assertEqual(check_notices.main(["x", str(self.root)]), 1)
 
     def test_unlisted_manifest_dependency_fails(self):

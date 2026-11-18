@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the 6502 menu of retrobridge_host (Issues #38 and #40) as a C++ include.
+"""Generate the 6502 menu of retrobridge_host (Issues #38 and #40, menu-tnfs) as a C++ include.
 
 The menu is the D1 disk the Atari boots after a cold reset when retrobridge_host
 runs with --images. Its first sectors hold a disk boot record, an original 6502
@@ -17,7 +17,12 @@ The program is a thin terminal (ADR-017, amended for Issue #40):
   3. layout 0 shows the main screen, layout 1 the list of a source;
   4. action 1 jumps to the OS cold start (COLDSV), which boots the image the
      host has just put on D1; action 0 waits for a key in CH ($02FC) and sends
-     its keyboard code with 'K' (the host decides what it means);
+     its keyboard code with 'K' (the host decides what it means); action 2
+     ("wait", menu-tnfs) watches CH for about WAIT_TICKS frames and then asks
+     again with the poll code POLL and a new AUX2; a key pressed meanwhile is
+     sent instead of the poll. Every key is sent as CH AND KEY_MASK, without
+     the Shift ($40) and Control ($80) bits, so a key is $00-$3F and can never
+     be POLL ($FE) or NO_KEY ($FF) (menu-tnfs, M41-3);
   5. if SIOV fails, writes NO_HOST_TEXT into the message line of the main
      screen, shows it and waits for a key.
 
@@ -41,13 +46,16 @@ MENU_ORG = 0x0700
 MENU_DEVICE = 0x5A           # SIO device ID of the menu service (ADR-017)
 MENU_COMMAND = 0x4B          # 'K': a key (AUX1), answered with the screen to show
 NO_KEY = 0xFF                # AUX1 when no key was pressed: just draw
+POLL = 0xFE                  # AUX1 after action 2: no key, how is the job going?
+KEY_MASK = 0x3F              # a key is sent without the Shift and Control bits
+WAIT_TICKS = 15              # action 2: frames (RTCLOK) to watch CH before polling
 MENU_TIMEOUT_S = 7           # DTIMLO: seconds the OS waits for the device
 LINE_WIDTH = 40
 TITLE_WIDTH = 20             # ANTIC modes 6 and 7: 20 characters per line
 SCREEN_SIZE = 960            # the largest layout (900 bytes) rounded to 24 lines
 REPLY_SIZE = 2 + SCREEN_SIZE  # action, layout, screen
 
-ACTION_SHOW, ACTION_BOOT = 0, 1
+ACTION_SHOW, ACTION_BOOT, ACTION_WAIT = 0, 1, 2
 LAYOUT_MAIN, LAYOUT_LIST = 0, 1
 
 # Main screen (layout 0): offsets in the screen buffer.
@@ -182,13 +190,35 @@ def menu_program():
         abs_op(0x8D, SDLSTL),                         # STA SDLSTL
         b"\xAD", ("abs", "action"),                   # LDA action
         b"\xF0", ("rel", "key"),                      # BEQ key (show)
-        abs_op(0x4C, COLDSV),                         # JMP COLDSV: boot what the host put on D1
+        bytes([0xC9, ACTION_WAIT]),                   # CMP #2
+        b"\xD0", ("rel", "boot"),                     # BNE boot (1, or any other: boot, as before)
+        # Action 2: watch CH for WAIT_TICKS frames, then poll.
+        bytes([0xA2, WAIT_TICKS]),                    # LDX #WAIT_TICKS
+        ("label", "tick"),
+        bytes([0xA5, RTCLOK_LOW]),                    # LDA RTCLOK
+        ("label", "wait_ch"),
+        abs_op(0xAC, CH),                             # LDY CH
+        b"\xC0\xFF",                                  # CPY #$FF
+        b"\xD0", ("rel", "waitkey"),                  # BNE waitkey (a key: send it now)
+        bytes([0xC5, RTCLOK_LOW]),                    # CMP RTCLOK
+        b"\xF0", ("rel", "wait_ch"),                  # BEQ wait_ch (same frame)
+        b"\xCA",                                      # DEX
+        b"\xD0", ("rel", "tick"),                     # BNE tick
+        bytes([0xA9, POLL]),                          # LDA #POLL
+        b"\xD0", ("rel", "send"),                     # BNE send (always: POLL is not 0)
+        ("label", "waitkey"),
+        b"\x98",                                      # TYA (the key)
+        ("label", "got"),                             # A = CH, not $FF
+        bytes([0x29, KEY_MASK]),                      # AND #KEY_MASK (no Shift, no Control)
+        b"\xA2\xFF", abs_op(0x8E, CH),                # LDX #$FF / STX CH (consume the key)
+        b"\xD0", ("rel", "send"),                     # BNE send (always: LDX set Z = 0)
         ("label", "key"),
         abs_op(0xAD, CH),                             # LDA CH
         b"\xC9\xFF",                                  # CMP #$FF
         b"\xF0", ("rel", "key"),                      # BEQ key
-        b"\xA2\xFF", abs_op(0x8E, CH),                # LDX #$FF / STX CH (consume the key)
-        b"\xD0", ("rel", "send"),                     # BNE send (always: A is not $FF)
+        b"\xD0", ("rel", "got"),                      # BNE got
+        ("label", "boot"),
+        abs_op(0x4C, COLDSV),                         # JMP COLDSV: boot what the host put on D1
         ("label", "nohost"),
         b"\xA2", bytes([LINE_WIDTH - 1]),             # LDX #39
         ("label", "copy"),
@@ -201,6 +231,7 @@ def menu_program():
         ("label", "init"),
         b"\x60",                                      # RTS (DOSINI)
         ("label", "dltab"), ("lo", "dl_main"), ("lo", "dl_list"),
+        ("pad", "dl_main"),                           # padding so both display lists share a page
         # Main display list, as the reference: 8 blank, title (mode 7), 8 blank, 8 sources,
         # 8 blank, subtitle (mode 6), 11 status lines, 2 footer lines; then the message line.
         ("label", "dl_main"),
@@ -235,14 +266,25 @@ def menu_program():
         "list_title": LIST_TITLE, "list_entries": LIST_ENTRIES, "list_footer": LIST_FOOTER,
         "list_message": LIST_MESSAGE,
     }
-    # Label addresses, computed the same way as the assembler's first pass.
-    labels, pc = {}, MENU_ORG
     sizes = {"lo": 1, "hi": 1, "abs": 2, "rel": 1}
-    for item in program:
-        if isinstance(item, tuple) and item[0] == "label":
-            labels[item[1]] = pc
-        else:
-            pc += sizes[item[0]] if isinstance(item, tuple) else len(item)
+
+    def addresses(items):
+        """Label addresses, computed the same way as the assembler's first pass."""
+        found, pc = {}, MENU_ORG
+        for item in items:
+            if isinstance(item, tuple) and item[0] == "label":
+                found[item[1]] = pc
+            else:
+                pc += sizes[item[0]] if isinstance(item, tuple) else len(item)
+        return found
+
+    # The display lists start on the next page when they would cross one where they are.
+    pad_at = program.index(("pad", "dl_main"))
+    program[pad_at] = b""
+    first = addresses(program)
+    if first["dl_main"] >> 8 != (first["dl_end"] - 1) >> 8:
+        program[pad_at] = bytes(0x100 - (first["dl_main"] & 0xFF))
+    labels = addresses(program)
     for name, offset in screen_labels.items():
         labels[name] = labels["screen"] + offset
     code = assemble(program, MENU_ORG, extra_labels={k: labels[k] for k in screen_labels})
@@ -268,7 +310,8 @@ def render_include(block: bytes, labels: dict) -> str:
     constants = {
         "kMenuLoadSectors": block[1], "kMenuLineWidth": LINE_WIDTH, "kMenuTitleWidth": TITLE_WIDTH,
         "kMenuScreenSize": SCREEN_SIZE, "kMenuReplySize": REPLY_SIZE, "kMenuNoKey": NO_KEY,
-        "kMenuActionShow": ACTION_SHOW, "kMenuActionBoot": ACTION_BOOT,
+        "kMenuPollKey": POLL, "kMenuKeyMask": KEY_MASK,
+        "kMenuActionShow": ACTION_SHOW, "kMenuActionBoot": ACTION_BOOT, "kMenuActionWait": ACTION_WAIT,
         "kMenuLayoutMain": LAYOUT_MAIN, "kMenuLayoutList": LAYOUT_LIST,
         "kMainTitle": MAIN_TITLE, "kMainSources": MAIN_SOURCES, "kMainDrives": MAIN_DRIVES,
         "kMainTape": MAIN_TAPE, "kMainFooter": MAIN_FOOTER, "kMainMessage": MAIN_MESSAGE,
@@ -276,7 +319,7 @@ def render_include(block: bytes, labels: dict) -> str:
         "kListFooter": LIST_FOOTER, "kListMessage": LIST_MESSAGE,
     }
     lines = [
-        "// Generated by tools/make_menu.py (Issues #38 and #40). Do not edit: regenerate with",
+        "// Generated by tools/make_menu.py (Issues #38 and #40, menu-tnfs). Do not edit: regenerate with",
         "//   python tools/make_menu.py --out host/src/menu_program.inc",
         "// The tools tests fail if this file differs from the generator's output.",
         "// Original 6502 program for RetroBridge (ADR-012); protocol in ADR-017.",

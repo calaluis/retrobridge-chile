@@ -24,6 +24,7 @@ add_subdirectory(${rb_root}/components/rb_file_storage rb_file_storage)
 add_subdirectory(${rb_root}/components/rb_board rb_board)
 add_subdirectory(${rb_root}/components/rb_hw_diag rb_hw_diag)
 add_subdirectory(${rb_root}/components/rb_netsio rb_netsio)
+add_subdirectory(${rb_root}/components/rb_net_tnfs rb_net_tnfs)
 
 # Unity v2.7.0, vendored (D-9). Third-party code: built with its own defaults.
 add_library(unity STATIC unity/src/unity.c)
@@ -92,6 +93,23 @@ target_link_libraries(test_netsio_transport PRIVATE rb_netsio)
 rb_add_host_test(test_netsio_transport_allocations netsio/test_netsio_transport_allocations.cpp)
 target_link_libraries(test_netsio_transport_allocations PRIVATE rb_netsio)
 
+# rb_net_tnfs (menu-tnfs, ADR-012): read-only TNFS codec
+rb_add_host_test(test_tnfs_codec net_tnfs/test_tnfs_codec.cpp)
+target_link_libraries(test_tnfs_codec PRIVATE rb_net_tnfs)
+rb_add_host_test(test_fake_tnfs_server net_tnfs/test_fake_tnfs_server.cpp)
+target_link_libraries(test_fake_tnfs_server PRIVATE rb_netsio)
+rb_add_host_test(test_tnfs_client net_tnfs/test_tnfs_client.cpp)
+target_link_libraries(test_tnfs_client PRIVATE rb_net_tnfs)
+# UdpTnfsPort over a real loopback socket (menu-tnfs T008), FakeTnfsServer on a thread.
+find_package(Threads REQUIRED)
+rb_add_host_test(test_udp_tnfs_port net_tnfs/test_udp_tnfs_port.cpp
+                 ${rb_root}/host/src/udp_tnfs_port.cpp ${rb_root}/host/src/udp_datagram_port.cpp)
+target_include_directories(test_udp_tnfs_port PRIVATE ${rb_root}/host/src)
+target_link_libraries(test_udp_tnfs_port PRIVATE rb_net_tnfs Threads::Threads)
+if(WIN32)
+    target_link_libraries(test_udp_tnfs_port PRIVATE ws2_32)
+endif()
+
 # rb_file_storage (H3a)
 rb_add_host_test(test_image_path storage/test_image_path.cpp)
 
@@ -155,3 +173,8 @@ rb_add_host_test(test_host_menu menu/test_host_menu.cpp
 target_include_directories(test_host_menu PRIVATE ${rb_root}/host/src)
 target_compile_definitions(test_host_menu PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
 set_tests_properties(test_host_menu PROPERTIES FIXTURES_REQUIRED menu_images)
+
+# SHA-256 of the images loaded over TNFS (menu-tnfs T004). RB_REF_ATR, when set,
+# points at the spec's reference ATR (not in the repository).
+rb_add_host_test(test_sha256 menu/test_sha256.cpp ${rb_root}/host/src/sha256.cpp)
+target_include_directories(test_sha256 PRIVATE ${rb_root}/host/src)

@@ -9,10 +9,13 @@
 
 namespace rb::host {
 
-// DatagramPort over one UDP socket on the loopback interface (Issue #32, E1b).
-// Binds 127.0.0.1 on an ephemeral port and connects to 127.0.0.1:<peerPort>, so
-// only datagrams from the hub or emulator are accepted and nothing listens on an
-// external interface. Windows (Winsock 2) and POSIX.
+// DatagramPort over one connected UDP socket (Issue #32, E1b; menu-tnfs T008).
+// open(peerPort) binds 127.0.0.1 on an ephemeral port and connects to
+// 127.0.0.1:<peerPort>, so only datagrams from the hub or emulator are accepted
+// and nothing listens on an external interface. openTo() connects to another
+// IPv4 address (a TNFS server): it binds the loopback interface when the peer is
+// on loopback and any interface otherwise; being connected, the socket still
+// accepts datagrams from that peer only. Windows (Winsock 2) and POSIX.
 //
 // Contract of rb::netsio::DatagramPort:
 //   * receive() returns Timeout when nothing arrives in time, TransportError on a
@@ -25,6 +28,8 @@ public:
 
     // TransportError if the socket cannot be created, bound or connected.
     rb::core::Result<void> open(uint16_t peerPort);
+    // `peerAddress` is IPv4 in host byte order.
+    rb::core::Result<void> openTo(uint32_t peerAddress, uint16_t peerPort);
     void close() noexcept;
     uint16_t localPort() const noexcept { return localPort_; }
 

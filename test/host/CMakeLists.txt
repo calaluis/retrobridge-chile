@@ -90,7 +90,6 @@ rb_add_host_test(test_netsio_codec netsio/test_netsio_codec.cpp)
 target_link_libraries(test_netsio_codec PRIVATE rb_netsio)
 rb_add_host_test(test_netsio_transport netsio/test_netsio_transport.cpp)
 target_link_libraries(test_netsio_transport PRIVATE rb_netsio)
-
 rb_add_host_test(test_netsio_transport_allocations netsio/test_netsio_transport_allocations.cpp)
 target_link_libraries(test_netsio_transport_allocations PRIVATE rb_netsio)
 

@@ -1,6 +1,7 @@
 #include "rb/net_tnfs/tnfs_codec.hpp"
 
 #include <cstring>
+#include <initializer_list>
 
 namespace rb::net_tnfs {
 

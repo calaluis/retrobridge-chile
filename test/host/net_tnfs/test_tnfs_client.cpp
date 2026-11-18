@@ -180,6 +180,7 @@ static void test_a_mute_server_gives_no_response_after_six_seconds(void)
     TEST_ASSERT_FALSE(server.log()[0].retry);
     TEST_ASSERT_EQUAL_HEX8(server.log()[0].sequence, server.log()[2].sequence);  // retries repeat it
     TEST_ASSERT_FALSE(client.mounted());
+    assert_read_only(server);
 }
 
 static void test_mount_answers_on_the_third_attempt(void)
@@ -192,6 +193,7 @@ static void test_mount_answers_on_the_third_attempt(void)
     const uint64_t start = clock_.nowMicros();
     TEST_ASSERT_TRUE(client.mount() == TnfsResult::Ok);
     TEST_ASSERT_EQUAL_UINT64(start + 4000000, clock_.nowMicros());
+    assert_read_only(server);
 }
 
 static void test_a_refused_mount_is_rejected_with_its_status(void)
@@ -203,6 +205,7 @@ static void test_a_refused_mount_is_rejected_with_its_status(void)
     TEST_ASSERT_TRUE(client.mount() == TnfsResult::Rejected);
     TEST_ASSERT_EQUAL_HEX8(0x09, client.lastStatus());
     TEST_ASSERT_FALSE(client.mounted());
+    assert_read_only(server);
 }
 
 static void test_an_unreachable_server_fails_fast(void)
@@ -214,6 +217,7 @@ static void test_an_unreachable_server_fails_fast(void)
     const uint64_t start = clock_.nowMicros();
     TEST_ASSERT_TRUE(client.mount() == TnfsResult::NoResponse);
     TEST_ASSERT_TRUE(clock_.nowMicros() - start < 6000000);  // no full waits
+    assert_read_only(server);
 }
 
 // --- Waits after MOUNT ------------------------------------------------------------
@@ -239,6 +243,7 @@ static void test_attempts_wait_the_announced_minimum(void)
     const uint64_t again = clock_.nowMicros();
     TEST_ASSERT_TRUE(client.stat("/a.atr").result == TnfsResult::NoResponse);
     TEST_ASSERT_EQUAL_UINT64(again + 3000000, clock_.nowMicros());
+    assert_read_only(server);
 }
 
 static void test_without_an_announced_minimum_attempts_wait_two_seconds(void)
@@ -253,6 +258,7 @@ static void test_without_an_announced_minimum_attempts_wait_two_seconds(void)
     const uint64_t start = clock_.nowMicros();
     TEST_ASSERT_TRUE(client.stat("/a.atr").result == TnfsResult::Ok);
     TEST_ASSERT_EQUAL_UINT64(start + 2000000, clock_.nowMicros());
+    assert_read_only(server);
 }
 
 static void test_an_announced_wait_is_capped_at_five_seconds(void)
@@ -276,6 +282,7 @@ static void test_an_announced_wait_is_capped_at_five_seconds(void)
     const uint64_t again = clock_.nowMicros();
     TEST_ASSERT_TRUE(client.stat("/a.atr").result == TnfsResult::Ok);
     TEST_ASSERT_EQUAL_UINT64(again + TnfsClient::kMaxWaitUs, clock_.nowMicros());
+    assert_read_only(server);
 }
 
 static void test_eagain_waits_what_it_asks_without_using_an_attempt(void)
@@ -293,6 +300,7 @@ static void test_eagain_waits_what_it_asks_without_using_an_attempt(void)
     const uint64_t start = clock_.nowMicros();
     TEST_ASSERT_TRUE(client.stat("/a.atr").result == TnfsResult::Ok);  // 2 silences, 2 EAGAIN: still answered
     TEST_ASSERT_EQUAL_UINT64(start + 1000000 + 300000 + 1000000 + 200000, clock_.nowMicros());
+    assert_read_only(server);
 }
 
 static void test_endless_eagain_ends_in_no_response(void)
@@ -307,6 +315,7 @@ static void test_endless_eagain_ends_in_no_response(void)
     }
     TEST_ASSERT_TRUE(client.stat("/a.atr").result == TnfsResult::NoResponse);
     TEST_ASSERT_EQUAL_size_t(TnfsClient::kMaxEagain + 1, count(server, 0x24));
+    assert_read_only(server);
 }
 
 // --- Discarding what is not the reply --------------------------------------------
@@ -341,6 +350,7 @@ static void test_a_malformed_reply_once_is_waited_past(void)
     TnfsClient client(server, clk);
     server.malformed(0x24);
     TEST_ASSERT_TRUE(client.stat("/a.atr").result == TnfsResult::Ok);
+    assert_read_only(server);
 }
 
 static void test_always_malformed_is_malformed(void)
@@ -354,6 +364,7 @@ static void test_always_malformed_is_malformed(void)
     server.malformed(0x24);
     server.malformed(0x24);
     TEST_ASSERT_TRUE(client.stat("/a.atr").result == TnfsResult::Malformed);
+    assert_read_only(server);
 }
 
 static void test_a_short_stat_body_is_malformed(void)
@@ -365,6 +376,7 @@ static void test_a_short_stat_body_is_malformed(void)
     TEST_ASSERT_TRUE(client.mount() == TnfsResult::Ok);
     server.replyWith(0x24, {0xA4, 0x81});  // OK, but only the mode
     TEST_ASSERT_TRUE(client.stat("/a.atr").result == TnfsResult::Malformed);
+    assert_read_only(server);
 }
 
 // --- stat and listDir ------------------------------------------------------------
@@ -421,6 +433,7 @@ static void test_list_dir_refused_is_not_opened(void)
     Names missing;
     TEST_ASSERT_TRUE(client.listDir("/nada", missing) == TnfsResult::NotOpened);
     TEST_ASSERT_EQUAL_size_t(0, count(server, 0x12));  // nothing was opened
+    assert_read_only(server);
 }
 
 static void test_list_dir_cancelled_or_stopped_still_closes(void)
@@ -440,6 +453,7 @@ static void test_list_dir_cancelled_or_stopped_still_closes(void)
     TEST_ASSERT_TRUE(client.listDir("/J", stopped) == TnfsResult::Cancelled);
     TEST_ASSERT_EQUAL_size_t(0, server.openHandles());
     TEST_ASSERT_EQUAL_size_t(2, count(server, 0x12));
+    assert_read_only(server);
 }
 
 static void test_list_dir_failing_half_way_still_closes(void)
@@ -457,6 +471,7 @@ static void test_list_dir_failing_half_way_still_closes(void)
     TEST_ASSERT_TRUE(client.listDir("/J", names) == TnfsResult::NoResponse);
     TEST_ASSERT_EQUAL_size_t(1, count(server, 0x12));
     TEST_ASSERT_EQUAL_size_t(0, server.openHandles());
+    assert_read_only(server);
 }
 
 // --- readWholeReadOnly -------------------------------------------------------------
@@ -492,6 +507,7 @@ static void test_read_an_empty_file(void)
     TEST_ASSERT_EQUAL_UINT32(0, sink.size);
     TEST_ASSERT_EQUAL_INT(0, sink.blocks);
     TEST_ASSERT_EQUAL_size_t(0, server.openHandles());
+    assert_read_only(server);
 }
 
 static void test_read_refusals_are_not_opened(void)
@@ -514,6 +530,7 @@ static void test_read_refusals_are_not_opened(void)
     Sink denied;
     TEST_ASSERT_TRUE(client.readWholeReadOnly("/d.atr", denied) == TnfsResult::NotOpened);
     TEST_ASSERT_EQUAL_size_t(0, server.openHandles());
+    assert_read_only(server);
 }
 
 static void test_read_cancelled_still_closes(void)
@@ -528,6 +545,7 @@ static void test_read_cancelled_still_closes(void)
     TEST_ASSERT_EQUAL_INT(1, sink.blocks);
     TEST_ASSERT_EQUAL_size_t(1, count(server, 0x23));
     TEST_ASSERT_EQUAL_size_t(0, server.openHandles());
+    assert_read_only(server);
 }
 
 static void test_read_failing_half_way_still_closes(void)
@@ -544,6 +562,7 @@ static void test_read_failing_half_way_still_closes(void)
     TEST_ASSERT_TRUE(client.readWholeReadOnly("/d.atr", sink) == TnfsResult::NoResponse);
     TEST_ASSERT_EQUAL_size_t(1, count(server, 0x23));
     TEST_ASSERT_EQUAL_size_t(0, server.openHandles());
+    assert_read_only(server);
 }
 
 static void test_ok_reads_without_data_end_in_malformed(void)
@@ -560,6 +579,7 @@ static void test_ok_reads_without_data_end_in_malformed(void)
     TEST_ASSERT_TRUE(client.readWholeReadOnly("/d.atr", sink) == TnfsResult::Malformed);
     TEST_ASSERT_EQUAL_size_t(TnfsClient::kMaxEmptyReads, count(server, 0x21));
     TEST_ASSERT_EQUAL_size_t(0, server.openHandles());
+    assert_read_only(server);
 }
 
 static void test_more_data_than_stat_said_is_malformed(void)
@@ -573,6 +593,7 @@ static void test_more_data_than_stat_said_is_malformed(void)
     Sink sink;
     TEST_ASSERT_TRUE(client.readWholeReadOnly("/d.atr", sink) == TnfsResult::Malformed);
     TEST_ASSERT_EQUAL_size_t(0, server.openHandles());
+    assert_read_only(server);
 }
 
 static void test_eof_before_the_stat_size_is_malformed(void)
@@ -586,6 +607,7 @@ static void test_eof_before_the_stat_size_is_malformed(void)
     Sink sink;
     TEST_ASSERT_TRUE(client.readWholeReadOnly("/d.atr", sink) == TnfsResult::Malformed);
     TEST_ASSERT_EQUAL_size_t(0, server.openHandles());
+    assert_read_only(server);
 }
 
 // --- Bounded and cancellable waits --------------------------------------------------
@@ -602,6 +624,7 @@ static void test_a_long_eagain_waits_at_most_one_attempt(void)
     const uint64_t start = clock_.nowMicros();
     TEST_ASSERT_TRUE(client.stat("/a.atr").result == TnfsResult::Ok);
     TEST_ASSERT_EQUAL_UINT64(start + 1000000, clock_.nowMicros());
+    assert_read_only(server);
 }
 
 static void test_cancelling_cuts_a_wait_for_a_listing_short(void)
@@ -621,6 +644,7 @@ static void test_cancelling_cuts_a_wait_for_a_listing_short(void)
     TEST_ASSERT_TRUE(clock_.nowMicros() <= start + 300000 + TnfsClient::kCancelCheckUs);
     TEST_ASSERT_EQUAL_size_t(1, count(server, 0x12));  // still closed
     TEST_ASSERT_EQUAL_size_t(0, server.openHandles());
+    assert_read_only(server);
 }
 
 static void test_cancelling_cuts_an_eagain_wait_for_a_read_short(void)
@@ -641,6 +665,7 @@ static void test_cancelling_cuts_an_eagain_wait_for_a_read_short(void)
     TEST_ASSERT_TRUE(clock_.nowMicros() <= start + 250000 + TnfsClient::kCancelCheckUs);
     TEST_ASSERT_EQUAL_size_t(1, count(server, 0x23));
     TEST_ASSERT_EQUAL_size_t(0, server.openHandles());
+    assert_read_only(server);
 }
 
 struct CancelAt final : tnfs::CancelCheck {
@@ -663,6 +688,7 @@ static void test_cancelling_cuts_a_wait_for_a_stat_short(void)
     cancel.atUs = start + 250000;
     TEST_ASSERT_TRUE(client.stat("/a.atr", &cancel).result == TnfsResult::Cancelled);
     TEST_ASSERT_TRUE(clock_.nowMicros() <= start + 250000 + TnfsClient::kCancelCheckUs);
+    assert_read_only(server);
 }
 
 static void test_cancelling_cuts_the_stat_before_a_read_short(void)
@@ -682,6 +708,7 @@ static void test_cancelling_cuts_the_stat_before_a_read_short(void)
     TEST_ASSERT_TRUE(clock_.nowMicros() <= start + 250000 + TnfsClient::kCancelCheckUs);
     TEST_ASSERT_EQUAL_size_t(0, count(server, 0x29));  // nothing was opened
     TEST_ASSERT_EQUAL_INT(0, sink.begins);
+    assert_read_only(server);
 }
 
 // --- Silent reconnection ------------------------------------------------------------
@@ -698,6 +725,7 @@ static void test_a_forgotten_session_reconnects_once(void)
         server.forgetSession(code);
         TEST_ASSERT_TRUE(client.stat("/a.atr").result == TnfsResult::Ok);
         TEST_ASSERT_EQUAL_size_t(2, count(server, 0x00));
+        assert_read_only(server);
     }
 }
 
@@ -730,6 +758,7 @@ static void test_losing_the_session_twice_is_no_response(void)
     sink.forgetTimes = 2;
     TEST_ASSERT_TRUE(client.readWholeReadOnly("/d.atr", sink) == TnfsResult::NoResponse);
     TEST_ASSERT_EQUAL_size_t(2, count(server, 0x00));
+    assert_read_only(server);
 }
 
 static void test_a_refused_reconnection_is_no_response(void)
@@ -754,6 +783,7 @@ static void test_a_refused_reconnection_is_no_response(void)
         }
         TEST_ASSERT_TRUE(result == TnfsResult::NoResponse);
         TEST_ASSERT_FALSE(client.mounted());
+        assert_read_only(server);
     }
 }
 
@@ -769,6 +799,24 @@ static void test_a_listing_restarts_after_reconnecting(void)
     TEST_ASSERT_TRUE(client.listDir("/J", names) == TnfsResult::Ok);
     TEST_ASSERT_EQUAL_size_t(3, names.names.size());  // ".", "..", "a.atr", once
     TEST_ASSERT_EQUAL_INT(1, names.restarts);
+    assert_read_only(server);
+}
+
+static void test_sequence_numbers_skip_zero_which_umount_uses(void)
+{
+    FakeTnfsServer server(clock_);
+    server.addFile("/a.atr", Bytes(10));
+    Clock clk;
+    TnfsClient client(server, clk);
+    for (unsigned i = 0; i < 300; ++i) {  // more than 256 requests: the counter wraps
+        TEST_ASSERT_TRUE(client.stat("/a.atr").result == TnfsResult::Ok);
+    }
+    client.umount();
+    for (std::size_t i = 0; i + 1 < server.log().size(); ++i) {
+        TEST_ASSERT_TRUE_MESSAGE(server.log()[i].sequence != 0, "a request other than UMOUNT used sequence 0");
+    }
+    TEST_ASSERT_EQUAL_HEX8(0x01, server.log().back().command);
+    assert_read_only(server);
 }
 
 // --- UMOUNT -----------------------------------------------------------------------
@@ -797,6 +845,7 @@ static void test_mounting_again_ends_the_first_session(void)
     TEST_ASSERT_TRUE(client.mount() == TnfsResult::Ok);
     TEST_ASSERT_EQUAL_size_t(1, count(server, 0x01));
     TEST_ASSERT_TRUE(client.mounted());
+    assert_read_only(server);
 }
 
 int main(void)
@@ -839,6 +888,7 @@ int main(void)
     RUN_TEST(test_losing_the_session_twice_is_no_response);
     RUN_TEST(test_a_refused_reconnection_is_no_response);
     RUN_TEST(test_a_listing_restarts_after_reconnecting);
+    RUN_TEST(test_sequence_numbers_skip_zero_which_umount_uses);
     RUN_TEST(test_umount_ends_the_session);
     RUN_TEST(test_mounting_again_ends_the_first_session);
     return UNITY_END();

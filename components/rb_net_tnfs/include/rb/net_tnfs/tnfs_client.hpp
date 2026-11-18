@@ -165,7 +165,14 @@ private:
     }
     static TnfsResult toResult(Op op) noexcept;
     uint32_t waitUs(bool firstContact) const noexcept;
-    uint8_t nextSequence() noexcept { return ++sequence_; }
+    // Sequence 0 is UMOUNT's (see umount()); requests skip it when the counter wraps.
+    uint8_t nextSequence() noexcept
+    {
+        if (++sequence_ == 0) {
+            ++sequence_;
+        }
+        return sequence_;
+    }
 
     rb::netsio::DatagramPort& port_;
     TnfsClock& clock_;

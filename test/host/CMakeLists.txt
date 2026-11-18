@@ -24,6 +24,7 @@ add_subdirectory(${rb_root}/components/rb_file_storage rb_file_storage)
 add_subdirectory(${rb_root}/components/rb_board rb_board)
 add_subdirectory(${rb_root}/components/rb_hw_diag rb_hw_diag)
 add_subdirectory(${rb_root}/components/rb_netsio rb_netsio)
+add_subdirectory(${rb_root}/components/rb_net_tnfs rb_net_tnfs)
 
 # Unity v2.7.0, vendored (D-9). Third-party code: built with its own defaults.
 add_library(unity STATIC unity/src/unity.c)
@@ -89,8 +90,13 @@ rb_add_host_test(test_netsio_codec netsio/test_netsio_codec.cpp)
 target_link_libraries(test_netsio_codec PRIVATE rb_netsio)
 rb_add_host_test(test_netsio_transport netsio/test_netsio_transport.cpp)
 target_link_libraries(test_netsio_transport PRIVATE rb_netsio)
+
 rb_add_host_test(test_netsio_transport_allocations netsio/test_netsio_transport_allocations.cpp)
 target_link_libraries(test_netsio_transport_allocations PRIVATE rb_netsio)
+
+# rb_net_tnfs (menu-tnfs, ADR-012): read-only TNFS codec
+rb_add_host_test(test_tnfs_codec net_tnfs/test_tnfs_codec.cpp)
+target_link_libraries(test_tnfs_codec PRIVATE rb_net_tnfs)
 
 # rb_file_storage (H3a)
 rb_add_host_test(test_image_path storage/test_image_path.cpp)

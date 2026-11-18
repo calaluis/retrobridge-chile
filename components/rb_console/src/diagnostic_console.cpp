@@ -152,8 +152,12 @@ int cmd_board(int, char**)
 int sd_ls(const char* subdirectory)
 {
     std::array<char, 300> path{};
-    std::snprintf(path.data(), path.size(), "%s%s%s", rb::esp::SdCardStorage::kMountPoint,
-                  subdirectory != nullptr ? "/" : "", subdirectory != nullptr ? subdirectory : "");
+    const int written = std::snprintf(path.data(), path.size(), "%s%s%s", rb::esp::SdCardStorage::kMountPoint,
+                                      subdirectory != nullptr ? "/" : "", subdirectory != nullptr ? subdirectory : "");
+    if (written < 0 || static_cast<std::size_t>(written) >= path.size()) {
+        std::printf("path too long\n");
+        return 1;
+    }
     DIR* dir = opendir(path.data());
     if (dir == nullptr) {
         std::printf("cannot open %s\n", path.data());
@@ -162,9 +166,11 @@ int sd_ls(const char* subdirectory)
     unsigned entries = 0;
     while (dirent* entry = readdir(dir)) {
         std::array<char, 600> full{};
-        std::snprintf(full.data(), full.size(), "%s/%s", path.data(), entry->d_name);
+        const int fullLength = std::snprintf(full.data(), full.size(), "%s/%s", path.data(), entry->d_name);
         struct stat info {};
-        if (stat(full.data(), &info) == 0 && S_ISDIR(info.st_mode)) {
+        if (fullLength < 0 || static_cast<std::size_t>(fullLength) >= full.size()) {
+            std::printf("  (name too long) %s\n", entry->d_name);
+        } else if (stat(full.data(), &info) == 0 && S_ISDIR(info.st_mode)) {
             std::printf("  [dir] %s\n", entry->d_name);
         } else {
             std::printf("  %10ld %s\n", static_cast<long>(info.st_size), entry->d_name);

@@ -107,7 +107,12 @@ bool parse(int argc, char** argv, Options& options)
 }
 
 // Splits "dir/name.atr" into a repository base directory and an image location.
-bool splitImagePath(const char* path, char (&base)[128], char (&name)[128])
+// Base up to the repository's limit, name up to an ImageLocation; longer parts
+// return false (reported as an invalid path), never overflow.
+using ImageBase = char[rb::storage::kMaxImageBase + 1];
+using ImageName = char[rb::app::ImageLocation::kMaxLength + 1];
+
+bool splitImagePath(const char* path, ImageBase& base, ImageName& name)
 {
     const char* slash = nullptr;
     for (const char* p = path; *p != '\0'; ++p) {
@@ -259,8 +264,8 @@ const char* peerName(const Options& options)
 
 int runImage(const Options& options)
 {
-    char base[128];
-    char name[128];
+    ImageBase base;
+    ImageName name;
     if (!splitImagePath(options.image, base, name)) {
         std::fprintf(stderr, "retrobridge_host: invalid image path\n");
         return 2;

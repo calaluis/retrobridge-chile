@@ -101,6 +101,15 @@ rb_add_host_test(test_fake_tnfs_server net_tnfs/test_fake_tnfs_server.cpp)
 target_link_libraries(test_fake_tnfs_server PRIVATE rb_netsio)
 rb_add_host_test(test_tnfs_client net_tnfs/test_tnfs_client.cpp)
 target_link_libraries(test_tnfs_client PRIVATE rb_net_tnfs)
+# UdpTnfsPort over a real loopback socket (menu-tnfs T008), FakeTnfsServer on a thread.
+find_package(Threads REQUIRED)
+rb_add_host_test(test_udp_tnfs_port net_tnfs/test_udp_tnfs_port.cpp
+                 ${rb_root}/host/src/udp_tnfs_port.cpp ${rb_root}/host/src/udp_datagram_port.cpp)
+target_include_directories(test_udp_tnfs_port PRIVATE ${rb_root}/host/src)
+target_link_libraries(test_udp_tnfs_port PRIVATE rb_net_tnfs Threads::Threads)
+if(WIN32)
+    target_link_libraries(test_udp_tnfs_port PRIVATE ws2_32)
+endif()
 
 # rb_file_storage (H3a)
 rb_add_host_test(test_image_path storage/test_image_path.cpp)

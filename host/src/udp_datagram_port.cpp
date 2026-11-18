@@ -9,6 +9,7 @@
 #include <netinet/in.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <unistd.h>
 #endif
 
@@ -33,13 +34,18 @@ void closeNative(Native s) { ::close(s); }
 
 Native native(intptr_t s) { return static_cast<Native>(s); }
 
-sockaddr_in loopback(uint16_t port)
+sockaddr_in ipv4(uint32_t hostOrderAddress, uint16_t port)
 {
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_port = htons(port);
-    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_addr.s_addr = htonl(hostOrderAddress);
     return address;
+}
+
+bool isLoopback(uint32_t hostOrderAddress)
+{
+    return (hostOrderAddress >> 24) == 127;  // 127.0.0.0/8
 }
 
 }  // namespace
@@ -50,6 +56,11 @@ UdpDatagramPort::~UdpDatagramPort()
 }
 
 Result<void> UdpDatagramPort::open(uint16_t peerPort)
+{
+    return openTo(INADDR_LOOPBACK, peerPort);
+}
+
+Result<void> UdpDatagramPort::openTo(uint32_t peerAddress, uint16_t peerPort)
 {
     close();
 #ifdef _WIN32
@@ -66,8 +77,8 @@ Result<void> UdpDatagramPort::open(uint16_t peerPort)
     }
     socket_ = static_cast<intptr_t>(s);
 
-    sockaddr_in local = loopback(0);
-    sockaddr_in peer = loopback(peerPort);
+    sockaddr_in local = ipv4(isLoopback(peerAddress) ? INADDR_LOOPBACK : INADDR_ANY, 0);
+    sockaddr_in peer = ipv4(peerAddress, peerPort);
     if (::bind(s, reinterpret_cast<const sockaddr*>(&local), sizeof local) != 0 ||
         ::connect(s, reinterpret_cast<const sockaddr*>(&peer), sizeof peer) != 0) {
         close();
@@ -132,14 +143,23 @@ Result<std::size_t> UdpDatagramPort::receive(Span<uint8_t> out, uint32_t timeout
     if (ready < 0) {
         return Failure{ErrorCode::TransportError};
     }
+#ifdef _WIN32
     const auto received = ::recv(s, reinterpret_cast<char*>(out.data()), static_cast<int>(out.size()), 0);
-    // A negative result covers ICMP port unreachable (WSAECONNRESET / ECONNREFUSED)
-    // and, on Windows, a datagram larger than `out` (WSAEMSGSIZE).
+    // A negative result covers ICMP port unreachable (WSAECONNRESET) and a
+    // datagram larger than `out` (WSAEMSGSIZE).
     if (received < 0) {
         return Failure{ErrorCode::TransportError};
     }
-#ifndef _WIN32
-    if (static_cast<std::size_t>(received) > out.size()) {
+#else
+    // recvmsg() marks a datagram larger than `out` with MSG_TRUNC (POSIX); recv()
+    // would cut it silently. A negative result covers ICMP port unreachable
+    // (ECONNREFUSED).
+    iovec buffer{out.data(), out.size()};
+    msghdr message{};
+    message.msg_iov = &buffer;
+    message.msg_iovlen = 1;
+    const auto received = ::recvmsg(s, &message, 0);
+    if (received < 0 || (message.msg_flags & MSG_TRUNC) != 0) {
         return Failure{ErrorCode::TransportError};
     }
 #endif

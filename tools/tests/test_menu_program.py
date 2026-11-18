@@ -30,10 +30,11 @@ class Halt(Exception):
 class Menu6502:
     """Interprets the menu program. Any opcode it does not know fails the test."""
 
-    def __init__(self, block: bytes, keys, siov):
+    def __init__(self, block: bytes, keys, siov, labels=None):
         self.mem = bytearray(0x10000)
         self.mem[ORG:ORG + len(block)] = block
-        self.labels = make_menu.menu_program()[1]
+        # Another program loaded at the same address (the sector probe) passes its own labels.
+        self.labels = make_menu.menu_program()[1] if labels is None else labels
         # Leftovers in the DCB, so a store the program forgets is seen by the tests.
         self.mem[make_menu.DDEVIC:make_menu.DAUX2 + 1] = bytes([0xAA]) * (make_menu.DAUX2 + 1 - make_menu.DDEVIC)
         self.mem[make_menu.CH] = 0x3F  # a key pressed during boot, to be forgotten
@@ -41,7 +42,7 @@ class Menu6502:
         self.siov = siov
         self.siov_calls = []
         self.a = self.x = self.y = 0
-        self.z = self.n = False
+        self.z = self.n = self.c = False
         self.idle_key_reads = 0
         self.pc = 0
         # A key that arrives during the wait of action 2: (n, code) puts `code` in CH on the
@@ -72,6 +73,10 @@ class Menu6502:
         self.z = value == 0
         self.n = value >= 0x80
 
+    def compare(self, register, value):
+        self.c = register >= value
+        self.flags((register - value) & 0xFF)
+
     def run(self, pc=None, max_steps=200000):
         pc = ORG + 6 if pc is None else pc
         for step in range(max_steps):
@@ -93,7 +98,7 @@ class Menu6502:
             elif op == 0xAC:
                 self.y = self.read(ab); self.flags(self.y); pc += 3
             elif op == 0xC0:
-                self.flags((self.y - imm) & 0xFF); pc += 2
+                self.compare(self.y, imm); pc += 2
             elif op == 0xBD:
                 self.a = self.read(ab + self.x); self.flags(self.a); pc += 3
             elif op == 0x8D:
@@ -105,9 +110,31 @@ class Menu6502:
             elif op == 0x8E:
                 self.mem[ab] = self.x; pc += 3
             elif op == 0xC5:
-                self.flags((self.a - self.read(zp)) & 0xFF); pc += 2
+                self.compare(self.a, self.read(zp)); pc += 2
             elif op == 0xC9:
-                self.flags((self.a - imm) & 0xFF); pc += 2
+                self.compare(self.a, imm); pc += 2
+            elif op == 0xE0:
+                self.compare(self.x, imm); pc += 2
+            elif op == 0x69:
+                total = self.a + imm + (1 if self.c else 0)
+                self.c = total > 0xFF
+                self.a = total & 0xFF; self.flags(self.a); pc += 2
+            elif op == 0x4A:
+                self.c = bool(self.a & 1)
+                self.a >>= 1; self.flags(self.a); pc += 1
+            elif op == 0x0A:
+                self.c = bool(self.a & 0x80)
+                self.a = (self.a << 1) & 0xFF; self.flags(self.a); pc += 1
+            elif op == 0x8A:
+                self.a = self.x; self.flags(self.a); pc += 1
+            elif op == 0xA8:
+                self.y = self.a; self.flags(self.y); pc += 1
+            elif op == 0xE8:
+                self.x = (self.x + 1) & 0xFF; self.flags(self.x); pc += 1
+            elif op == 0x99:
+                self.mem[ab + self.y] = self.a; pc += 3
+            elif op == 0x8C:
+                self.mem[ab] = self.y; pc += 3
             elif op == 0x29:
                 self.a &= imm; self.flags(self.a); pc += 2
             elif op == 0xAA:
@@ -116,13 +143,16 @@ class Menu6502:
                 self.x = (self.x - 1) & 0xFF; self.flags(self.x); pc += 1
             elif op == 0x98:
                 self.a = self.y; self.flags(self.a); pc += 1
-            elif op in (0xF0, 0xD0, 0x30, 0x10):
+            elif op in (0xF0, 0xD0, 0x30, 0x10, 0x90, 0xB0):
                 offset = imm - 256 if imm > 127 else imm
-                taken = {0xF0: self.z, 0xD0: not self.z, 0x30: self.n, 0x10: not self.n}[op]
+                taken = {0xF0: self.z, 0xD0: not self.z, 0x30: self.n, 0x10: not self.n,
+                         0x90: not self.c, 0xB0: self.c}[op]
                 pc += 2 + (offset if taken else 0)
             elif op == 0x4C:
                 if ab == make_menu.COLDSV:
                     return "coldstart"
+                if ab == pc:
+                    return "halt"  # JMP to itself: the program stopped there
                 pc = ab
             elif op == 0x20 and ab == make_menu.SIOV:
                 self.siov_call(); pc += 3

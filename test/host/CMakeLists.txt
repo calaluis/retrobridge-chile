@@ -163,3 +163,8 @@ rb_add_host_test(test_host_menu menu/test_host_menu.cpp
 target_include_directories(test_host_menu PRIVATE ${rb_root}/host/src)
 target_compile_definitions(test_host_menu PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
 set_tests_properties(test_host_menu PROPERTIES FIXTURES_REQUIRED menu_images)
+
+# SHA-256 of the images loaded over TNFS (menu-tnfs T004). RB_REF_ATR, when set,
+# points at the spec's reference ATR (not in the repository).
+rb_add_host_test(test_sha256 menu/test_sha256.cpp ${rb_root}/host/src/sha256.cpp)
+target_include_directories(test_sha256 PRIVATE ${rb_root}/host/src)

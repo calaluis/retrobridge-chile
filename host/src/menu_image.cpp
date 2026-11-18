@@ -1,8 +1,5 @@
 #include "menu_image.hpp"
 
-#include <cstdio>
-#include <cstring>
-
 namespace rb::host {
 
 using rb::core::ErrorCode;
@@ -10,16 +7,21 @@ using rb::core::Failure;
 using rb::core::Result;
 using rb::core::Span;
 
-static_assert(kMenuEntriesOffset + kMenuMaxEntries * kMenuLineWidth <= sizeof kMenuBlock, "entry lines fit");
-static_assert(kMenuMaxEntries == MenuCatalog::kMaxEntries, "catalog and menu agree on the entry count");
 static_assert(kMenuLoadSectors * 128 == sizeof kMenuBlock, "the block is whole sectors");
+static_assert(kMenuReplySize == 2 + kMenuScreenSize, "action, layout, screen");
+static_assert(kMainFooter + 2 * kMenuLineWidth == kMainMessage, "message goes under the footer");
+static_assert(kMainMessage + kMenuLineWidth <= kMenuScreenSize, "message fits");
+static_assert(kListFooter + kMenuLineWidth == kListMessage, "message goes under the footer");
+static_assert(kListMessage + kMenuLineWidth <= kMenuScreenSize, "message fits");
 
-void screenLine(const char* text, Span<uint8_t> line) noexcept
+namespace {
+
+void toScreen(const char* text, Span<uint8_t> line, bool upper) noexcept
 {
     std::size_t i = 0;
     for (; i < line.size() && text[i] != '\0'; ++i) {
         unsigned char c = static_cast<unsigned char>(text[i]);
-        if (c >= 'a' && c <= 'z') {
+        if (upper && c >= 'a' && c <= 'z') {
             c = static_cast<unsigned char>(c - 'a' + 'A');
         }
         if (c < 0x20 || c > 0x7E) {
@@ -32,17 +34,10 @@ void screenLine(const char* text, Span<uint8_t> line) noexcept
     }
 }
 
-MenuImage::MenuImage(const MenuCatalog& catalog) noexcept
-{
-    std::memcpy(block_.data(), kMenuBlock, sizeof kMenuBlock);
-    block_[kMenuCountOffset] = static_cast<uint8_t>(catalog.count());
-    for (std::size_t i = 0; i < catalog.count(); ++i) {
-        char text[kMenuLineWidth + 1];
-        std::snprintf(text, sizeof text, " %c  %.*s", static_cast<char>('A' + i), static_cast<int>(kMenuNameColumns),
-                      catalog.name(i));
-        screenLine(text, Span<uint8_t>{block_.data() + kMenuEntriesOffset + i * kMenuLineWidth, kMenuLineWidth});
-    }
-}
+}  // namespace
+
+void screenLine(const char* text, Span<uint8_t> line) noexcept { toScreen(text, line, true); }
+void screenText(const char* text, Span<uint8_t> line) noexcept { toScreen(text, line, false); }
 
 Result<void> MenuImage::readAt(uint32_t offset, Span<uint8_t> out)
 {
@@ -57,8 +52,8 @@ Result<void> MenuImage::readAt(uint32_t offset, Span<uint8_t> out)
         const uint32_t at = offset + static_cast<uint32_t>(i);
         if (at < kMenuHeaderSize) {
             out[i] = header[at];
-        } else if (at - kMenuHeaderSize < block_.size()) {
-            out[i] = block_[at - kMenuHeaderSize];
+        } else if (at - kMenuHeaderSize < sizeof kMenuBlock) {
+            out[i] = kMenuBlock[at - kMenuHeaderSize];
         } else {
             out[i] = 0;
         }

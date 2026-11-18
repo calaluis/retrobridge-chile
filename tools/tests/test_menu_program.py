@@ -1,8 +1,10 @@
-"""Tests for tools/make_menu.py: the 6502 boot menu of retrobridge_host (Issue #38).
+"""Tests for tools/make_menu.py: the 6502 menu of retrobridge_host (Issues #38 and #40).
 
 The program is run by a small interpreter of the instructions it uses. SIOV and
 COLDSV are trapped: SIOV calls a Python function that plays the host, COLDSV
-ends the run. Keys are fed through CH as the OS keyboard handler does.
+ends the run. Keys are fed through CH as the OS keyboard handler does. The
+display lists are checked byte for byte against the reference of Issue #40
+(the Display List Lab mock-up), with the program's own addresses.
 """
 
 import subprocess
@@ -16,6 +18,7 @@ sys.path.insert(0, str(TOOLS))
 import make_menu  # noqa: E402
 
 REPO = TOOLS.parent
+ORG = make_menu.MENU_ORG
 
 
 class Halt(Exception):
@@ -25,13 +28,13 @@ class Halt(Exception):
 class Menu6502:
     """Interprets the menu program. Any opcode it does not know fails the test."""
 
-    def __init__(self, block: bytes, count: int, keys, siov):
+    def __init__(self, block: bytes, keys, siov):
         self.mem = bytearray(0x10000)
-        self.mem[make_menu.MENU_ORG:make_menu.MENU_ORG + len(block)] = block
+        self.mem[ORG:ORG + len(block)] = block
         self.labels = make_menu.menu_program()[1]
-        self.mem[self.labels["count"]] = count
         # Leftovers in the DCB, so a store the program forgets is seen by the tests.
         self.mem[make_menu.DDEVIC:make_menu.DAUX2 + 1] = bytes([0xAA]) * (make_menu.DAUX2 + 1 - make_menu.DDEVIC)
+        self.mem[make_menu.CH] = 0x3F  # a key pressed during boot, to be forgotten
         self.keys = list(keys)
         self.siov = siov
         self.siov_calls = []
@@ -59,7 +62,7 @@ class Menu6502:
         self.n = value >= 0x80
 
     def run(self, pc=None, max_steps=200000):
-        pc = make_menu.MENU_ORG + 6 if pc is None else pc
+        pc = ORG + 6 if pc is None else pc
         for _ in range(max_steps):
             op = self.mem[pc]
             imm, zp, ab = self.mem[pc + 1], self.mem[pc + 1], self.word(pc + 1)
@@ -71,27 +74,31 @@ class Menu6502:
                 self.a = self.read(zp); self.flags(self.a); pc += 2
             elif op == 0xAD:
                 self.a = self.read(ab); self.flags(self.a); pc += 3
+            elif op == 0xBD:
+                self.a = self.read(ab + self.x); self.flags(self.a); pc += 3
             elif op == 0x8D:
                 self.mem[ab] = self.a; pc += 3
+            elif op == 0xEE:
+                self.mem[ab] = (self.mem[ab] + 1) & 0xFF; self.flags(self.mem[ab]); pc += 3
+            elif op == 0x9D:
+                self.mem[ab + self.x] = self.a; pc += 3
             elif op == 0x8E:
                 self.mem[ab] = self.x; pc += 3
             elif op == 0xC5:
                 self.flags((self.a - self.read(zp)) & 0xFF); pc += 2
             elif op == 0xC9:
                 self.flags((self.a - imm) & 0xFF); pc += 2
-            elif op == 0xEC:
-                self.flags((self.x - self.read(ab)) & 0xFF); pc += 3
-            elif op == 0xDD:
-                self.flags((self.a - self.read(ab + self.x)) & 0xFF); pc += 3
             elif op == 0x29:
                 self.a &= imm; self.flags(self.a); pc += 2
-            elif op == 0xE8:
-                self.x = (self.x + 1) & 0xFF; self.flags(self.x); pc += 1
+            elif op == 0xAA:
+                self.x = self.a; self.flags(self.x); pc += 1
+            elif op == 0xCA:
+                self.x = (self.x - 1) & 0xFF; self.flags(self.x); pc += 1
             elif op == 0x98:
                 self.a = self.y; self.flags(self.a); pc += 1
-            elif op in (0xF0, 0xD0, 0x30):
+            elif op in (0xF0, 0xD0, 0x30, 0x10):
                 offset = imm - 256 if imm > 127 else imm
-                taken = {0xF0: self.z, 0xD0: not self.z, 0x30: self.n}[op]
+                taken = {0xF0: self.z, 0xD0: not self.z, 0x30: self.n, 0x10: not self.n}[op]
                 pc += 2 + (offset if taken else 0)
             elif op == 0x4C:
                 if ab == make_menu.COLDSV:
@@ -119,9 +126,9 @@ class Menu6502:
             m[dcb["buffer"]:dcb["buffer"] + len(reply)] = reply
             self.y = 0x01
 
-    def status_line(self):
-        dl_status = self.labels["dl_status"]
-        return bytes(self.mem[self.word(dl_status):self.word(dl_status) + make_menu.LINE_WIDTH])
+    def screen(self):
+        start = self.labels["screen"]
+        return bytes(self.mem[start:start + make_menu.SCREEN_SIZE])
 
     def run_until_idle(self, pc=None):
         """Runs from the entry point (or pc) until a cold start or an idle key wait."""
@@ -132,11 +139,12 @@ class Menu6502:
             return "waiting"
 
 
-def host_reply(status: int, text: str) -> bytes:
-    return bytes([status]) + make_menu.screen_line(text)
+def host_reply(action: int, layout: int, marker: int = 0x21) -> bytes:
+    screen = bytes([marker]) * make_menu.SCREEN_SIZE
+    return bytes([action, layout]) + screen
 
 
-KEY_A, KEY_B, KEY_C, KEY_T = 0x3F, 0x15, 0x12, 0x2D
+KEY_1, KEY_A, KEY_ESC = 0x1F, 0x3F, 0x1C
 
 
 class MenuProgramTest(unittest.TestCase):
@@ -145,70 +153,125 @@ class MenuProgramTest(unittest.TestCase):
     def setUpClass(cls):
         cls.block, cls.labels = make_menu.menu_program()
 
+    def at(self, label, length):
+        start = self.labels[label] - ORG
+        return self.block[start:start + length]
+
     def test_boot_record_loads_the_whole_block_at_0700(self):
         self.assertEqual(self.block[0], 0x00)
         self.assertEqual(self.block[1] * 128, len(self.block))
         self.assertEqual(self.block[2] | self.block[3] << 8, 0x0700)
         self.assertEqual(self.block[4] | self.block[5] << 8, self.labels["init"])
-        self.assertEqual(self.block[self.labels["init"] - 0x0700], 0x60)
+        self.assertEqual(self.block[self.labels["init"] - ORG], 0x60)
 
-    def test_display_list_shows_title_entries_prompt_and_status(self):
-        dl = self.labels["dl"] - 0x0700
-        b = self.block
-        self.assertEqual(b[dl:dl + 3], bytes([0x70, 0x70, 0x42]))
-        self.assertEqual(b[dl + 3] | b[dl + 4] << 8, self.labels["screen"])
-        self.assertEqual(b[dl + 5:dl + 6 + 20], bytes([0x30]) + bytes([0x02] * 20))
-        self.assertEqual(b[dl + 26:dl + 29], bytes([0x30, 0x02, 0x42]))
-        self.assertEqual(b[dl + 29] | b[dl + 30] << 8, self.labels["reply_text"])
-        self.assertEqual(b[dl + 31], 0x41)
-        self.assertEqual(b[dl + 32] | b[dl + 33] << 8, self.labels["dl"])
-        screen = self.labels["screen"] - 0x0700
-        self.assertEqual(b[screen:screen + 40], make_menu.screen_line(make_menu.MENU_TITLE_TEXT))
-        prompt = self.labels["entries"] - 0x0700 + 20 * 40
-        self.assertEqual(b[prompt:prompt + 40], make_menu.screen_line(make_menu.MENU_PROMPT_TEXT))
+    def lms(self, label):
+        address = self.labels[label]
+        return bytes([address & 0xFF, address >> 8])
 
-    def test_key_codes_are_the_letters_a_to_t(self):
-        # Atari keyboard codes (unshifted) of A..T.
-        self.assertEqual(make_menu.KEY_CODES, bytes([
-            0x3F, 0x15, 0x12, 0x3A, 0x2A, 0x38, 0x3D, 0x39, 0x0D, 0x01,
-            0x05, 0x00, 0x25, 0x23, 0x08, 0x0A, 0x2F, 0x28, 0x3E, 0x2D]))
-        keytab = self.labels["keytab"] - 0x0700
-        self.assertEqual(self.block[keytab:keytab + 20], make_menu.KEY_CODES)
+    def test_main_display_list_follows_the_reference(self):
+        # Reference: blank 8 / mode 7 lms / blank 8 / mode 2 lms x8 / blank 8 / mode 6 lms /
+        # mode 2 lms x11 / mode 2 lms x2 / then, asked in review, the message line below the footer / jvb.
+        expected = (b"\x70\x47" + self.lms("main_title")
+                    + b"\x70\x42" + self.lms("main_sources") + b"\x02" * 7
+                    + b"\x70\x46" + self.lms("main_subtitle")
+                    + b"\x42" + self.lms("main_status") + b"\x02" * 10
+                    + b"\x42" + self.lms("main_footer") + b"\x02"
+                    + b"\x42" + self.lms("main_message")
+                    + b"\x41" + self.lms("dl_main"))
+        self.assertEqual(self.at("dl_main", len(expected)), expected)
 
-    def test_valid_choice_sends_the_menu_command_and_cold_starts(self):
-        cpu = Menu6502(self.block, 3, [KEY_B], lambda dcb: host_reply(0, " ARRANCANDO"))
-        self.assertEqual(cpu.run_until_idle(), "coldstart")
+    def test_list_display_list_has_title_twenty_entries_footer_and_message(self):
+        expected = (b"\x70\x47" + self.lms("list_title")
+                    + b"\x70\x42" + self.lms("list_entries") + b"\x02" * 19
+                    + b"\x42" + self.lms("list_footer")
+                    + b"\x42" + self.lms("list_message")
+                    + b"\x41" + self.lms("dl_list"))
+        self.assertEqual(self.at("dl_list", len(expected)), expected)
+        # 20 entries are contiguous: the LMS line plus 19 more; the message goes under the footer.
+        self.assertEqual(self.labels["list_footer"] - self.labels["list_entries"], 20 * 40)
+        self.assertEqual(self.labels["list_message"] - self.labels["list_footer"], 40)
+
+    def test_screen_layout_matches_the_reference_offsets(self):
+        self.assertEqual(self.labels["main_sources"] - self.labels["main_title"], 20)
+        self.assertEqual(self.labels["main_subtitle"] - self.labels["main_sources"], 8 * 40)
+        self.assertEqual(self.labels["main_status"] - self.labels["main_subtitle"], 20)
+        self.assertEqual(self.labels["main_footer"] - self.labels["main_status"], 11 * 40)
+        # The message goes under the two footer rows (asked in the review of Issue #40).
+        self.assertEqual(self.labels["main_message"] - self.labels["main_footer"], 2 * 40)
+        self.assertLessEqual(make_menu.MAIN_END, make_menu.SCREEN_SIZE)
+
+    def test_display_lists_share_a_page_and_the_screen_stays_in_4k(self):
+        self.assertEqual(self.labels["dl_main"] >> 8, (self.labels["dl_end"] - 1) >> 8)
+        screen = self.labels["screen"]
+        self.assertEqual(screen >> 12, (screen + make_menu.SCREEN_SIZE - 1) >> 12)
+
+    def test_main_template_has_title_subtitle_and_the_reference_footer(self):
+        screen = self.at("screen", make_menu.SCREEN_SIZE)
+        self.assertEqual(screen, make_menu.main_template())
+        self.assertEqual(screen[0:20], make_menu.screen_codes(" RETROBRIDGE CHILE  ", 20))
+        sub = make_menu.MAIN_SUBTITLE
+        self.assertEqual(screen[sub:sub + 20], make_menu.screen_codes(" ESTADO DE UNIDADES ", 20))
+        inv = lambda text: bytes(b | 0x80 for b in make_menu.screen_codes(text, len(text)))  # noqa: E731
+        txt = lambda text: make_menu.screen_codes(text, len(text))  # noqa: E731
+        row1 = (b"\x42" + inv("1-8") + b"\x56" + txt(" ABRIR FUENTE") + b"\x42" + inv("E") + b"\x56"
+                + txt(" EDITAR SERVIDOR") + b"\x00" * 3)
+        row2 = (b"\x42" + inv("A") + b"\x56" + txt("   ARRANCAR D1 ") + b"\x42" + inv("U") + b"\x56"
+                + txt(" GESTIONAR UNIDADES"))
+        self.assertEqual((len(row1), len(row2)), (40, 40))
+        foot = make_menu.MAIN_FOOTER
+        self.assertEqual(screen[foot:foot + 80], row1 + row2)
+
+    def test_list_template_footer_is_forty_columns(self):
+        footer = make_menu.list_template()[make_menu.LIST_FOOTER:make_menu.LIST_MESSAGE]
+        self.assertEqual(len(footer), 40)
+        self.assertEqual(footer[0], 0x42)
+
+    def test_start_sets_colors_and_asks_the_host_for_the_screen(self):
+        cpu = Menu6502(self.block, [], lambda dcb: host_reply(0, 0))
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        for address, value in make_menu.COLORS.items():
+            self.assertEqual(cpu.mem[address], value, hex(address))
+        self.assertEqual(cpu.mem[make_menu.CHACT], 0x02)
         self.assertEqual(len(cpu.siov_calls), 1)
         call = cpu.siov_calls[0]
-        self.assertEqual((call["device"], call["unit"], call["command"]), (0x5A, 1, 0x4D))
-        self.assertEqual((call["dstats"], call["aux1"], call["aux2"]), (0x40, 1, 0))
-        self.assertEqual((call["buffer"], call["length"]), (self.labels["reply"], 41))
+        self.assertEqual((call["device"], call["unit"], call["command"]), (0x5A, 1, 0x4B))
+        self.assertEqual((call["dstats"], call["aux1"], call["aux2"]), (0x40, 0xFF, 1))
+        self.assertEqual((call["buffer"], call["length"]), (self.labels["reply"], 962))
         self.assertEqual(call["timeout"], make_menu.MENU_TIMEOUT_S)
-        self.assertEqual(cpu.word(make_menu.SDLSTL), self.labels["dl"])
+        self.assertEqual(cpu.word(make_menu.SDLSTL), self.labels["dl_main"])
+        self.assertEqual(cpu.screen(), bytes([0x21]) * make_menu.SCREEN_SIZE)
 
-    def test_shift_and_control_are_ignored(self):
-        cpu = Menu6502(self.block, 3, [KEY_C | 0x40], lambda dcb: host_reply(0, ""))
+    def test_each_key_is_sent_as_its_keyboard_code(self):
+        cpu = Menu6502(self.block, [KEY_1, KEY_ESC, KEY_A | 0x40], lambda dcb: host_reply(0, 0))
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        self.assertEqual([c["aux1"] for c in cpu.siov_calls], [0xFF, KEY_1, KEY_ESC, KEY_A | 0x40])
+        # One sequence number per key, so the host can tell a new key from SIOV's retry.
+        self.assertEqual([c["aux2"] for c in cpu.siov_calls], [1, 2, 3, 4])
+
+    def test_layout_byte_selects_the_display_list(self):
+        replies = [host_reply(0, 0), host_reply(0, 1), host_reply(0, 0)]
+        cpu = Menu6502(self.block, [KEY_1], lambda dcb: replies.pop(0))
+        cpu.run_until_idle()
+        self.assertEqual(cpu.word(make_menu.SDLSTL), self.labels["dl_list"])
+        cpu.keys = [KEY_ESC]
+        cpu.run_until_idle(self.labels["key"])
+        self.assertEqual(cpu.word(make_menu.SDLSTL), self.labels["dl_main"])
+
+    def test_boot_action_cold_starts(self):
+        replies = [host_reply(0, 0), host_reply(1, 0)]
+        cpu = Menu6502(self.block, [KEY_A], lambda dcb: replies.pop(0))
         self.assertEqual(cpu.run_until_idle(), "coldstart")
-        self.assertEqual(cpu.siov_calls[0]["aux1"], 2)
+        self.assertEqual(len(cpu.siov_calls), 2)
 
-    def test_letter_outside_the_list_does_nothing(self):
-        cpu = Menu6502(self.block, 2, [KEY_C, KEY_T], lambda dcb: host_reply(0, ""))
+    def test_no_answer_shows_the_no_host_line_on_the_main_screen(self):
+        replies = [host_reply(0, 1), None]
+        cpu = Menu6502(self.block, [KEY_1], lambda dcb: replies.pop(0))
         self.assertEqual(cpu.run_until_idle(), "waiting")
-        self.assertEqual(cpu.siov_calls, [])
-
-    def test_refused_image_shows_the_host_line_and_waits_for_another_key(self):
-        replies = [host_reply(1, " ERROR: ATR INVALIDA"), host_reply(0, " ARRANCANDO")]
-        cpu = Menu6502(self.block, 3, [KEY_C], lambda dcb: replies.pop(0))
-        self.assertEqual(cpu.run_until_idle(), "waiting")
-        self.assertEqual(cpu.status_line(), make_menu.screen_line(" ERROR: ATR INVALIDA"))
-        cpu.keys = [KEY_A]
-        self.assertEqual(cpu.run_until_idle(self.labels["key"]), "coldstart")
-        self.assertEqual([c["aux1"] for c in cpu.siov_calls], [2, 0])
-
-    def test_no_answer_shows_the_no_host_line(self):
-        cpu = Menu6502(self.block, 3, [KEY_A], lambda dcb: None)
-        self.assertEqual(cpu.run_until_idle(), "waiting")
-        self.assertEqual(cpu.status_line(), make_menu.screen_line(make_menu.MENU_NO_HOST_TEXT))
+        self.assertEqual(cpu.word(make_menu.SDLSTL), self.labels["dl_main"])
+        message = make_menu.MAIN_MESSAGE
+        self.assertEqual(cpu.screen()[message:message + 40], make_menu.screen_line(make_menu.NO_HOST_TEXT))
+        self.assertEqual(cpu.screen()[message - 1], 0x21)  # nothing else was overwritten
+        self.assertEqual(cpu.screen()[message + 40], 0x21)
 
     def test_committed_include_matches_the_generator(self):
         include = REPO / "host" / "src" / "menu_program.inc"

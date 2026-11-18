@@ -6,12 +6,14 @@
 //
 //   retrobridge_host --image <file.atr> [--port 9997] [--peer netsiohub|fep003]
 //                    [--log <file.jsonl>] [--seconds N]
-//   retrobridge_host --images <folder> [same options]
+//   retrobridge_host --images <folder> [--sources <file>] [same options]
 //
-// --image serves one ATR for the whole run (E1b, E1c). --images (Issue #38,
-// ADR-017) serves the RetroBridge boot menu as D1 after every cold reset: the
-// Atari lists the folder's .atr files, the user picks one with a key, the host
-// validates it and mounts it as D1, and the menu boots it.
+// --image serves one ATR for the whole run (E1b, E1c). --images (Issues #38 and
+// #40, ADR-017) serves the RetroBridge menu as D1 after every cold reset and
+// drives D2..D8: the main screen shows the sources and the drives, source 1 is
+// the folder, an image chosen there is mounted in the drive the user picks, and
+// A boots D1. --sources lists sources 2..8 (one per line, shown only: opening
+// them needs a TNFS client that does not exist yet).
 //
 // --peer netsiohub accepts the hub's trailing byte (decision D2); the default is
 // strict FEP-003. --seconds 0 runs until the process is stopped.
@@ -28,6 +30,7 @@
 #include "menu_controller.hpp"
 #include "menu_image.hpp"
 #include "menu_sio_transport.hpp"
+#include "menu_sources.hpp"
 #include "rb/app/drive_bay.hpp"
 #include "rb/app/image_location.hpp"
 #include "rb/app/inline_drive_mailbox.hpp"
@@ -46,6 +49,7 @@ namespace {
 struct Options {
     const char* image = nullptr;
     const char* images = nullptr;
+    const char* sources = nullptr;
     const char* log = "retrobridge_host.jsonl";
     unsigned port = 9997;
     unsigned seconds = 0;
@@ -54,7 +58,7 @@ struct Options {
 
 int usage()
 {
-    std::fputs("usage: retrobridge_host --image <file.atr> | --images <folder>\n"
+    std::fputs("usage: retrobridge_host --image <file.atr> | --images <folder> [--sources <file>]\n"
                "                        [--port 9997] [--peer netsiohub|fep003] [--log <file.jsonl>] [--seconds N]\n",
                stderr);
     return 2;
@@ -72,6 +76,8 @@ bool parse(int argc, char** argv, Options& options)
             options.image = value;
         } else if (std::strcmp(arg, "--images") == 0) {
             options.images = value;
+        } else if (std::strcmp(arg, "--sources") == 0) {
+            options.sources = value;
         } else if (std::strcmp(arg, "--log") == 0) {
             options.log = value;
         } else if (std::strcmp(arg, "--port") == 0) {
@@ -93,6 +99,9 @@ bool parse(int argc, char** argv, Options& options)
             return false;
         }
         ++i;
+    }
+    if (options.sources != nullptr && options.images == nullptr) {
+        return false;  // sources belong to the menu
     }
     return (options.image != nullptr) != (options.images != nullptr);  // exactly one of them
 }
@@ -345,6 +354,26 @@ int runMenu(const Options& options)
     if (logNamesFolderAtr(options.log, options.images)) {
         return 2;
     }
+    static rb::host::MenuSources sources;
+    if (options.sources != nullptr) {
+        if (rb::host::compareFiles(options.log, options.sources) == rb::host::FileIdentity::Same) {
+            std::fprintf(stderr, "retrobridge_host: --log names the sources file %s; refusing to write into it\n",
+                         options.sources);
+            return 2;
+        }
+        std::FILE* file = std::fopen(options.sources, "r");
+        if (file == nullptr) {
+            std::fprintf(stderr, "retrobridge_host: cannot open sources file %s\n", options.sources);
+            return 2;
+        }
+        char error[96];
+        const bool read = sources.read(file, error, sizeof error);
+        std::fclose(file);
+        if (!read) {
+            std::fprintf(stderr, "retrobridge_host: sources file %s: %s\n", options.sources, error);
+            return 2;
+        }
+    }
     std::FILE* logFile = std::fopen(options.log, "a");
     if (logFile == nullptr) {
         std::fprintf(stderr, "retrobridge_host: cannot open log %s\n", options.log);
@@ -353,12 +382,12 @@ int runMenu(const Options& options)
 
     rb::host::HostClock clock;
     rb::host::JsonlLog log{logFile, clock};
-    static rb::host::MenuImage menu{catalog};
+    static rb::host::MenuImage menu;
     static rb::host::HostImageRepository repository{options.images, menu};
-    rb::app::DriveBay bay{1};
+    rb::app::DriveBay bay{rb::host::MenuController::kDrives};
     rb::app::InlineDriveMailbox mailbox;
     LogMenuEvents events{log};
-    rb::host::MenuController controller{catalog, repository, mailbox, &events};
+    rb::host::MenuController controller{catalog, sources, repository, mailbox, &events};
     ResetWatch watch{log, controller};
 
     rb::host::UdpDatagramPort port;
@@ -375,15 +404,22 @@ int runMenu(const Options& options)
     rb::app::ApplyDriveRequest apply{bay, mailbox};
     rb::sio::SioSession session{transport, clock, dispatcher, apply};
 
-    char detail[rb::storage::StdioImageRepository<2>::kMaxBasePath + 128];
-    std::snprintf(detail, sizeof detail, "images=%s entries=%u atr_seen=%u peer=%s local=127.0.0.1:%u hub=127.0.0.1:%u",
+    char detail[rb::storage::StdioImageRepository<2>::kMaxBasePath + 160];
+    std::snprintf(detail, sizeof detail,
+                  "images=%s entries=%u atr_seen=%u sources=%u drives=%u peer=%s local=127.0.0.1:%u hub=127.0.0.1:%u",
                   options.images, static_cast<unsigned>(catalog.count()), static_cast<unsigned>(catalog.atrSeen()),
-                  peerName(options), port.localPort(), options.port);
+                  static_cast<unsigned>(sources.count()), static_cast<unsigned>(bay.driveCount()), peerName(options),
+                  port.localPort(), options.port);
     log.event("start", detail);
     for (std::size_t i = 0; i < catalog.count(); ++i) {
         char entry[rb::host::MenuCatalog::kMaxName + 16];
         std::snprintf(entry, sizeof entry, "%c %s", static_cast<char>('A' + i), catalog.name(i));
         log.event("menu_entry", entry);
+    }
+    for (unsigned n = 2; n < 2 + sources.count(); ++n) {
+        char source[rb::host::MenuSources::kMaxName + 16];
+        std::snprintf(source, sizeof source, "%u %s", n, sources.name(n));
+        log.event("menu_source", source);
     }
     std::printf("retrobridge_host: menu with %u image(s), %s\n", static_cast<unsigned>(catalog.count()), detail);
 
@@ -393,9 +429,10 @@ int runMenu(const Options& options)
     return serve(options, clock, log, logFile, netsio, session, [&controller] { controller.service(); },
                  [&transport, &log] {
                      const rb::host::MenuTransportStats& m = transport.stats();
-                     char stats[96];
-                     std::snprintf(stats, sizeof stats, "menu_commands=%u menu_naks=%u dropped_after_reset=%u",
-                                   m.menuCommands, m.menuNaks, m.droppedAfterReset);
+                     char stats[128];
+                     std::snprintf(stats, sizeof stats,
+                                   "menu_commands=%u menu_retries=%u menu_naks=%u dropped_after_reset=%u",
+                                   m.menuCommands, m.menuRetries, m.menuNaks, m.droppedAfterReset);
                      log.event("menu_stats", stats);
                      std::printf("retrobridge_host: %s\n", stats);
                  });

@@ -161,6 +161,49 @@ class ImagesFolderTest(HostCase):
         self.assertIn('"detail":"T img18.atr"', log)
         self.assertNotIn("img19.atr", log)
 
+    # --sources (Issue #40): sources 2..8 of the main screen.
+
+    def run_sources(self, sources_arg, log_arg):
+        return subprocess.run(
+            [EXE, "--images", "images", "--sources", sources_arg, "--log", log_arg, "--port", "9", "--seconds", "1"],
+            cwd=self.root, capture_output=True, text=True, timeout=60)
+
+    def test_sources_are_listed_and_eight_drives_served(self):
+        (self.root / "sources.txt").write_text("# servers\ntnfs.example.cl\n\nlocalhost\n")
+        result = self.run_sources("sources.txt", "run.jsonl")
+        self.assertNotEqual(result.returncode, 2, result.stderr)
+        log = (self.root / "run.jsonl").read_text(encoding="utf-8")
+        self.assertIn("sources=2 drives=8", log)
+        self.assertIn('"name":"menu_source","detail":"2 tnfs.example.cl"', log)
+        self.assertIn('"name":"menu_source","detail":"3 localhost"', log)
+
+    def test_log_naming_the_sources_file_is_refused(self):
+        sources = self.root / "sources.txt"
+        sources.write_text("localhost\n")
+        before, mtime = sources.read_bytes(), sources.stat().st_mtime_ns
+        result = self.run_sources("sources.txt", "SOURCES.TXT" if os.name == "nt" else "sources.txt")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("--log names the sources file", result.stderr)
+        self.assertEqual(sources.read_bytes(), before)
+        self.assertEqual(sources.stat().st_mtime_ns, mtime)
+
+    def test_bad_sources_file_is_refused_before_the_log_opens(self):
+        (self.root / "sources.txt").write_text("".join(f"s{n}\n" for n in range(8)))
+        result = self.run_sources("sources.txt", "run.jsonl")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("more than 7 sources", result.stderr)
+        self.assertFalse((self.root / "run.jsonl").exists())
+        result = self.run_sources("missing.txt", "run.jsonl")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("cannot open sources file", result.stderr)
+
+    def test_sources_without_images_is_a_usage_error(self):
+        (self.root / "sources.txt").write_text("localhost\n")
+        result = subprocess.run([EXE, "--image", "images/disk.atr", "--sources", "sources.txt"],
+                                cwd=self.root, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("usage", result.stderr)
+
     def test_folder_without_atr_files_is_refused(self):
         (self.root / "empty").mkdir()
         (self.root / "empty" / "notes.txt").write_text("x")

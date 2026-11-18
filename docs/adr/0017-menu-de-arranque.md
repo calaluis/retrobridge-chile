@@ -1,6 +1,8 @@
 # ADR-017 — Menú de arranque y dispositivo SIO propio del host
 
 - Estado: Propuesta (2026-11-17), Issue #38 (continuación de #32). Spec `menu-arranque` aprobada el 2026-11-17.
+  Enmendada el 2026-11-17 por la Issue #40 (spec `menu-principal`): ver «Enmienda 1». Las decisiones 3 y 4 quedan
+  reemplazadas; 1, 2 y 5 siguen vigentes.
 - Contexto: con `--image`, `retrobridge_host` sirve una sola ATR por ejecución. La Issue #38 pide elegir la imagen
   D1 desde el Atari, con el teclado, sin relanzar el host ni montar discos desde Altirra.
 
@@ -47,3 +49,30 @@
 - `$5A` podría chocar con un periférico real que use ese ID. Esa es otra razón para no llevar el menú al firmware
   sin revisar antes este ADR.
 - Más de 20 imágenes: solo se muestran las 20 primeras; el log del host registra cuántas vio (`atr_seen`).
+
+## Enmienda 1 (2026-11-17, Issue #40): pantalla principal y terminal delgado
+
+Contexto: la Issue #40 pide la pantalla principal de la maqueta aprobada (fuentes, estado de D1 a D8 y C:, pie de
+teclas), montar en cualquier unidad y arrancar D1 cuando el usuario lo pida.
+
+1. **Terminal delgado (reemplaza la decisión 3).** El comando de `$5A` pasa a ser `K` (`$4B`). AUX1 lleva el código
+   de teclado de `CH` (`$FF`: solo dibujar) y AUX2 un número que cambia con cada tecla: si `SIOV` reintenta el
+   mismo comando (mismo AUX1 y AUX2), el host reenvía la respuesta ya armada sin aplicar la tecla otra vez; cada
+   arranque del menú empieza dibujando (`$FF`), lo que borra esa memoria. La respuesta tiene 962 bytes: acción (0 mostrar, 1 arrancar D1 con
+   `COLDSV`), diseño (0 principal, 1 lista) y 960 bytes de pantalla en códigos internos, que las display lists
+   muestran sin copiar. Se envía como COMPLETE + 962 + checksum, en bloques de 256 bytes (NetSIO admite hasta 512
+   por bloque). `M` deja de existir y recibe NAK como cualquier otro comando.
+2. **La pantalla la dibuja el host (reemplaza la decisión 4).** El disco del menú ya no lleva el catálogo: el host
+   decide qué significa cada tecla y dibuja la pantalla entera. El generador exporta las plantillas (título,
+   subtítulo y pie con `$42`/`$56` y teclas en inverso) para que el texto fijo tenga un solo origen.
+3. **D1 asignada, no servida.** Lo que el usuario elige para D1 se valida y queda asignado; D1 sigue sirviendo el
+   menú hasta `A`, que monta lo asignado y ordena el arranque. Con un `FF`, D1 vuelve al menú y lo asignado se
+   conserva. D2 a D8 se montan y desmontan enseguida por el buzón (ADR-014) y siguen servidas con el menú en
+   pantalla. El host configura 8 unidades y 9 archivos abiertos como máximo.
+4. **Fuentes 2 a 8 solo se muestran.** Vienen de `--sources`. Abrirlas necesita un cliente TNFS propio, que no
+   existe; `E` necesita entrada de texto en el Atari. Ambas teclas muestran `PENDIENTE` y no cambian nada.
+
+Consecuencias: el programa 6502 ocupa 10 sectores desde `$0700`; la pantalla vive en `$081F`-`$0BDE` (sin cruzar
+4 KB) y las dos display lists comparten la página `$07` (solo cambia el byte bajo de `SDLSTL`). Un reinicio en
+frío deja la vista en la pantalla principal. En las dos pantallas, la línea de mensajes (avisos, errores y «host no
+responde») va debajo del pie de teclas, como última línea (pedido en la revisión de la Issue #40).

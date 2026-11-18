@@ -150,7 +150,8 @@ add_test(NAME generate_menu_images
 set_tests_properties(generate_menu_images PROPERTIES FIXTURES_SETUP menu_images)
 rb_add_host_test(test_host_menu menu/test_host_menu.cpp
                  ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
-                 ${rb_root}/host/src/menu_controller.cpp ${rb_root}/host/src/menu_sio_transport.cpp)
+                 ${rb_root}/host/src/menu_controller.cpp ${rb_root}/host/src/menu_sio_transport.cpp
+                 ${rb_root}/host/src/menu_sources.cpp)
 target_include_directories(test_host_menu PRIVATE ${rb_root}/host/src)
 target_compile_definitions(test_host_menu PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
 set_tests_properties(test_host_menu PROPERTIES FIXTURES_REQUIRED menu_images)

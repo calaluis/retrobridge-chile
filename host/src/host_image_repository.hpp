@@ -1,10 +1,12 @@
 #pragma once
 
-// ImageRepository of retrobridge_host with --images (Issue #38): the reserved
-// location kMenuLocation is the in-memory menu disk; every other location is a
-// file of the images folder, opened by StdioImageRepository. Two file slots: the
-// image mounted as D1 and the one being validated after a choice.
+// ImageRepository of retrobridge_host with --images (Issues #38 and #40): the
+// reserved location kMenuLocation is the in-memory menu disk; every other
+// location is a file of the images folder, opened by StdioImageRepository.
+// kFileSlots: one image per drive D1..D8 and one more being validated or
+// mounted while the drive still holds the image it displaces.
 
+#include <cstddef>
 #include <cstring>
 
 #include "menu_image.hpp"
@@ -19,6 +21,8 @@ constexpr const char* kMenuLocation = "*menu*";
 
 class HostImageRepository final : public rb::app::ImageRepository {
 public:
+    static constexpr std::size_t kFileSlots = 8 + 1;
+
     HostImageRepository(const char* folder, MenuImage& menu) : files_(folder), menu_(menu) {}
 
     std::size_t openFiles() const noexcept { return files_.open_count(); }
@@ -47,7 +51,7 @@ protected:
     }
 
 private:
-    rb::storage::StdioImageRepository<2> files_;
+    rb::storage::StdioImageRepository<kFileSlots> files_;
     MenuImage& menu_;
     bool menuOpen_ = false;
 };

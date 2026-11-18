@@ -1,6 +1,6 @@
 # retrobridge_host
 
-Ejecutable de PC que sirve una ATR (o un menú para elegirla, `--images`) como unidad D1 a un Atari emulado por NetSIO (Issue #32, E1b; ADR-016).
+Ejecutable de PC que sirve una ATR (o un menú para elegir imágenes de D1 a D8, `--images`) como unidad D1 a un Atari emulado por NetSIO (Issue #32, E1b; ADR-016).
 Reutiliza `rb_netsio`, `SioSession`, el despachador SIO y el dominio de RetroBridge. Es una unidad de solo lectura.
 No es firmware: no ejerce UART, GPIO ni temporización SIO real; los tiempos son del PC.
 
@@ -63,12 +63,29 @@ los datos no coinciden).
 
    Sale con 0 solo si cada READ se respondió con COMPLETE, un checksum SIO válido y el CRC32 del manifiesto.
 
-## Elegir la imagen desde el Atari: menú de arranque (Issue #38)
+## Elegir imágenes desde el Atari: menú de RetroBridge (Issues #38 y #40)
 
 Con `--images <carpeta>`, en lugar de `--image`, RetroBridge sirve su propio menú como D1 tras cada reinicio en
-frío. El menú lista los `.atr` de la carpeta (como máximo 20, en orden alfabético). Al pulsar la letra de una
-imagen, RetroBridge la valida y la monta como D1, y el Atari arranca desde ella. Shift+F5 vuelve al menú. Si la
-imagen no es una ATR válida, el menú muestra el motivo y espera otra letra. El protocolo está en ADR-017.
+frío y atiende las unidades D1 a D8. La pantalla principal muestra las fuentes (1 = la carpeta, rotulada `SD`;
+2 a 8 = las del archivo `--sources`) y el estado de D1 a D8 y C:. Los avisos y errores aparecen en la última
+línea, debajo del pie de teclas. El protocolo está en ADR-017.
+
+| Tecla | Pantalla | Qué hace |
+|-------|----------|----------|
+| `1` | principal | abre la fuente local: la lista de `.atr` de la carpeta (como máximo 20) |
+| `A`..`T` | lista | elige una imagen; después `1`..`8` elige la unidad, Esc vuelve a la lista |
+| `A` | principal | arranca la imagen asignada a D1 |
+| `U` | principal | pide una unidad (`1`..`8`) y la desmonta; Esc cancela |
+| `2`..`8` | principal | pendiente: muestra `PENDIENTE: FALTA EL CLIENTE TNFS` (o `FUENTE n SIN CONFIGURAR`) |
+| `E` | principal | pendiente: muestra `PENDIENTE: E NECESITA ENTRADA DE TEXTO` |
+
+Una imagen elegida para D1 se valida y queda asignada; D1 sigue sirviendo el menú hasta pulsar `A`. Una imagen
+elegida para D2..D8 se monta enseguida. Una ATR inválida se rechaza al elegirla, con el motivo en pantalla, y la
+unidad conserva lo que tenía. Shift+F5 vuelve al menú y conserva las unidades; F5 conserva la imagen de D1.
+
+Pendiente (no implementado): abrir un servidor TNFS (falta un cliente TNFS propio y un servidor de prueba),
+editar un servidor con `E` (falta la entrada de texto en el Atari y escribir `--sources`), casete (sin soporte) y
+escritura en disco (unidades de solo lectura).
 
 1. Generar las imágenes de demostración (dos arrancables con mensajes distintos y una inválida):
 
@@ -77,22 +94,26 @@ imagen no es una ATR válida, el menú muestra el motivo y espera otra letra. El
    ```
 
 2. Preparar Altirra y el hub como en «Usar con Altirra».
-3. Servir la carpeta:
+3. Opcional: un archivo de fuentes, una por línea (como máximo 7, hasta 32 caracteres ASCII; `#` comenta):
 
-   ```bash
-   retrobridge_host --images build/menu-demo --peer netsiohub --log menu.jsonl
+   ```text
+   tnfs.ejemplo.cl
+   localhost
    ```
 
-4. Reiniciar en frío Altirra (Shift+F5). Aparece el menú:
-   - `A`: arranca `DEMO-DOS.ATR` y muestra `DEMO DOS OK`;
-   - `B`: arranca `DEMO-UNO.ATR` y muestra `DEMO UNO OK`;
-   - `C`: `ROTA.ATR` no es una ATR; el menú muestra `ERROR: ATR INVALIDA`.
+4. Servir la carpeta:
 
-   Shift+F5 vuelve al menú en cualquier momento. F5 (reinicio en caliente) conserva la imagen.
+   ```bash
+   retrobridge_host --images build/menu-demo --sources fuentes.txt --peer netsiohub --log menu.jsonl
+   ```
 
-El log registra el catálogo (`menu_entry`), cada elección (`menu_select`), cada cambio de D1 (`menu_mount`) y cada
-vuelta al menú (`menu_return`). `--log` no puede nombrar ninguna imagen de la carpeta. Una carpeta sin `.atr`
-termina con código 2.
+5. Reiniciar en frío Altirra (Shift+F5). Aparece la pantalla principal. Recorrido de ejemplo: `1`, `A`, `1`
+   (DEMO-DOS.ATR asignada a D1), `A` (arranca y muestra `DEMO DOS OK`), Shift+F5 (vuelve con D1 en pantalla).
+
+El log registra el catálogo (`menu_entry`), las fuentes (`menu_source`), cada elección (`menu_select`), cada cambio
+aplicado a una unidad (`menu_mount`), cada desmontaje (`menu_unmount`), cada arranque (`menu_boot`), las teclas
+pendientes (`menu_pending`) y cada vuelta al menú (`menu_return`). `--log` no puede nombrar ninguna imagen de la
+carpeta ni el archivo de fuentes. Una carpeta sin `.atr` o un archivo de fuentes inválido termina con código 2.
 
 El programa 6502 del menú se genera con `python -I tools/make_menu.py --out host/src/menu_program.inc`; las
 pruebas de `tools/` fallan si el archivo versionado no coincide.

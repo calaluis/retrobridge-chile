@@ -22,6 +22,7 @@ Result<CommandBytes> MenuSioTransport::waitCommandFrame(uint32_t timeoutUs)
     if (controller_.coldResetPending()) {
         inner_.releaseDataLine();
         ++stats_.droppedAfterReset;
+        haveLast_ = false;  // the menu starts again: its first key is never a retry
         return Failure{ErrorCode::Timeout};
     }
     const CommandBytes& command = received.value();
@@ -53,14 +54,36 @@ void MenuSioTransport::serveMenu(const CommandBytes& command)
         return;
     }
     const uint64_t ackEnd = clock_.nowMicros();
-    const MenuReply reply = controller_.select(command.bytes[2]);
-    response_[0] = rb::sio::code::kComplete;
-    for (std::size_t i = 0; i < MenuReply::kSize; ++i) {
-        response_[1 + i] = reply.bytes[i];
+    const uint8_t key = command.bytes[2];
+    const uint8_t sequence = command.bytes[3];
+    // SIOV retries a command whose reply did not arrive with the same AUX1 and
+    // AUX2. Acting on it again would apply the key twice (a second mount, or a
+    // digit read on the next screen): resend the reply already built instead.
+    // Every start of the menu draws first (AUX1 = kMenuNoKey), which forgets it.
+    if (key != kMenuNoKey && haveLast_ && key == lastKey_ && sequence == lastSequence_) {
+        ++stats_.menuRetries;
+    } else {
+        const MenuReply reply = controller_.key(key);
+        response_[0] = rb::sio::code::kComplete;
+        for (std::size_t i = 0; i < MenuReply::kSize; ++i) {
+            response_[1 + i] = reply.bytes[i];
+        }
+        response_[1 + MenuReply::kSize] =
+            rb::sio::sio_checksum(Span<const uint8_t>{reply.bytes.data(), MenuReply::kSize});
+        haveLast_ = key != kMenuNoKey;
+        lastKey_ = key;
+        lastSequence_ = sequence;
     }
-    response_[1 + MenuReply::kSize] = rb::sio::sio_checksum(Span<const uint8_t>{reply.bytes.data(), MenuReply::kSize});
     clock_.waitUntil(ackEnd + rb::sio::SioSession::kCompleteDelayUs);
-    (void)inner_.send(Span<const uint8_t>{response_.data(), response_.size()});
+    // COMPLETE, the screen and the checksum are one byte stream for the Atari;
+    // the transport takes it in blocks of at most kSendBlock bytes.
+    for (std::size_t sent = 0; sent < response_.size(); sent += kSendBlock) {
+        const std::size_t left = response_.size() - sent;
+        const std::size_t length = left < kSendBlock ? left : kSendBlock;
+        if (!inner_.send(Span<const uint8_t>{response_.data() + sent, length}).ok()) {
+            break;  // the Atari's SIOV times out and shows that the host does not answer
+        }
+    }
     inner_.releaseDataLine();
 }
 

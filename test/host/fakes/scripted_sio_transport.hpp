@@ -20,7 +20,7 @@ namespace rb::test {
 class ScriptedSioTransport final : public rb::app::SioTransport {
 public:
     static constexpr std::size_t kMaxEvents = 64;
-    static constexpr std::size_t kMaxSends = 8;
+    static constexpr std::size_t kMaxSends = 16;  // a menu reply takes ACK + 4 blocks
     static constexpr std::size_t kMaxSendBytes = 1 + 256 + 1;  // code + largest sector + checksum
     static constexpr uint64_t kDefaultFrameTimeUs = 3000;      // t0 + 5 bytes + t1, roughly
     static constexpr std::size_t kNoFailure = SIZE_MAX;

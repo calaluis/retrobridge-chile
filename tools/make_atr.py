@@ -93,10 +93,12 @@ def screen_codes(text: str) -> bytes:
     return bytes(ord(c) - 0x20 for c in line)
 
 
-def assemble(program: list, org: int) -> bytes:
+def assemble(program: list, org: int, extra_labels: dict = None) -> bytes:
     """Two-pass assembly of a list of byte strings, ("label", name) marks and
     operand placeholders: ("lo", name), ("hi", name), ("abs", name) (2 bytes, LSB
-    first) and ("rel", name) (1-byte branch offset from the next instruction)."""
+    first) and ("rel", name) (1-byte branch offset from the next instruction).
+    extra_labels adds addresses that are not marks in the program (for example,
+    offsets inside a data block)."""
     sizes = {"lo": 1, "hi": 1, "abs": 2, "rel": 1}
     labels, pc = {}, org
     for item in program:
@@ -104,6 +106,7 @@ def assemble(program: list, org: int) -> bytes:
             labels[item[1]] = pc
         else:
             pc += sizes[item[0]] if isinstance(item, tuple) else len(item)
+    labels.update(extra_labels or {})
     out, pc = bytearray(), org
     for item in program:
         if isinstance(item, tuple):

@@ -31,8 +31,10 @@
 //   malformed(cmd)       the next reply is the header alone (no status byte)
 //   eagain(cmd, ms)      the next request is answered EAGAIN with that back-off
 //   lateReply(cmd, ms)   the next reply arrives ms late, then normal again
-//   unreachable()        the next receive() fails with TransportError, as when
-//                        the host answers "port unreachable" (no server running)
+//   replyWith(cmd, body) the next request is answered OK followed by `body`,
+//                        without being executed (for odd but well-framed replies)
+//   unreachable(n)       the next n receive() calls fail with TransportError, as
+//                        when the host answers "port unreachable" (no server)
 //   forgetSession(code)  now: every session and handle is gone, as after a
 //                        restart; requests on an old session get `code` (0xFF)
 //
@@ -134,12 +136,13 @@ public:
 
     // --- Programming ------------------------------------------------------------
     void delay(uint8_t command, uint32_t ms) { delayUs_[command] = uint64_t{ms} * 1000u; }
-    void silence(uint8_t command) { programme(command, {Kind::Silence, 0}); }
-    void reject(uint8_t command, uint8_t code) { programme(command, {Kind::Reject, code}); }
-    void malformed(uint8_t command) { programme(command, {Kind::Malformed, 0}); }
-    void eagain(uint8_t command, uint16_t ms) { programme(command, {Kind::Eagain, ms}); }
-    void lateReply(uint8_t command, uint32_t ms) { programme(command, {Kind::Late, ms}); }
-    void unreachable() { unreachable_ = true; }
+    void silence(uint8_t command) { programme(command, {Kind::Silence, 0, {}}); }
+    void reject(uint8_t command, uint8_t code) { programme(command, {Kind::Reject, code, {}}); }
+    void malformed(uint8_t command) { programme(command, {Kind::Malformed, 0, {}}); }
+    void eagain(uint8_t command, uint16_t ms) { programme(command, {Kind::Eagain, ms, {}}); }
+    void lateReply(uint8_t command, uint32_t ms) { programme(command, {Kind::Late, ms, {}}); }
+    void replyWith(uint8_t command, Bytes body) { programme(command, {Kind::Custom, 0, std::move(body)}); }
+    void unreachable(unsigned times = 1) { unreachable_ = times; }
     void forgetSession(uint8_t code = kBadHandle)
     {
         sessions_.clear();
@@ -180,8 +183,8 @@ public:
 
     rb::core::Result<std::size_t> receive(rb::core::Span<uint8_t> out, uint32_t timeoutUs) override
     {
-        if (unreachable_) {
-            unreachable_ = false;
+        if (unreachable_ > 0) {
+            --unreachable_;
             return rb::core::Failure{rb::core::ErrorCode::TransportError};
         }
         const uint64_t deadline = clock_.nowMicros() + timeoutUs;
@@ -224,10 +227,11 @@ private:
         uint8_t lastCommand = 0;
         Bytes lastReply;
     };
-    enum class Kind { Silence, Reject, Malformed, Eagain, Late };
+    enum class Kind { Silence, Reject, Malformed, Eagain, Late, Custom };
     struct Programme {
         Kind kind;
         uint32_t value;
+        Bytes body;  // Custom only
     };
     struct Outcome {
         bool answered = false;
@@ -394,6 +398,11 @@ private:
             case Kind::Late:
                 outcome.delayUs += uint64_t{p.value} * 1000u;
                 break;
+            case Kind::Custom:
+                outcome.answered = true;
+                outcome.reply = status(d, kOk);
+                outcome.reply.insert(outcome.reply.end(), p.body.begin(), p.body.end());
+                return outcome;
             }
         }
         const bool hadSession = session != nullptr;
@@ -640,7 +649,7 @@ private:
     };
     UmountReply lastUmount_;
     uint8_t unknownSession_ = kBadHandle;
-    bool unreachable_ = false;
+    unsigned unreachable_ = 0;
     std::map<uint8_t, uint64_t> delayUs_;
     std::map<uint8_t, std::deque<Programme>> programmes_;
     std::vector<Entry> log_;

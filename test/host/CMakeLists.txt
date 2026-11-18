@@ -99,6 +99,8 @@ rb_add_host_test(test_tnfs_codec net_tnfs/test_tnfs_codec.cpp)
 target_link_libraries(test_tnfs_codec PRIVATE rb_net_tnfs)
 rb_add_host_test(test_fake_tnfs_server net_tnfs/test_fake_tnfs_server.cpp)
 target_link_libraries(test_fake_tnfs_server PRIVATE rb_netsio)
+rb_add_host_test(test_tnfs_client net_tnfs/test_tnfs_client.cpp)
+target_link_libraries(test_tnfs_client PRIVATE rb_net_tnfs)
 
 # rb_file_storage (H3a)
 rb_add_host_test(test_image_path storage/test_image_path.cpp)

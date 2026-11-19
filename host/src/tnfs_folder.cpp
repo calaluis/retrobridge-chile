@@ -148,3 +148,20 @@ void TnfsFolder::notice(char (&out)[kNoticeSize]) const noexcept
 }
 
 }  // namespace rb::host
+
+namespace rb::host {
+
+void TnfsFolder::swap(TnfsFolder& other) noexcept
+{
+    for (std::size_t i = 0; i < kMaxShown; ++i) {
+        Entry& a = entries_[i];
+        Entry& b = other.entries_[i];
+        std::swap(a.isDir, b.isDir);
+        std::swap(a.display, b.display);
+        a.path.swap(b.path);
+    }
+    std::swap(shown_, other.shown_);
+    std::swap(total_, other.total_);
+}
+
+}  // namespace rb::host

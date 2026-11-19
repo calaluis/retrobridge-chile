@@ -12,13 +12,18 @@
 // mutex guards the slot states; a slot's bytes never change while it is in use,
 // and the memory of a released slot is freed outside the lock. The SIO-thread
 // calls do not allocate (ADR-011).
+//
+// The bytes live in an ImageBuffer, allocated with new (std::nothrow): the
+// project builds without exceptions (ADR-004), so a std::vector that cannot
+// get its memory would abort instead of reporting it (M41-18).
 
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <mutex>
+#include <new>
 #include <utility>
-#include <vector>
 
 #include "rb/core/assert.hpp"
 #include "rb/core/result.hpp"
@@ -26,6 +31,55 @@
 #include "rb/domain/image_byte_source.hpp"
 
 namespace rb::host {
+
+// The bytes of one whole image: move-only, never copied by accident.
+class ImageBuffer {
+public:
+    ImageBuffer() = default;
+    // A moved-from buffer is empty in size too (review L6).
+    ImageBuffer(ImageBuffer&& other) noexcept : bytes_(std::move(other.bytes_)), size_(other.size_)
+    {
+        other.size_ = 0;
+    }
+    ImageBuffer& operator=(ImageBuffer&& other) noexcept
+    {
+        if (this != &other) {
+            bytes_ = std::move(other.bytes_);
+            size_ = other.size_;
+            other.size_ = 0;
+        }
+        return *this;
+    }
+    ImageBuffer(const ImageBuffer&) = delete;
+    ImageBuffer& operator=(const ImageBuffer&) = delete;
+
+    // `size` bytes, zeroed; not valid() when the memory cannot be had.
+    static ImageBuffer allocate(uint32_t size) noexcept
+    {
+        ImageBuffer buffer;
+        buffer.bytes_.reset(new (std::nothrow) uint8_t[size == 0 ? 1 : size]());
+        buffer.size_ = buffer.bytes_ ? size : 0;
+        return buffer;
+    }
+    static ImageBuffer copyOf(rb::core::Span<const uint8_t> bytes) noexcept
+    {
+        RB_ASSERT(bytes.size() <= UINT32_MAX);
+        ImageBuffer buffer = allocate(static_cast<uint32_t>(bytes.size()));
+        if (buffer.valid() && bytes.size() != 0) {
+            std::memcpy(buffer.data(), bytes.data(), bytes.size());
+        }
+        return buffer;
+    }
+
+    bool valid() const noexcept { return bytes_ != nullptr; }
+    uint8_t* data() noexcept { return bytes_.get(); }
+    const uint8_t* data() const noexcept { return bytes_.get(); }
+    uint32_t size() const noexcept { return size_; }
+
+private:
+    std::unique_ptr<uint8_t[]> bytes_;
+    uint32_t size_ = 0;
+};
 
 class MemoryImageStore {
 public:
@@ -36,11 +90,11 @@ public:
     MemoryImageStore& operator=(const MemoryImageStore&) = delete;
 
     // Takes the bytes of a whole image into a free slot. NoFreeSlot when the nine
-    // are in use; ImageTooLarge when the image does not fit an ImageByteSource.
-    rb::core::Result<std::size_t> adopt(std::vector<uint8_t>&& bytes)
+    // are in use; InvalidArgument for a buffer that was never allocated.
+    rb::core::Result<std::size_t> adopt(ImageBuffer&& bytes)
     {
-        if (bytes.size() > UINT32_MAX) {
-            return rb::core::Failure{rb::core::ErrorCode::ImageTooLarge};
+        if (!bytes.valid()) {
+            return rb::core::Failure{rb::core::ErrorCode::InvalidArgument};
         }
         std::lock_guard<std::mutex> lock(mutex_);
         for (std::size_t i = 0; i < kSlots; ++i) {
@@ -70,14 +124,14 @@ public:
         if (slot >= kSlots) {
             return false;
         }
-        std::vector<uint8_t> freed;
+        ImageBuffer freed;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             Slot& s = slots_[slot];
             if (!s.used || s.open || s.source.isAttached()) {
                 return false;
             }
-            freed.swap(s.source.bytes);
+            freed = std::move(s.source.bytes);
             s.used = false;
         }
         return true;  // `freed` releases its memory here, outside the lock
@@ -136,8 +190,8 @@ public:
 
 private:
     struct Source final : rb::domain::ImageByteSource {
-        std::vector<uint8_t> bytes;
-        uint32_t size() const override { return static_cast<uint32_t>(bytes.size()); }
+        ImageBuffer bytes;
+        uint32_t size() const override { return bytes.size(); }
         rb::core::Result<void> readAt(uint32_t offset, rb::core::Span<uint8_t> out) override
         {
             const uint64_t end = uint64_t{offset} + out.size();

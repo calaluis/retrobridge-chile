@@ -52,6 +52,10 @@ public:
     // "MOSTRANDO 20 DE <total>" when more than kMaxShown were kept, "" otherwise.
     void notice(char (&out)[kNoticeSize]) const noexcept;
 
+    // Exchanges the contents without allocating or freeing (T011: the loader
+    // hands a listing to the menu thread this way).
+    void swap(TnfsFolder& other) noexcept;
+
 private:
     Entry entries_[kMaxShown];
     std::size_t shown_ = 0;

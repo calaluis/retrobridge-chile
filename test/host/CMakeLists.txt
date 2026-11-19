@@ -190,3 +190,10 @@ target_include_directories(test_tnfs_folder PRIVATE ${rb_root}/host/src)
 # points at the spec's reference ATR (not in the repository).
 rb_add_host_test(test_sha256 menu/test_sha256.cpp ${rb_root}/host/src/sha256.cpp)
 target_include_directories(test_sha256 PRIVATE ${rb_root}/host/src)
+
+# The TNFS loading thread: jobs, cancel, late results and errors (menu-tnfs T011).
+rb_add_host_test(test_tnfs_loader menu/test_tnfs_loader.cpp ${rb_root}/host/src/tnfs_loader.cpp
+                 ${rb_root}/host/src/tnfs_folder.cpp ${rb_root}/host/src/menu_catalog.cpp
+                 ${rb_root}/host/src/sha256.cpp)
+target_include_directories(test_tnfs_loader PRIVATE ${rb_root}/host/src)
+target_link_libraries(test_tnfs_loader PRIVATE rb_net_tnfs Threads::Threads)

@@ -6,7 +6,8 @@
   «Enmienda 2», que reemplaza el punto 4 de la enmienda 1. Enmendada el 2026-11-19 por la spec
   `menu-navegacion`: ver «Enmienda 3», que amplía el punto 3 de la enmienda 2, y «Enmienda 4», que cambia
   sus consecuencias tras la demo. «Enmienda 5» cierra el límite conocido del punto 2 de la enmienda 4. «Enmienda 6» (spec
-  `menu-editar-servidor`) agrega la acción 3, el comando `T` y el código `$E0`.
+  `menu-editar-servidor`) agrega la acción 3, el comando `T` y el código `$E0`. «Enmienda 7» (spec
+  `menu-borrar-fuente`) cambia el punto 3 de la enmienda 6: el texto vacío borra la fuente.
 - Contexto: con `--image`, `retrobridge_host` sirve una sola ATR por ejecución. La Issue #38 pide elegir la imagen
   D1 desde el Atari, con el teclado, sin relanzar el host ni montar discos desde Altirra.
 
@@ -209,3 +210,23 @@ recibe datos del Atari, y cambiarlo choca con ADR-016.
 Consecuencias: el programa 6502 ocupa 16 sectores desde `$0700`. La pantalla vive en `$0B16`-`$0ED5`, sin cruzar
 4 KB. Guardar cuesta 33 transacciones cortas y una pantalla. El host escribe un archivo en el hilo SIO; es pequeño
 y cabe en los 250 ms de `key()`.
+
+## Enmienda 7 (2026-11-19, spec `menu-borrar-fuente`): el texto vacío borra la fuente
+
+Contexto: `E` agregaba y cambiaba servidores, pero no los quitaba. El responsable eligió reusar `E` antes que una
+tecla nueva con confirmación.
+
+1. **Vacío borra (M44), reemplaza «vacío equivale a Esc» del punto 3 de la enmienda 6.** `K` con `$E0` y las 32
+   posiciones en blanco sobre una fuente configurada quitan su línea de `--sources`. Las fuentes siguientes suben
+   un número (el formato no guarda huecos). Mensaje `FUENTE n BORRADA`; evento `menu_source_deleted`. Sobre una
+   fila vacía sigue siendo Esc. La fila de edición dice `RETURN GUARDA, VACIO BORRA, ESC CANCELA`.
+2. **Misma escritura que M43.** `writeSourcesFile` con nombre nulo omite esa línea; conserva comentarios y las
+   demás; escribe `.tmp` y lo pone en lugar del original. Si falla, nada cambia y sale `NO SE PUDO GUARDAR EL
+   ARCHIVO`.
+3. **Los enlaces siguen a los números.** El host llama a `changeServer` para la fuente borrada y cada una que
+   cambió de número, con el nombre que quedó en ese número (vacío si ya no hay). Cada sesión vieja termina con
+   UMOUNT sin espera, como en el punto 4 de la enmienda 6.
+
+Consecuencias: solo cambia el host; el programa 6502 y `menu_program.inc` no cambian. Un RETURN con el texto vacío
+borra sin pedir confirmación: es un riesgo aceptado por el responsable. Un reintento de `SIOV` del mismo `K` se
+descarta como siempre (M40-2), así que no borra dos fuentes.

@@ -31,6 +31,10 @@ public:
     // file has no gaps (M43). Returns the number it got, 0 if the list is full.
     unsigned set(unsigned number, const char* name) noexcept;
 
+    // Source `number` (2..8) leaves the list; the ones after it move up one
+    // number (M44). False if it is not configured.
+    bool remove(unsigned number) noexcept;
+
     // A server name or an IPv4 address of 1..kMaxName characters (M43-1). IPv4:
     // four decimal numbers 0..255 joined by '.', no leading zeros. Name: labels
     // of 1..63 letters, digits and '-' joined by '.', no label starts or ends
@@ -44,7 +48,8 @@ private:
 
 // Rewrites the sources file `path` (M43): its source line number `index`
 // (0-based, counted as read() counts them) becomes `name`; if the file has
-// exactly `index` source lines, `name` is added at the end. Comments, blank
+// exactly `index` source lines, `name` is added at the end. A null `name`
+// deletes that source line (M44); there must be one. Comments, blank
 // lines and the other lines are kept byte for byte. The new text goes to
 // `path`.tmp, which then replaces `path`: on failure `path` is unchanged and
 // `error` says why.

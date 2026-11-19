@@ -145,6 +145,18 @@ unsigned MenuSources::set(unsigned number, const char* name) noexcept
     return static_cast<unsigned>(index + 2);
 }
 
+bool MenuSources::remove(unsigned number) noexcept
+{
+    if (number < 2 || number - 2 >= count_) {
+        return false;
+    }
+    for (std::size_t i = number - 2; i + 1 < count_; ++i) {
+        names_[i] = names_[i + 1];
+    }
+    names_[--count_][0] = '\0';
+    return true;
+}
+
 bool MenuSources::validServer(const char* text) noexcept
 {
     const std::size_t length = std::strlen(text);
@@ -211,7 +223,7 @@ bool writeSourcesFile(const char* path, std::size_t index, const char* name, cha
         if (lineStart) {
             skipping = false;
             if (isSourceLine(line) && sources++ == index) {
-                ok = std::fprintf(out, "%s\n", name) > 0;
+                ok = name == nullptr || std::fprintf(out, "%s\n", name) > 0;  // null: deleted
                 written = true;
                 skipping = true;
             }
@@ -224,7 +236,7 @@ bool writeSourcesFile(const char* path, std::size_t index, const char* name, cha
     }
     ok = ok && std::ferror(in) == 0;
     if (ok && !written) {
-        if (sources != index) {
+        if (sources != index || name == nullptr) {
             ok = false;
             std::snprintf(error, errorSize, "source %u is not in the file (it has %u)",
                           static_cast<unsigned>(index + 2), static_cast<unsigned>(sources));

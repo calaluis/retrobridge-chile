@@ -9,7 +9,7 @@
 // its slot and its listing are freed on the loader thread. A result is handed
 // over once, by poll(); after that the number is unknown.
 //
-// Threads: start(), poll() and cancel() run on the menu (SIO) thread. They only
+// Threads: start(), poll(), cancel(), await() and recycle() run on the menu (SIO) thread. They only
 // take the mutex for a few copies: they never wait for the network and never
 // allocate (ADR-011); the mutex is never held during a TNFS request. Opening a
 // link, the TNFS requests, the allocations, the SHA-256 and the release of a
@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "memory_image_store.hpp"
+#include "menu_loader.hpp"
 #include "rb/core/result.hpp"
 #include "rb/net_tnfs/tnfs_client.hpp"
 #include "rb/net_tnfs/tnfs_codec.hpp"
@@ -81,26 +82,7 @@ protected:
     ~LoaderHooks() = default;
 };
 
-enum class LoaderError : uint8_t {
-    NoResponde,     // no answer, a malformed answer, or the link failed
-    NoEncontrado,   // the server name does not resolve, or the source has no server
-    NoSePudoAbrir,  // the server refused, no memory, no free slot, path too long
-};
-
-struct LoaderStatus {
-    enum class Kind : uint8_t { InProgress, Folder, Image, Error, Unknown };
-    static constexpr std::size_t kCauseSize = 96;
-
-    Kind kind = Kind::Unknown;
-    uint8_t percent = 0;                    // InProgress
-    std::size_t slot = 0;                   // Image: the caller now owns this slot
-    uint32_t bytes = 0;                     // Image
-    Sha256Digest sha256{};                  // Image
-    LoaderError error = LoaderError::NoResponde;  // Error
-    char cause[kCauseSize] = {};            // Error: for the host log, never for the screen
-};
-
-class TnfsLoader {
+class TnfsLoader final : public MenuLoader {
 public:
     static constexpr unsigned kMaxSource = 8;  // sources 2..8 are TNFS; 0 and 1 are not
 
@@ -114,15 +96,24 @@ public:
 
     // List the folder `path` of a source, or bring the image at `path` whole.
     // `path` is absolute UTF-8. Returns the new job's number (never 0).
-    uint32_t startList(unsigned source, const char* path, std::size_t length) noexcept;
-    uint32_t startFetch(unsigned source, const char* path, std::size_t length) noexcept;
+    uint32_t startList(unsigned source, const char* path, std::size_t length) noexcept override;
+    uint32_t startFetch(unsigned source, const char* path, std::size_t length) noexcept override;
 
     // The state of job `job`. A finished result is handed over once: a Folder is
     // swapped into `folder` (whose old content the loader frees later on its own
     // thread); an Image gives its slot to the caller.
-    LoaderStatus poll(uint32_t job, TnfsFolder& folder) noexcept;
+    LoaderStatus poll(uint32_t job, TnfsFolder& folder) noexcept override;
 
-    void cancel(uint32_t job) noexcept;
+    void cancel(uint32_t job) noexcept override;
+
+    // Waits on the menu thread, without allocating, until job `job` is done, is
+    // replaced or cancelled, or `micros` passed.
+    void await(uint32_t job, uint32_t micros) noexcept override;
+
+    // M41-20: marks `slot` to be freed on the loader thread, which tries before
+    // every job and whenever it wakes; a slot still open or attached keeps its
+    // mark for the next wake. A free slot drops it.
+    void recycle(std::size_t slot) noexcept override;
 
 private:
     enum class Kind : uint8_t { List, Fetch };
@@ -150,6 +141,7 @@ private:
     void list(const Job& job, rb::net_tnfs::TnfsClient& client, Outcome& out);
     void fetch(const Job& job, rb::net_tnfs::TnfsClient& client, Outcome& out);
     void publish(uint32_t number, Outcome& out);
+    void freeRecycled();
     bool cancelled(uint32_t number) const noexcept;
     void progress(uint32_t number, uint8_t percent) noexcept;
 
@@ -162,6 +154,9 @@ private:
 
     mutable std::mutex mutex_;
     std::condition_variable wake_;
+    std::condition_variable done_;  // a job was published or dropped (await)
+    bool recycle_[MemoryImageStore::kSlots] = {};  // slots the menu gave back (M41-20)
+    bool recycleReady_ = false;                     // a new mark since the loader last looked
     bool stop_ = false;
     uint32_t counter_ = 0;
     uint32_t current_ = 0;  // the job the menu waits for; 0: none

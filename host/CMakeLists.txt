@@ -26,7 +26,8 @@ add_executable(retrobridge_host
     src/menu_image.cpp
     src/menu_controller.cpp
     src/menu_sio_transport.cpp
-    src/menu_sources.cpp)
+    src/menu_sources.cpp
+    src/tnfs_folder.cpp)  # the controller draws TNFS folders (menu-tnfs T012); T013 adds the loader
 target_link_libraries(retrobridge_host PRIVATE rb_sio rb_file_storage rb_netsio)
 rb_apply_build_flags(retrobridge_host)
 if(WIN32)

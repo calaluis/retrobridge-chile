@@ -79,9 +79,14 @@ std::size_t tnfsDisplay(const char* text, std::size_t length, char* out, std::si
 
 void tnfsTitle(const std::string& path, std::size_t width, char* out) noexcept
 {
-    const std::size_t total = displayLength(path.data(), path.size());
+    tnfsTitle(path.data(), path.size(), width, out);
+}
+
+void tnfsTitle(const char* path, std::size_t length, std::size_t width, char* out) noexcept
+{
+    const std::size_t total = displayLength(path, length);
     if (total <= width) {
-        tnfsDisplay(path.data(), path.size(), out, width);
+        tnfsDisplay(path, length, out, width);
         return;
     }
     if (width < 2) {
@@ -89,7 +94,7 @@ void tnfsTitle(const std::string& path, std::size_t width, char* out) noexcept
         return;
     }
     // Keep the last width - 2 characters after "..".
-    DisplayCursor cursor(path.data(), path.size());
+    DisplayCursor cursor(path, length);
     char c = 0;
     for (std::size_t skip = total - (width - 2); skip > 0; --skip) {
         cursor.next(c);

@@ -21,6 +21,7 @@
 
 #include "fakes/fake_clock.hpp"
 #include "fakes/fake_tnfs_server.hpp"
+#include "fakes/gated_port.hpp"
 #include "memory_image_store.hpp"
 #include "rb/net_tnfs/tnfs_codec.hpp"
 #include "sha256.hpp"
@@ -32,6 +33,7 @@ namespace tnfs = rb::net_tnfs;
 using rb::core::ErrorCode;
 using rb::test::FakeClock;
 using rb::test::FakeTnfsServer;
+using rb::test::GatedPort;
 using rb::core::Span;
 using rb::host::ImageMemory;
 using rb::host::LoaderError;
@@ -50,57 +52,6 @@ FakeClock fakeClock;  // used by the loader thread only, while a loader runs
 struct Clock final : tnfs::TnfsClock {
     uint64_t nowMicros() const override { return fakeClock.nowMicros(); }
     void sleepUntil(uint64_t micros) override { fakeClock.waitUntil(micros); }
-};
-
-// Holds every request of `command` until the test permits it.
-class GatedPort final : public rb::netsio::DatagramPort {
-public:
-    explicit GatedPort(FakeTnfsServer& server) : server_(server) {}
-
-    void gate(uint8_t command) { gated_ = command; gating_ = true; }
-
-    rb::core::Result<void> send(Span<const uint8_t> datagram) override
-    {
-        if (gating_ && datagram.size() > 3 && datagram[3] == gated_) {
-            std::unique_lock<std::mutex> lock(mutex_);
-            ++arrivals_;
-            changed_.notify_all();
-            changed_.wait(lock, [this] { return permits_ > 0; });
-            --permits_;
-        }
-        return server_.send(datagram);
-    }
-    rb::core::Result<std::size_t> receive(Span<uint8_t> out, uint32_t timeoutUs) override
-    {
-        return server_.receive(out, timeoutUs);
-    }
-
-    // Waits (real time) until the next gated request arrives and is held.
-    void awaitHeld()
-    {
-        std::unique_lock<std::mutex> lock(mutex_);
-        const int target = ++awaited_;
-        TEST_ASSERT_TRUE_MESSAGE(
-            changed_.wait_for(lock, std::chrono::seconds(10), [this, target] { return arrivals_ >= target; }),
-            "no held request");
-    }
-    void permit(int count = 1)
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        permits_ += count;
-        changed_.notify_all();
-    }
-    void open() { gating_ = false; permit(1000000); }
-
-private:
-    FakeTnfsServer& server_;
-    std::atomic<bool> gating_{false};
-    uint8_t gated_ = 0;
-    std::mutex mutex_;
-    std::condition_variable changed_;
-    int arrivals_ = 0;  // gated requests that reached send()
-    int awaited_ = 0;   // arrivals the test has waited for
-    int permits_ = 0;
 };
 
 struct FakeLink final : TnfsLink {
@@ -720,6 +671,61 @@ static void test_a_listing_restarted_by_a_reconnection_counts_each_entry_once(vo
     TEST_ASSERT_EQUAL_size_t(2, countCommand(rig.server, tnfs::cmd::kMount));
 }
 
+// M41-20: the menu gives slots back; the loader thread frees them, and a slot
+// still open keeps its mark until a later wake finds it closed.
+static void test_recycled_slots_are_freed_on_the_loader_thread_and_a_held_one_waits(void)
+{
+    Rig rig;
+    rig.server.addFile("/a.atr", image(300));
+    rig.server.addFile("/b.atr", image(200));
+    TnfsLoader loader(rig.links, rig.store, rig.clock, rig.memory, &rig.hooks);
+    TnfsFolder folder;
+    const LoaderStatus a = awaitResult(loader, fetch(loader, "/a.atr"), folder);
+    const LoaderStatus b = awaitResult(loader, fetch(loader, "/b.atr"), folder);
+    TEST_ASSERT_TRUE(a.kind == Kind::Image && b.kind == Kind::Image);
+    awaitSlots(rig.store, 2);
+    const auto held = rig.store.open(a.slot);
+    TEST_ASSERT_TRUE(held.ok());
+    loader.recycle(a.slot);  // open: stays
+    loader.recycle(b.slot);  // free to go
+    awaitSlots(rig.store, 1);
+    TEST_ASSERT_TRUE(rig.store.inUse(a.slot));
+    rig.store.close(*held.value());
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    TEST_ASSERT_TRUE(rig.store.inUse(a.slot));  // nothing woke the loader yet
+    const uint32_t job = list(loader, "/");     // the next job's wake frees it
+    TEST_ASSERT_TRUE(awaitResult(loader, job, folder).kind == Kind::Folder);
+    awaitSlots(rig.store, 0);
+    loader.recycle(a.slot);                     // a free slot drops the mark
+    loader.recycle(MemoryImageStore::kSlots);   // out of range: ignored
+    TEST_ASSERT_TRUE(awaitResult(loader, list(loader, "/"), folder).kind == Kind::Folder);
+    awaitSlots(rig.store, 0);
+}
+
+// await() returns when the job ends, and otherwise after its time.
+static void test_await_returns_at_the_end_of_a_job_or_after_its_time(void)
+{
+    Rig rig;
+    rig.server.addFile("/a.atr", image(300));
+    rig.gated.gate(tnfs::cmd::kRead);
+    TnfsLoader loader(rig.links, rig.store, rig.clock, rig.memory, &rig.hooks);
+    TnfsFolder folder;
+    const uint32_t job = fetch(loader, "/a.atr");
+    rig.gated.awaitHeld();
+    auto begin = std::chrono::steady_clock::now();
+    loader.await(job, 50000);
+    auto took = std::chrono::steady_clock::now() - begin;
+    TEST_ASSERT_TRUE(took >= std::chrono::milliseconds(40));
+    TEST_ASSERT_TRUE(loader.poll(job, folder).kind == Kind::InProgress);
+    rig.gated.open();
+    begin = std::chrono::steady_clock::now();
+    loader.await(job, 5000000);
+    took = std::chrono::steady_clock::now() - begin;
+    TEST_ASSERT_TRUE(took < std::chrono::seconds(4));
+    TEST_ASSERT_TRUE(loader.poll(job, folder).kind == Kind::Image);
+    loader.await(job, 5000000);  // no longer current: at once
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -747,5 +753,7 @@ int main(void)
     RUN_TEST(test_the_percentage_never_goes_down_after_a_reconnection);
     RUN_TEST(test_a_refused_stat_drops_the_entry_and_a_mute_one_fails);
     RUN_TEST(test_a_listing_restarted_by_a_reconnection_counts_each_entry_once);
+    RUN_TEST(test_recycled_slots_are_freed_on_the_loader_thread_and_a_held_one_waits);
+    RUN_TEST(test_await_returns_at_the_end_of_a_job_or_after_its_time);
     return UNITY_END();
 }

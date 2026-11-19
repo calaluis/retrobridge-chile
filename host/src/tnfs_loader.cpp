@@ -1,6 +1,7 @@
 #include "tnfs_loader.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -14,6 +15,8 @@ using rb::core::Span;
 using rb::net_tnfs::StatResult;
 using rb::net_tnfs::TnfsClient;
 using rb::net_tnfs::TnfsResult;
+
+static_assert(kTnfsMaxPath == rb::net_tnfs::kMaxPath, "the menu keeps paths the client can send");
 
 namespace {
 
@@ -265,6 +268,48 @@ void TnfsLoader::cancel(uint32_t job) noexcept
         state_ = State::None;
     }
     wake_.notify_all();
+    done_.notify_all();
+}
+
+void TnfsLoader::await(uint32_t job, uint32_t micros) noexcept
+{
+    std::unique_lock<std::mutex> lock(mutex_);
+    done_.wait_for(lock, std::chrono::microseconds(micros),
+                   [this, job] { return stop_ || job != current_ || state_ == State::Done; });
+}
+
+void TnfsLoader::recycle(std::size_t slot) noexcept
+{
+    if (slot >= MemoryImageStore::kSlots) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        recycle_[slot] = true;
+        recycleReady_ = true;
+    }
+    wake_.notify_all();
+}
+
+// Loader thread: frees every marked slot it can. One still open or attached
+// keeps its mark for the next wake; a free one drops it.
+void TnfsLoader::freeRecycled()
+{
+    bool marked[MemoryImageStore::kSlots] = {};
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (std::size_t i = 0; i < MemoryImageStore::kSlots; ++i) {
+            marked[i] = recycle_[i];
+            recycle_[i] = false;
+        }
+        recycleReady_ = false;
+    }
+    for (std::size_t i = 0; i < MemoryImageStore::kSlots; ++i) {
+        if (marked[i] && !store_.release(i) && store_.inUse(i)) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            recycle_[i] = true;  // still held: try again at the next wake
+        }
+    }
 }
 
 bool TnfsLoader::cancelled(uint32_t job) const noexcept
@@ -292,7 +337,7 @@ void TnfsLoader::run()
         bool stopping = false;
         {
             std::unique_lock<std::mutex> lock(mutex_);
-            wake_.wait(lock, [this] { return stop_ || pendingReady_ || discard_; });
+            wake_.wait(lock, [this] { return stop_ || pendingReady_ || discard_ || recycleReady_; });
             if (discard_) {
                 freeSlot = doneHasSlot_;
                 slot = doneStatus_.slot;
@@ -317,6 +362,7 @@ void TnfsLoader::run()
         if (stopping) {
             return;
         }
+        freeRecycled();  // before every job, so its image finds the slots given back
         if (haveJob) {
             Outcome out;
             execute(job, out);
@@ -446,6 +492,7 @@ void TnfsLoader::publish(uint32_t job, Outcome& out)
             state_ = State::Done;
         }
     }
+    done_.notify_all();
     if (freeSlot) {
         (void)store_.release(out.status.slot);
     }

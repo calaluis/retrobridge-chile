@@ -70,5 +70,8 @@ std::size_t tnfsDisplay(const char* text, std::size_t length, char* out, std::si
 // characters, it is cut on the left and starts with "..", so the current
 // folder stays visible. out holds width + 1.
 void tnfsTitle(const std::string& path, std::size_t width, char* out) noexcept;
+// The same over `length` bytes, without a std::string (MenuController draws the
+// title in key(), which must not allocate).
+void tnfsTitle(const char* path, std::size_t length, std::size_t width, char* out) noexcept;
 
 }  // namespace rb::host

@@ -3,7 +3,8 @@
 - Estado: Propuesta (2026-11-17), Issue #38 (continuación de #32). Spec `menu-arranque` aprobada el 2026-11-17.
   Enmendada el 2026-11-17 por la Issue #40 (spec `menu-principal`): ver «Enmienda 1». Las decisiones 3 y 4 quedan
   reemplazadas; 1, 2 y 5 siguen vigentes. Enmendada el 2026-11-18 por la spec `menu-tnfs` (PR #44): ver
-  «Enmienda 2», que reemplaza el punto 4 de la enmienda 1.
+  «Enmienda 2», que reemplaza el punto 4 de la enmienda 1. Enmendada el 2026-11-19 por la spec
+  `menu-navegacion`: ver «Enmienda 3», que amplía el punto 3 de la enmienda 2.
 - Contexto: con `--image`, `retrobridge_host` sirve una sola ATR por ejecución. La Issue #38 pide elegir la imagen
   D1 desde el Atari, con el teclado, sin relanzar el host ni montar discos desde Altirra.
 
@@ -100,3 +101,35 @@ espera, así que el Atari necesita una forma de esperar sin perder teclas.
 Consecuencias: el programa 6502 ocupa 11 sectores desde `$0700`; la pantalla vive en `$0879`-`$0C38` (sin cruzar
 4 KB) y un relleno mantiene las dos display lists en una página. El diseño de la carpeta TNFS (título, filas y
 «CARGANDO nn%») está en M41-21.
+
+## Enmienda 3 (2026-11-19, spec `menu-navegacion`): cursor, joystick y páginas
+
+Contexto: el responsable pidió elegir con un cursor, por flechas o joystick, y confirmar con RETURN o el botón
+rojo. También pidió paginar las carpetas con más de 20 imágenes. El host sigue siendo el único dueño de la
+pantalla: el 6502 solo traduce entradas a códigos.
+
+1. **Códigos de navegación (M42-1; amplía el punto 3 de la enmienda 2).** Las teclas reales siguen en `$00`-`$3F`
+   tras `AND #$3F`. Cinco códigos nuevos van por encima de la máscara y lejos de `$FE` y `$FF`: `$40` arriba,
+   `$41` abajo, `$42` izquierda, `$43` derecha, `$44` fuego. Las flechas son Control + `-` `=` `+` `*`
+   (CH `$8E` `$8F` `$86` `$87`, también con Shift); `=` solo sigue siendo `$0F`. El joystick es el del puerto 1
+   (`STICK0` `$0278`, `STRIG0` `$0284`), y se lee en la espera de tecla de la acción 0 y en la espera de la
+   acción 2.
+2. **Repetición y fuego.** Una dirección nueva se envía al instante. Si se mantiene, se repite a los 30 cuadros y
+   después cada 9. La cuenta solo avanza en los cuadros que el 6502 ve, así que una respuesta lenta solo la
+   pausa. Una diagonal no envía nada. El fuego envía `$44` una vez por pulsación, al pasar de suelto a pulsado.
+   Un botón ya pulsado al arrancar no cuenta.
+3. **El host reconoce `$40`-`$44` antes de la máscara (M42-2).** RETURN (`$0C`) y `$44` confirman lo marcado,
+   igual que su letra o su dígito. El host dibuja el cursor en vídeo inverso, en las 40 columnas de la línea.
+4. **Listas de hasta 999 entradas en páginas de 20 (M42-3).** Arriba y abajo mueven una fila y cruzan de página
+   en el borde. Izquierda y derecha cambian de página y dejan el cursor en la fila 1. Las letras A-T eligen en la
+   página visible. Debajo del pie aparece `PAGINA n DE m (t)`, o `(999 DE t)` si hay más de 999. Ese texto
+   reemplaza a `MOSTRANDO 20 DE n` de M41-21. Esc vuelve a la página y fila desde donde se entró, hasta 32
+   niveles de carpetas.
+5. **Elegir unidad sobre la pantalla principal (M42-4).** Al montar o desmontar, el cursor recorre D1 a D8 con su
+   contenido. El mensaje es `UNIDAD PARA: <nombre>`. Los dígitos siguen valiendo. En la principal, el cursor
+   recorre las 8 fuentes, también las vacías, y RETURN equivale a su dígito.
+
+Consecuencias: el programa 6502 ocupa 12 sectores desde `$0700` (eran 11). La pantalla vive en `$08F0`-`$0CAF`,
+sin cruzar 4 KB. El pie de la lista pasa a `A-T ELEGIR`, `RET OK`, `<> PAG`, `ESC VOLVER`, en 40 columnas con sus
+marcos gráficos. Cada movimiento es una transacción SIO más, dentro de los 250 ms de `key()`. El registro
+`menu_entry` numera las imágenes locales desde 1 en lugar de A-T.

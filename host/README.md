@@ -63,23 +63,34 @@ los datos no coinciden).
 
    Sale con 0 solo si cada READ se respondió con COMPLETE, un checksum SIO válido y el CRC32 del manifiesto.
 
-## Elegir imágenes desde el Atari: menú de RetroBridge (Issues #38 y #40, spec `menu-tnfs`)
+## Elegir imágenes desde el Atari: menú de RetroBridge (Issues #38 y #40, specs `menu-tnfs` y `menu-navegacion`)
 
 Con `--images <carpeta>`, en lugar de `--image`, RetroBridge sirve su propio menú como D1 tras cada reinicio en
 frío y atiende las unidades D1 a D8. La pantalla principal muestra las fuentes (1 = la carpeta, rotulada `SD`;
 2 a 8 = las del archivo `--sources`) y el estado de D1 a D8 y C:. Los avisos y errores aparecen en la última
 línea, debajo del pie de teclas. El protocolo está en ADR-017; el cliente TNFS, en ADR-018.
 
+Todo se puede hacer con el cursor: las flechas (Control + `-` `=` `+` `*`) o el joystick del puerto 1 lo
+mueven, y RETURN o el botón rojo confirman lo marcado. La fila marcada sale en vídeo inverso. Las letras y los
+dígitos siguen valiendo.
+
 | Tecla | Pantalla | Qué hace |
 |-------|----------|----------|
-| `1` | principal | abre la fuente local: la lista de `.atr` de la carpeta (como máximo 20) |
-| `A`..`T` | lista | elige una imagen; después `1`..`8` elige la unidad, Esc vuelve a la lista |
+| arriba, abajo | principal | mueve el cursor por las fuentes 1 a 8; RETURN o el botón rojo la abren, como su dígito |
+| arriba, abajo | lista o carpeta | mueve una fila; en el borde pasa a la página siguiente o anterior |
+| izquierda, derecha | lista o carpeta | cambia de página (20 filas) y deja el cursor en la primera fila |
+| arriba, abajo | elegir unidad | mueve el cursor por D1 a D8; RETURN o el botón rojo eligen la marcada |
+| `1` | principal | abre la fuente local: la lista de `.atr` de la carpeta (como máximo 999, en páginas de 20) |
+| `A`..`T` | lista | elige una imagen de la página visible; después se elige la unidad (`1`..`8` o el cursor), Esc vuelve a la lista |
 | `A` | principal | arranca la imagen asignada a D1 |
 | `U` | principal | pide una unidad (`1`..`8`) y la desmonta; Esc cancela |
 | `2`..`8` | principal | abre la raíz del servidor TNFS de esa fuente, de solo lectura (`FUENTE n SIN CONFIGURAR` si no hay) |
-| `A`..`T` | carpeta TNFS | entra en una carpeta (`/`) o elige una `.ATR`; después `1`..`8` elige la unidad |
-| Esc | carpeta TNFS | vuelve a la carpeta anterior; en la raíz, a la principal; durante «CARGANDO nn%», cancela |
+| `A`..`T` | carpeta TNFS | entra en una carpeta (`/`) o elige una `.ATR` de la página visible; después se elige la unidad |
+| Esc | carpeta TNFS | vuelve a la carpeta anterior, en la página y fila desde donde se entró; en la raíz, a la principal; durante «CARGANDO nn%», cancela |
 | `E` | principal | pendiente: muestra `PENDIENTE: E NECESITA ENTRADA DE TEXTO` |
+
+Con más de 20 entradas, debajo del pie aparece `PAGINA n DE m (t)`; una carpeta guarda como máximo 999 y entonces
+muestra `(999 DE t)`. Durante «CARGANDO nn%», moverse y RETURN no hacen nada.
 
 Una imagen elegida para D1 se valida y queda asignada; D1 sigue sirviendo el menú hasta pulsar `A`. Una imagen
 elegida para D2..D8 se monta enseguida. Una ATR inválida se rechaza al elegirla, con el motivo en pantalla, y la
@@ -116,7 +127,7 @@ escritura en disco (unidades de solo lectura).
 5. Reiniciar en frío Altirra (Shift+F5). Aparece la pantalla principal. Recorrido de ejemplo: `1`, `A`, `1`
    (DEMO-DOS.ATR asignada a D1), `A` (arranca y muestra `DEMO DOS OK`), Shift+F5 (vuelve con D1 en pantalla).
 
-El log registra el catálogo (`menu_entry`), las fuentes (`menu_source`), cada elección (`menu_select`), cada cambio
+El log registra el catálogo (`menu_entry`, numerado desde 1), las fuentes (`menu_source`), cada elección (`menu_select`), cada cambio
 aplicado a una unidad (`menu_mount`), cada desmontaje (`menu_unmount`), cada arranque (`menu_boot`), las teclas
 pendientes (`menu_pending`), cada vuelta al menú (`menu_return`), cada carpeta TNFS abierta (`menu_open`), cada
 imagen traída con su SHA-256 (`menu_fetch`), cada error TNFS con su causa (`menu_tnfs`) y cada orden enviada al

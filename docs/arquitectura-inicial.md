@@ -88,7 +88,7 @@ deja el punto de extensión (§5.3), pero no se implementa ningún adaptador de 
 ### 0.3 Licencias
 
 - `LICENSE`: texto oficial completo de la **GNU GPL versión 3** para **nuestro** código (`GPL-3.0-only`). El
-  titular de los derechos está pendiente de confirmación.
+  titular del código propio figura en el aviso de copyright del [README](../README.md#license).
 - `THIRD_PARTY_NOTICES.md`, **separado**: avisos de dependencias (ESP-IDF, Apache-2.0; FatFs; Unity, MIT; y las
   que se agreguen). Cada nueva dependencia actualiza este archivo en el mismo PR.
 - Recomendación: validar con asesoría legal la redacción de ambos archivos.

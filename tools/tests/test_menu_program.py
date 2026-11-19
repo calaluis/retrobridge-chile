@@ -20,7 +20,7 @@ import make_menu  # noqa: E402
 
 REPO = TOOLS.parent
 ORG = make_menu.MENU_ORG
-STEPS_PER_FRAME = 20
+STEPS_PER_FRAME = 200  # instructions per frame; a real frame runs thousands, the wait loop needs more than 20 (menu-navegacion)
 
 
 class Halt(Exception):
@@ -50,11 +50,20 @@ class Menu6502:
         self.wait_key = None
         self.wait_ch_reads = 0
         self.ticks_waited = 0  # frames counted by the wait loop (visits of its "tick" label)
+        # Joystick of port 1 (menu-navegacion): joy(frame) -> (STICK0, STRIG0); None = centred, no fire.
+        # While frame < joy_until the idle key wait does not stop the run.
+        self.joy = None
+        self.joy_until = 0
+        self.frames = 0
+        self.sp = 0xFF
 
     def word(self, at):
         return self.mem[at] | (self.mem[at + 1] << 8)
 
     def read(self, at):
+        if at in (make_menu.STICK0, make_menu.STRIG0):
+            stick, trig = self.joy(self.frames) if self.joy is not None else (0x0F, 1)
+            return stick if at == make_menu.STICK0 else trig
         if at == make_menu.CH and self.pc == self.labels.get("wait_ch"):
             self.wait_ch_reads += 1
             if self.wait_key is not None and self.wait_ch_reads == self.wait_key[0]:
@@ -63,6 +72,8 @@ class Menu6502:
         if at == make_menu.CH and self.mem[at] == 0xFF:
             if self.keys:
                 self.mem[at] = self.keys.pop(0)
+            elif self.frames < self.joy_until:
+                pass
             else:
                 self.idle_key_reads += 1
                 if self.idle_key_reads > 3:
@@ -82,6 +93,7 @@ class Menu6502:
         for step in range(max_steps):
             if step % STEPS_PER_FRAME == STEPS_PER_FRAME - 1:
                 self.mem[make_menu.RTCLOK_LOW] = (self.mem[make_menu.RTCLOK_LOW] + 1) & 0xFF
+                self.frames += 1
             self.pc = pc
             if pc == self.labels.get("tick"):
                 self.ticks_waited += 1
@@ -156,6 +168,25 @@ class Menu6502:
                 pc = ab
             elif op == 0x20 and ab == make_menu.SIOV:
                 self.siov_call(); pc += 3
+            elif op == 0x20:
+                ret = pc + 2
+                self.mem[0x100 + self.sp] = ret >> 8; self.sp = (self.sp - 1) & 0xFF
+                self.mem[0x100 + self.sp] = ret & 0xFF; self.sp = (self.sp - 1) & 0xFF
+                pc = ab
+            elif op == 0x60:
+                self.sp = (self.sp + 1) & 0xFF; low = self.mem[0x100 + self.sp]
+                self.sp = (self.sp + 1) & 0xFF; high = self.mem[0x100 + self.sp]
+                pc = ((high << 8) | low) + 1
+            elif op == 0xCE:
+                self.mem[ab] = (self.mem[ab] - 1) & 0xFF; self.flags(self.mem[ab]); pc += 3
+            elif op == 0x18:
+                self.c = False; pc += 1
+            elif op == 0xCC:
+                self.compare(self.y, self.read(ab)); pc += 3
+            elif op == 0xCD:
+                self.compare(self.a, self.read(ab)); pc += 3
+            elif op == 0xB9:
+                self.a = self.read(ab + self.y); self.flags(self.a); pc += 3
             else:
                 raise AssertionError(f"opcode {op:02x} at {pc:04x} not expected in the menu program")
         raise AssertionError("menu program did not finish")
@@ -169,6 +200,7 @@ class Menu6502:
         dcb["buffer"] = self.word(make_menu.DBUFLO)
         dcb["rtclok"] = m[make_menu.RTCLOK_LOW]
         dcb["ticks_waited"] = self.ticks_waited
+        dcb["frames"] = self.frames
         dcb["length"] = self.word(make_menu.DBYTLO)
         self.siov_calls.append(dcb)
         reply = self.siov(dcb)
@@ -379,6 +411,91 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(cpu.screen()[message:message + 40], make_menu.screen_line(make_menu.NO_HOST_TEXT))
         self.assertEqual(cpu.screen()[message - 1], 0x21)  # nothing else was overwritten
         self.assertEqual(cpu.screen()[message + 40], 0x21)
+
+    # --- menu-navegacion (N001): arrows, joystick of port 1, fire ---
+
+    def test_control_arrows_are_sent_as_navigation_codes(self):
+        # Control + - = + * (arrows), plain =, and Control+Shift+= (still down).
+        keys = [0x8E, 0x8F, 0x86, 0x87, 0x0F, 0xCF, 0x0C]
+        cpu = Menu6502(self.block, keys, lambda dcb: host_reply(0, 0))
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        nav = make_menu.NAV_UP, make_menu.NAV_DOWN, make_menu.NAV_LEFT, make_menu.NAV_RIGHT
+        self.assertEqual([c["aux1"] for c in cpu.siov_calls],
+                         [0xFF, nav[0], nav[1], nav[2], nav[3], 0x0F, nav[1], 0x0C])
+        self.assertEqual(cpu.mem[make_menu.CH], 0xFF)
+
+    def test_navigation_codes_stay_clear_of_keys_poll_and_redraw(self):
+        codes = [make_menu.NAV_UP, make_menu.NAV_DOWN, make_menu.NAV_LEFT, make_menu.NAV_RIGHT,
+                 make_menu.NAV_FIRE]
+        self.assertEqual(codes, [0x40, 0x41, 0x42, 0x43, 0x44])
+        for code in codes:
+            self.assertGreater(code, make_menu.KEY_MASK)
+            self.assertNotIn(code, (make_menu.POLL, make_menu.NO_KEY))
+
+    def joystick_sends(self, joy, until, action=0, rtclok=0, slow=None):
+        replies = [host_reply(action, 1)] + [host_reply(0, 1)] * 200
+        cpu = None
+
+        def siov(dcb):
+            # slow = (n, frames): the n-th call (1-based, after the first draw) takes that long.
+            if slow is not None and len(cpu.siov_calls) == slow[0] + 1:
+                cpu.frames += slow[1]
+                cpu.mem[make_menu.RTCLOK_LOW] = (cpu.mem[make_menu.RTCLOK_LOW] + slow[1]) & 0xFF
+            return replies.pop(0)
+
+        cpu = Menu6502(self.block, [], siov)
+        cpu.mem[make_menu.RTCLOK_LOW] = rtclok
+        cpu.joy, cpu.joy_until = joy, until
+        try:
+            cpu.run(max_steps=until * STEPS_PER_FRAME + 20000)
+        except Halt:
+            pass
+        except AssertionError as error:
+            if "did not finish" not in str(error):
+                raise
+        return [(c["aux1"], c["frames"]) for c in cpu.siov_calls[1:]]
+
+    def test_a_held_direction_repeats_after_30_frames_then_every_9(self):
+        # RTCLOK starts at 240, so the count crosses its wrap to 0.
+        down = lambda frame: (13, 1) if frame < 70 else (15, 1)  # noqa: E731
+        sends = self.joystick_sends(down, 90, rtclok=240)
+        self.assertEqual([code for code, _ in sends], [make_menu.NAV_DOWN] * 6)
+        frames = [frame for _, frame in sends]
+        self.assertEqual([b - a for a, b in zip(frames, frames[1:])], [30, 9, 9, 9, 9])
+
+    def test_a_slow_answer_only_pauses_the_repeat(self):
+        # The third send waits 200 frames inside SIOV (more than 127): the repeat resumes
+        # 8 frames after the answer (the jump counts as one frame seen), not 2 s later.
+        down = lambda frame: (13, 1) if frame < 300 else (15, 1)  # noqa: E731
+        sends = self.joystick_sends(down, 320, slow=(3, 200))
+        frames = [frame for _, frame in sends]
+        self.assertEqual(frames[3] - frames[2], 200 + 8)
+        self.assertEqual(frames[4] - frames[3], 9)
+
+    def test_a_new_direction_is_sent_at_once_and_restarts_the_delay(self):
+        joy = lambda f: (14, 1) if f < 10 else (15, 1) if f < 12 else (7, 1) if f < 20 else (15, 1)  # noqa: E731
+        sends = self.joystick_sends(joy, 40)
+        self.assertEqual([code for code, _ in sends], [make_menu.NAV_UP, make_menu.NAV_RIGHT])
+
+    def test_left_is_sent_as_its_code_and_a_diagonal_is_ignored(self):
+        joy = lambda f: (11, 1) if f < 5 else (10, 1) if f < 60 else (15, 1)  # noqa: E731
+        sends = self.joystick_sends(joy, 70)
+        self.assertEqual([code for code, _ in sends], [make_menu.NAV_LEFT])
+
+    def test_fire_held_for_120_frames_confirms_once_per_press(self):
+        joy = lambda f: (15, 0) if 5 <= f < 125 else (15, 0) if 140 <= f < 150 else (15, 1)  # noqa: E731
+        sends = self.joystick_sends(joy, 170)
+        self.assertEqual([code for code, _ in sends], [make_menu.NAV_FIRE, make_menu.NAV_FIRE])
+
+    def test_fire_held_while_the_menu_starts_is_not_a_confirmation(self):
+        joy = lambda f: (15, 0) if f < 50 else (15, 1)  # noqa: E731
+        self.assertEqual(self.joystick_sends(joy, 70), [])
+
+    def test_the_joystick_during_the_wait_is_sent_instead_of_the_poll(self):
+        joy = lambda f: (13, 1) if 3 <= f < 6 else (15, 1)  # noqa: E731
+        sends = self.joystick_sends(joy, 10, action=2)
+        self.assertEqual(sends[0][0], make_menu.NAV_DOWN)
+        self.assertLess(sends[0][1], 15)  # before the 15-frame poll
 
     def test_committed_include_matches_the_generator(self):
         include = REPO / "host" / "src" / "menu_program.inc"

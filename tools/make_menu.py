@@ -49,6 +49,14 @@ NO_KEY = 0xFF                # AUX1 when no key was pressed: just draw
 POLL = 0xFE                  # AUX1 after action 2: no key, how is the job going?
 KEY_MASK = 0x3F              # a key is sent without the Shift and Control bits
 WAIT_TICKS = 15              # action 2: frames (RTCLOK) to watch CH before polling
+# Navigation codes (menu-navegacion): above KEY_MASK, so no real key can produce them, and
+# apart from POLL and NO_KEY. Arrows are Control + - = + *; the joystick is port 1.
+NAV_UP, NAV_DOWN, NAV_LEFT, NAV_RIGHT, NAV_FIRE = 0x40, 0x41, 0x42, 0x43, 0x44
+CONTROL = 0x80               # CH bit of the Control key
+ARROW_UP, ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT = 0x0E, 0x0F, 0x06, 0x07  # codes of - = + *
+REPEAT_FIRST = 30            # frames a held direction waits before it repeats
+REPEAT_NEXT = 9              # frames between repeats after that
+STICK_CENTRED = 0x0F
 MENU_TIMEOUT_S = 7           # DTIMLO: seconds the OS waits for the device
 LINE_WIDTH = 40
 TITLE_WIDTH = 20             # ANTIC modes 6 and 7: 20 characters per line
@@ -90,6 +98,8 @@ KEY_LEFT, KEY_RIGHT = 0x42, 0x56
 
 # OS addresses (Atari 400/800/XL OS, documented entry points).
 CH = 0x02FC                  # last key code, 0xFF when none
+STICK0 = 0x0278              # joystick 0 (VBI shadow): 14 up, 13 down, 11 left, 7 right, 15 none
+STRIG0 = 0x0284              # trigger of joystick 0 (VBI shadow): 0 pressed
 DDEVIC, DUNIT, DCOMND, DSTATS = 0x0300, 0x0301, 0x0302, 0x0303
 DBUFLO, DBUFHI, DTIMLO = 0x0304, 0x0305, 0x0306
 DBYTLO, DBYTHI, DAUX1, DAUX2 = 0x0308, 0x0309, 0x030A, 0x030B
@@ -165,6 +175,8 @@ def menu_program():
         *store(CHACTL_VALUE, CHACT),
         b"\xA9", ("lo", "dl_main"), abs_op(0x8D, SDLSTL),  # both display lists share this page
         b"\xA9", ("hi", "dl_main"), abs_op(0x8D, SDLSTL + 1),
+        b"\xA9\x01", b"\x8D", ("abs", "fire_down"),  # a trigger already held at start is not a press
+        b"\xA9", bytes([STICK_CENTRED]), b"\x8D", ("abs", "stick_prev"),
         *store(NO_KEY, CH),                           # forget any key pressed during boot; A = NO_KEY
         ("label", "send"),                            # A = key code (NO_KEY: just draw)
         abs_op(0x8D, DAUX1),                          # STA DAUX1
@@ -196,10 +208,15 @@ def menu_program():
         bytes([0xA2, WAIT_TICKS]),                    # LDX #WAIT_TICKS
         ("label", "tick"),
         bytes([0xA5, RTCLOK_LOW]),                    # LDA RTCLOK
+        b"\x8D", ("abs", "frame"),                    # STA frame
         ("label", "wait_ch"),
         abs_op(0xAC, CH),                             # LDY CH
         b"\xC0\xFF",                                  # CPY #$FF
         b"\xD0", ("rel", "waitkey"),                  # BNE waitkey (a key: send it now)
+        b"\x20", ("abs", "joy"),                      # JSR joy (keeps X)
+        b"\xC9\xFF",                                  # CMP #$FF
+        b"\xD0", ("rel", "send_nav"),                 # BNE send_nav (joystick: send it now)
+        b"\xAD", ("abs", "frame"),                    # LDA frame
         bytes([0xC5, RTCLOK_LOW]),                    # CMP RTCLOK
         b"\xF0", ("rel", "wait_ch"),                  # BEQ wait_ch (same frame)
         b"\xCA",                                      # DEX
@@ -209,14 +226,33 @@ def menu_program():
         ("label", "waitkey"),
         b"\x98",                                      # TYA (the key)
         ("label", "got"),                             # A = CH, not $FF
+        b"\xA8",                                      # TAY (keep CH)
         bytes([0x29, KEY_MASK]),                      # AND #KEY_MASK (no Shift, no Control)
+        bytes([0xC0, CONTROL]),                       # CPY #$80
+        b"\x90", ("rel", "masked"),                   # BCC masked (no Control: a plain key)
+        bytes([0xC9, ARROW_UP]), b"\xD0", ("rel", "arrow_down"),
+        bytes([0xA9, NAV_UP]), b"\xD0", ("rel", "masked"),
+        ("label", "arrow_down"),
+        bytes([0xC9, ARROW_DOWN]), b"\xD0", ("rel", "arrow_left"),
+        bytes([0xA9, NAV_DOWN]), b"\xD0", ("rel", "masked"),
+        ("label", "arrow_left"),
+        bytes([0xC9, ARROW_LEFT]), b"\xD0", ("rel", "arrow_right"),
+        bytes([0xA9, NAV_LEFT]), b"\xD0", ("rel", "masked"),
+        ("label", "arrow_right"),
+        bytes([0xC9, ARROW_RIGHT]), b"\xD0", ("rel", "masked"),
+        bytes([0xA9, NAV_RIGHT]),
+        ("label", "masked"),
         b"\xA2\xFF", abs_op(0x8E, CH),                # LDX #$FF / STX CH (consume the key)
-        b"\xD0", ("rel", "send"),                     # BNE send (always: LDX set Z = 0)
+        b"\xD0", ("rel", "send_nav"),                 # BNE send_nav (always: LDX set Z = 0)
         ("label", "key"),
         abs_op(0xAD, CH),                             # LDA CH
         b"\xC9\xFF",                                  # CMP #$FF
-        b"\xF0", ("rel", "key"),                      # BEQ key
-        b"\xD0", ("rel", "got"),                      # BNE got
+        b"\xD0", ("rel", "got"),                      # BNE got (a key)
+        b"\x20", ("abs", "joy"),                      # JSR joy
+        b"\xC9\xFF",                                  # CMP #$FF
+        b"\xF0", ("rel", "key"),                      # BEQ key (nothing from the joystick)
+        ("label", "send_nav"),
+        b"\x4C", ("abs", "send"),                     # JMP send (A = code)
         ("label", "boot"),
         abs_op(0x4C, COLDSV),                         # JMP COLDSV: boot what the host put on D1
         ("label", "nohost"),
@@ -230,6 +266,55 @@ def menu_program():
         b"\x4C", ("abs", "key"),                      # JMP key
         ("label", "init"),
         b"\x60",                                      # RTS (DOSINI)
+        # joy: A = the code the joystick asks to send now, or $FF. Keeps X.
+        ("label", "joy"),
+        abs_op(0xAD, STRIG0),                         # LDA STRIG0 (0: pressed)
+        b"\xD0", ("rel", "joy_up"),                   # BNE joy_up
+        b"\xAD", ("abs", "fire_down"),                # LDA fire_down
+        b"\xD0", ("rel", "joy_stick"),                # BNE joy_stick (held: no repeat)
+        b"\xEE", ("abs", "fire_down"),                # INC fire_down
+        bytes([0xA9, NAV_FIRE]), b"\x60",             # LDA #NAV_FIRE / RTS
+        ("label", "joy_up"),
+        b"\xA9\x00", b"\x8D", ("abs", "fire_down"),  # released: the next press counts
+        ("label", "joy_stick"),
+        abs_op(0xAD, STICK0),                         # LDA STICK0
+        b"\x29\x0F", b"\xA8",                         # AND #$0F / TAY
+        b"\xB9", ("abs", "dirtab"),                   # LDA dirtab,Y
+        b"\xC9\xFF",                                  # CMP #$FF
+        b"\xF0", ("rel", "joy_reset"),                # BEQ joy_reset (centred or diagonal)
+        b"\xCC", ("abs", "stick_prev"),               # CPY stick_prev
+        b"\xD0", ("rel", "joy_new"),                  # BNE joy_new (a new direction: at once)
+        # Held: count down once per frame seen here. Frames spent inside SIOV are not seen,
+        # so a slow answer only pauses the count (no RTCLOK arithmetic that could wrap).
+        bytes([0xA5, RTCLOK_LOW]),                    # LDA RTCLOK
+        b"\xCD", ("abs", "joy_frame"),                # CMP joy_frame
+        b"\xF0", ("rel", "joy_none"),                 # BEQ joy_none (same frame)
+        b"\x8D", ("abs", "joy_frame"),                # STA joy_frame
+        b"\xCE", ("abs", "countdown"),                # DEC countdown
+        b"\xD0", ("rel", "joy_none"),                 # BNE joy_none (not time yet)
+        bytes([0xA9, REPEAT_NEXT]),                   # LDA #REPEAT_NEXT
+        b"\xD0", ("rel", "joy_send"),                 # BNE joy_send (always)
+        ("label", "joy_new"),
+        b"\x8C", ("abs", "stick_prev"),               # STY stick_prev
+        bytes([0xA5, RTCLOK_LOW]),                    # LDA RTCLOK
+        b"\x8D", ("abs", "joy_frame"),                # STA joy_frame
+        bytes([0xA9, REPEAT_FIRST]),                  # LDA #REPEAT_FIRST
+        ("label", "joy_send"),
+        b"\x8D", ("abs", "countdown"),                # STA countdown
+        b"\xB9", ("abs", "dirtab"),                   # LDA dirtab,Y
+        b"\x60",                                      # RTS
+        ("label", "joy_reset"),
+        b"\x8C", ("abs", "stick_prev"),               # STY stick_prev
+        ("label", "joy_none"),
+        b"\xA9\xFF", b"\x60",                         # LDA #$FF / RTS
+        # STICK0 -> code: 14 up, 13 down, 11 left, 7 right; anything else $FF.
+        ("label", "dirtab"),
+        bytes([0xFF] * 7 + [NAV_RIGHT] + [0xFF] * 3 + [NAV_LEFT, 0xFF, NAV_DOWN, NAV_UP, 0xFF]),
+        ("label", "fire_down"), b"\x00",
+        ("label", "stick_prev"), bytes([STICK_CENTRED]),
+        ("label", "countdown"), b"\x00",
+        ("label", "joy_frame"), b"\x00",
+        ("label", "frame"), b"\x00",
         ("label", "dltab"), ("lo", "dl_main"), ("lo", "dl_list"),
         ("pad", "dl_main"),                           # padding so both display lists share a page
         # Main display list, as the reference: 8 blank, title (mode 7), 8 blank, 8 sources,
@@ -311,6 +396,8 @@ def render_include(block: bytes, labels: dict) -> str:
         "kMenuLoadSectors": block[1], "kMenuLineWidth": LINE_WIDTH, "kMenuTitleWidth": TITLE_WIDTH,
         "kMenuScreenSize": SCREEN_SIZE, "kMenuReplySize": REPLY_SIZE, "kMenuNoKey": NO_KEY,
         "kMenuPollKey": POLL, "kMenuKeyMask": KEY_MASK,
+        "kMenuNavUp": NAV_UP, "kMenuNavDown": NAV_DOWN, "kMenuNavLeft": NAV_LEFT,
+        "kMenuNavRight": NAV_RIGHT, "kMenuNavFire": NAV_FIRE,
         "kMenuActionShow": ACTION_SHOW, "kMenuActionBoot": ACTION_BOOT, "kMenuActionWait": ACTION_WAIT,
         "kMenuLayoutMain": LAYOUT_MAIN, "kMenuLayoutList": LAYOUT_LIST,
         "kMainTitle": MAIN_TITLE, "kMainSources": MAIN_SOURCES, "kMainDrives": MAIN_DRIVES,

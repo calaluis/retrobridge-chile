@@ -324,7 +324,11 @@ void test_source_1_lists_the_folder_and_esc_goes_back()
     const MenuReply list = rig.keys({K1});
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutList, list.layout());
     TEST_ASSERT_EQUAL_UINT8_ARRAY(line(" FUENTE 1: SD").data(), list.screen() + rb::host::kListTitle, 20);
-    assert_line(list, rb::host::kListEntries, line(" A  DEMO-DOS.ATR"));
+    std::array<uint8_t, 40> marked = line(" A  DEMO-DOS.ATR");  // the cursor (menu-navegacion)
+    for (uint8_t& b : marked) {
+        b = static_cast<uint8_t>(b | 0x80);
+    }
+    assert_line(list, rb::host::kListEntries, marked);
     assert_line(list, rb::host::kListEntries + 40, line(" B  DEMO-UNO.ATR"));
     assert_line(list, rb::host::kListEntries + 80, line(" C  ROTA.ATR"));
     assert_line(list, rb::host::kListEntries + 120, line(""));

@@ -212,6 +212,16 @@ target_compile_definitions(test_menu_tnfs PRIVATE RB_TEST_MENU_DIR="${rb_menu_im
 target_link_libraries(test_menu_tnfs PRIVATE rb_net_tnfs Threads::Threads)
 set_tests_properties(test_menu_tnfs PROPERTIES FIXTURES_REQUIRED menu_images)
 
+# Cursor and pages in the lists (menu-navegacion N003), on the rig of test_menu_tnfs.
+rb_add_host_test(test_menu_navegacion menu/test_menu_navegacion.cpp ${rb_root}/host/src/menu_controller.cpp
+                 ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
+                 ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp
+                 ${rb_root}/host/src/tnfs_folder.cpp ${rb_root}/host/src/sha256.cpp)
+target_include_directories(test_menu_navegacion PRIVATE ${rb_root}/host/src)
+target_compile_definitions(test_menu_navegacion PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
+target_link_libraries(test_menu_navegacion PRIVATE rb_net_tnfs Threads::Threads)
+set_tests_properties(test_menu_navegacion PROPERTIES FIXTURES_REQUIRED menu_images)
+
 # What main.cpp wires for TNFS: request trace, UDP link, shared JSONL log (menu-tnfs T013).
 rb_add_host_test(test_tnfs_link menu/test_tnfs_link.cpp ${rb_root}/host/src/tnfs_link.cpp
                  ${rb_root}/host/src/udp_tnfs_port.cpp ${rb_root}/host/src/udp_datagram_port.cpp

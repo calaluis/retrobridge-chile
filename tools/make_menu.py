@@ -134,7 +134,9 @@ def main_footer() -> bytes:
 
 
 def list_footer() -> bytes:
-    row = footer_key("A-T", " ELEGIR IMAGEN  ") + footer_key("ESC", " VOLVER")
+    # menu-navegacion: RETURN confirms the marked row; left and right change the page.
+    row = (footer_key("A-T", " ELEGIR") + footer_key("RET", " OK") + footer_key("<>", " PAG")
+           + footer_key("ESC", " VOLVER"))
     return row + bytes(LINE_WIDTH - len(row))
 
 

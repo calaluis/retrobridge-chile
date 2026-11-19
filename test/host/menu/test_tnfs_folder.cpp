@@ -73,7 +73,7 @@ std::vector<TnfsListing> images(int count)
 std::string notice(const TnfsFolder& folder)
 {
     char out[TnfsFolder::kNoticeSize];
-    folder.notice(out);
+    folder.notice(0, out);
     return out;
 }
 
@@ -95,7 +95,7 @@ static void test_129_entries_keep_128(void)
     const TnfsFolder folder = TnfsFolder::build("/Atari_Chile/ATR", std::move(listed));
     TEST_ASSERT_EQUAL_size_t(128, folder.total());
     TEST_ASSERT_EQUAL_size_t(128, folder.count());
-    TEST_ASSERT_EQUAL_STRING("MOSTRANDO 20 DE 128", notice(folder).c_str());
+    TEST_ASSERT_EQUAL_STRING("PAGINA 1 DE 7 (128)", notice(folder).c_str());
     for (std::size_t i = 0; i < 128; ++i) {
         std::snprintf(name, sizeof name, "GAME%03u.ATR", static_cast<unsigned>(i));
         TEST_ASSERT_EQUAL_STRING(name, folder.entry(i).display);
@@ -126,7 +126,7 @@ static void test_1200_entries_keep_the_first_999_and_the_total(void)
     TEST_ASSERT_EQUAL_STRING("G0128.ATR", folder.entry(128).display);
     TEST_ASSERT_EQUAL_STRING("G0998.ATR", folder.entry(998).display);
     TEST_ASSERT_EQUAL_STRING("/G0998.ATR", pathOf(folder, 998).c_str());
-    TEST_ASSERT_EQUAL_STRING("MOSTRANDO 20 DE 1200", notice(folder).c_str());
+    TEST_ASSERT_EQUAL_STRING("PAGINA 1 DE 50 (999 DE 1200)", notice(folder).c_str());
 }
 
 // The loader hands a listing over by exchanging the storage (plan §8 point 3): the
@@ -169,6 +169,22 @@ static void test_without_memory_the_folder_is_not_ready_and_keeps_nothing(void)
     TEST_ASSERT_EQUAL_size_t(0, folder.count());
     TEST_ASSERT_EQUAL_STRING("CARPETA VACIA", notice(folder).c_str());
     folder.clear();  // no block: nothing to forget, no crash
+}
+
+// menu-navegacion N003: 20 entries need no page line; 21, 40 and 41 count pages right.
+static void test_page_line_at_the_edges_of_a_page(void)
+{
+    char out[TnfsFolder::kNoticeSize];
+    rb::host::pageLine(20, 20, 0, out);
+    TEST_ASSERT_EQUAL_STRING("", out);
+    rb::host::pageLine(21, 21, 0, out);
+    TEST_ASSERT_EQUAL_STRING("PAGINA 1 DE 2 (21)", out);
+    rb::host::pageLine(40, 40, 1, out);
+    TEST_ASSERT_EQUAL_STRING("PAGINA 2 DE 2 (40)", out);
+    rb::host::pageLine(41, 41, 2, out);
+    TEST_ASSERT_EQUAL_STRING("PAGINA 3 DE 3 (41)", out);
+    rb::host::pageLine(999, 1200, 49, out);
+    TEST_ASSERT_EQUAL_STRING("PAGINA 50 DE 50 (999 DE 1200)", out);
 }
 
 static void test_folders_first_marked_with_a_slash_then_images_without_case(void)
@@ -285,6 +301,7 @@ int main(void)
     RUN_TEST(test_swap_exchanges_the_storage_without_allocating_or_walking_it);
     RUN_TEST(test_a_path_longer_than_tnfs_allows_is_not_kept);
     RUN_TEST(test_without_memory_the_folder_is_not_ready_and_keeps_nothing);
+    RUN_TEST(test_page_line_at_the_edges_of_a_page);
     RUN_TEST(test_folders_first_marked_with_a_slash_then_images_without_case);
     RUN_TEST(test_a_folder_is_kept_whatever_its_name);
     RUN_TEST(test_no_entry_starting_with_a_dot);

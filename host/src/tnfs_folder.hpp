@@ -72,9 +72,9 @@ public:
     // The path of entry index (< count()) into out, NUL-terminated; returns its length.
     std::size_t path(std::size_t index, char (&out)[kMaxPath + 1]) const noexcept;
 
-    // The message under the key footer: "CARPETA VACIA" with no entry,
-    // "MOSTRANDO 20 DE <total>" when more than kPageRows were kept, "" otherwise.
-    void notice(char (&out)[kNoticeSize]) const noexcept;
+    // The message under the key footer for page `page` (0-based): "CARPETA VACIA"
+    // with no entry, else pageLine(count(), total(), page).
+    void notice(std::size_t page, char (&out)[kNoticeSize]) const noexcept;
 
     // Exchanges the blocks: no allocation, no entry visited (T011: the loader
     // hands a listing to the menu thread this way).
@@ -90,6 +90,11 @@ private:
     };
     Storage* storage_ = nullptr;
 };
+
+// The page line under the key footer (menu-navegacion): "" with at most kPageRows
+// entries; else "PAGINA n DE m (t)", or "PAGINA n DE m (k DE t)" when only the
+// first k of t were kept. page is 0-based; m counts the kept entries.
+void pageLine(std::size_t kept, std::size_t total, std::size_t page, char (&out)[TnfsFolder::kNoticeSize]) noexcept;
 
 // The display form of `length` bytes of text: at most `width` characters into
 // out (which holds width + 1), NUL-terminated. Returns the characters written.

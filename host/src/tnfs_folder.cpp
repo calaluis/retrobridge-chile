@@ -195,15 +195,28 @@ std::size_t TnfsFolder::path(std::size_t index, char (&out)[kMaxPath + 1]) const
     return length;
 }
 
-void TnfsFolder::notice(char (&out)[kNoticeSize]) const noexcept
+void TnfsFolder::notice(std::size_t page, char (&out)[kNoticeSize]) const noexcept
 {
     if (total() == 0) {
         std::snprintf(out, sizeof out, "CARPETA VACIA");
-    } else if (total() > kPageRows) {
-        std::snprintf(out, sizeof out, "MOSTRANDO %llu DE %llu", static_cast<unsigned long long>(kPageRows),
-                      static_cast<unsigned long long>(total()));
     } else {
+        pageLine(count(), total(), page, out);
+    }
+}
+
+void pageLine(std::size_t kept, std::size_t total, std::size_t page, char (&out)[TnfsFolder::kNoticeSize]) noexcept
+{
+    if (total <= TnfsFolder::kPageRows) {
         out[0] = '\0';
+        return;
+    }
+    const auto n = static_cast<unsigned long long>(page + 1);
+    const auto m = static_cast<unsigned long long>((kept + TnfsFolder::kPageRows - 1) / TnfsFolder::kPageRows);
+    if (kept == total) {
+        std::snprintf(out, sizeof out, "PAGINA %llu DE %llu (%llu)", n, m, static_cast<unsigned long long>(total));
+    } else {
+        std::snprintf(out, sizeof out, "PAGINA %llu DE %llu (%llu DE %llu)", n, m,
+                      static_cast<unsigned long long>(kept), static_cast<unsigned long long>(total));
     }
 }
 

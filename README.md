@@ -3,7 +3,7 @@ Independent firmware for Atari retro systems, initially supporting Atari XL/XE, 
 
 ## Licencia
 
-Copyright © 2026 Luis Rodrigo Carrasco Lagos.
+Copyright © 2026 @calaluis.
 
 El código fuente y el firmware propios de RetroBridge Chile se ofrecen bajo la [licencia de uso personal](LICENSE). Para autorizaciones comerciales, contacta a [@calaluis](https://github.com/calaluis).
 

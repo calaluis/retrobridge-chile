@@ -271,6 +271,81 @@ void test_two_threads_write_whole_lines_to_the_log()
     TEST_ASSERT_EQUAL(600, count);
 }
 
+// Decodes the "detail" string of one JSONL line: \" \ and \uXXXX (as UTF-8).
+std::string decodedDetail(const char* line)
+{
+    const char* p = std::strstr(line, "\"detail\":\"");
+    TEST_ASSERT_NOT_NULL(p);
+    p += 10;
+    std::string out;
+    while (*p != '"') {
+        TEST_ASSERT_NOT_EQUAL('\0', *p);
+        if (*p != '\\') {
+            out += *p++;
+            continue;
+        }
+        ++p;
+        if (*p != 'u') {
+            out += *p++;
+            continue;
+        }
+        const unsigned code = static_cast<unsigned>(std::strtoul(std::string(p + 1, 4).c_str(), nullptr, 16));
+        p += 5;
+        if (code < 0x80) {
+            out += static_cast<char>(code);
+        } else {
+            out += static_cast<char>(0xC0 | (code >> 6));
+            out += static_cast<char>(0x80 | (code & 0x3F));
+        }
+    }
+    return out;
+}
+
+std::string loggedDetail(const char* detail)
+{
+    std::FILE* file = std::tmpfile();
+    TEST_ASSERT_NOT_NULL(file);
+    FakeClock clock;
+    rb::host::JsonlLog log{file, clock};
+    log.event("e", detail);
+    std::rewind(file);
+    char line[1024];
+    TEST_ASSERT_NOT_NULL(std::fgets(line, sizeof line, file));
+    std::fclose(file);
+    return decodedDetail(line);
+}
+
+// Review of PR #44: TNFS names are UTF-8 and must read back unchanged.
+void test_utf8_names_read_back_unchanged_from_the_log()
+{
+    const char* path = "source=2 path=/Informaci\xC3\xB3n/Ni\xC3\xB1o \xE2\x82\xAC \xF0\x9F\x8E\xAE.atr \"q\" \\";
+    TEST_ASSERT_EQUAL_STRING(path, loggedDetail(path).c_str());
+}
+
+// Bytes that are not UTF-8 (an ANSI file name, a cut or overlong sequence, a
+// surrogate) still go out as Latin-1 escapes, so the line stays valid UTF-8.
+void test_bytes_that_are_not_utf8_are_escaped_as_latin1()
+{
+    TEST_ASSERT_EQUAL_STRING("caf\xC3\xA9", loggedDetail("caf\xE9").c_str());
+    TEST_ASSERT_EQUAL_STRING("a\xC3\x83", loggedDetail("a\xC3").c_str());
+    TEST_ASSERT_EQUAL_STRING("\xC3\x80\xC2\xAF", loggedDetail("\xC0\xAF").c_str());
+    TEST_ASSERT_EQUAL_STRING("\xC3\xAD\xC2\xA0\xC2\x80", loggedDetail("\xED\xA0\x80").c_str());
+    TEST_ASSERT_EQUAL_STRING("\xC3\xA2\xC2\x82x", loggedDetail("\xE2\x82x").c_str());
+    // Edges of the table: C1, E0 9F, F0 8F, F4 90 and a bad fourth byte.
+    TEST_ASSERT_EQUAL_STRING("\xC3\x81\xC2\x81", loggedDetail("\xC1\x81").c_str());
+    TEST_ASSERT_EQUAL_STRING("\xC3\xA0\xC2\x9F\xC2\x80", loggedDetail("\xE0\x9F\x80").c_str());
+    TEST_ASSERT_EQUAL_STRING("\xC3\xB0\xC2\x8F\xC2\x80\xC2\x80", loggedDetail("\xF0\x8F\x80\x80").c_str());
+    TEST_ASSERT_EQUAL_STRING("\xC3\xB4\xC2\x90\xC2\x80\xC2\x80", loggedDetail("\xF4\x90\x80\x80").c_str());
+    TEST_ASSERT_EQUAL_STRING("\xC3\xB0\xC2\x9F\xC2\x8E" "x", loggedDetail("\xF0\x9F\x8E" "x").c_str());
+}
+
+// The other side of those edges is well formed and goes out as it is.
+void test_utf8_at_the_table_edges_reads_back_unchanged()
+{
+    const char* edges = "\xC2\x80 \xDF\xBF \xE0\xA0\x80 \xED\x9F\xBF \xEE\x80\x80 \xF0\x90\x80\x80 \xF4\x8F\xBF\xBF";
+    TEST_ASSERT_EQUAL_STRING(edges, loggedDetail(edges).c_str());
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -278,5 +353,8 @@ int main()
     RUN_TEST(test_the_trace_logs_every_request_of_a_listing_and_a_fetch);
     RUN_TEST(test_a_name_that_does_not_resolve_is_logged_and_shown);
     RUN_TEST(test_two_threads_write_whole_lines_to_the_log);
+    RUN_TEST(test_utf8_names_read_back_unchanged_from_the_log);
+    RUN_TEST(test_bytes_that_are_not_utf8_are_escaped_as_latin1);
+    RUN_TEST(test_utf8_at_the_table_edges_reads_back_unchanged);
     return UNITY_END();
 }

@@ -25,10 +25,17 @@ Alcance: [Issue #40](https://github.com/calaluis/retrobridge-chile/issues/40).
 
 ## Fuentes TNFS de solo lectura (menu-tnfs, Issue #41)
 
-Plan: `wiki/sdd/plans/menu-tnfs.md`. M41-1 a M41-7 los escribe T014; estas filas son las decisiones tomadas al implementar.
+Plan: `wiki/sdd/plans/menu-tnfs.md`. M41-1 a M41-7 vienen del plan; M41-8 en adelante son las decisiones tomadas al implementar. ADR: [ADR-018](../../../docs/adr/0018-cliente-tnfs-de-solo-lectura.md) y [ADR-017, enmienda 2](../../../docs/adr/0017-menu-de-arranque.md).
 
 | # | Fecha | Decisión | Tarea | Procedencia |
 |---|---|---|---|---|
+| M41-1 | 2026-11-18 | La red TNFS corre en un hilo de carga; `key()` contesta en 250 ms como máximo y, si el trabajo no terminó, contesta con la acción 2 «esperar». | T011, T012 | Plan `menu-tnfs`, aprobado con la spec. ADR-018, decisión 2; ADR-017, enmienda 2, punto 1. |
+| M41-2 | 2026-11-18 | Una imagen TNFS se trae entera a un hueco de memoria (`*tnfs*0` a `*tnfs*8`) antes de validarla. `ImageLocation`, `rb_application` y `rb_domain` no cambian. | T009, T011 | Plan `menu-tnfs`, aprobado con la spec. ADR-018, decisión 3. |
+| M41-3 | 2026-11-18 | El 6502 normaliza cada tecla con `AND #$3F` antes de enviarla. Las teclas reales van de $00 a $3F; el sondeo es $FE y el redibujo $FF, fuera de ese rango. El sondeo lleva un AUX2 nuevo, así que M40-2 sigue igual. | T006 | Pedido del responsable: los seis bits bajos de $FE coinciden con `S`. ADR-017, enmienda 2, puntos 2 y 3. |
+| M41-4 | 2026-11-18 | El códec TNFS solo puede codificar las 9 órdenes de lectura, y la única apertura es `openReadOnly`, con indicadores fijos 0x0001 y sin parámetros de indicadores. Las pruebas comprueban órdenes e indicadores de cada OPEN. | T002 | Pedido del responsable: garantía estructural de AC12. ADR-018, decisión 1. |
+| M41-5 | 2026-11-18 | `FakeTnfsServer` se escribe sin usar `TnfsCodec`. | T003 | Plan `menu-tnfs`, aprobado con la spec. ADR-018, consecuencias. |
+| M41-6 | 2026-11-18 | Sin memoria para una imagen: `ERROR: NO SE PUDO ABRIR` en pantalla, la causa concreta en el registro del host y el disco anterior se conserva. | T011, T013 | Decisión del responsable. ADR-018, decisión 5. |
+| M41-7 | 2026-11-18 | La demo de `ARCADE.ATR` en D2 lee por SIO el sector 65 535 con un disco de lectura propio y compara sus 256 bytes con la imagen descargada. | T007, T016 | Pedido del responsable. ADR-018, consecuencias. |
 | M41-8 | 2026-11-18 | Tras reconectar, el cliente TNFS repite la operación entera desde el principio: LSEEK no está entre las órdenes permitidas. `ReadSink::begin()` se llama otra vez y la lectura vuelve al desplazamiento 0; un listado llama a `DirVisitor::restart()`. | T005 | Propuesta de Claude al implementar. |
 | M41-9 | 2026-11-18 | La espera por intento que anuncia el servidor tiene un techo de 5 s (`kMaxWaitUs`). EAGAIN espera lo que pide, pero nunca más que una espera de intento, y como mucho 10 veces por orden. Se aparta del plan, que no ponía techo. | T005 | Hallazgos de seguridad del revisor de tier 1 (rondas 1 y 2); el techo de 5 s lo decidió el responsable. |
 | M41-10 | 2026-11-18 | La cancelación corta las esperas de READDIR, STAT y READ en tramos de 100 ms; `stat()` acepta un `CancelCheck` opcional. OPEN y OPENDIR se esperan hasta el final, para conocer su número y cerrarlo siempre. | T005 | Hallazgos del revisor (rondas 1 y 2); corrección de Claude. |

@@ -157,7 +157,7 @@ void test_catalog_keeps_only_atr_names_in_case_insensitive_order()
     TEST_ASSERT_EQUAL_STRING("Z.Atr", catalog.name(2));
 }
 
-void test_catalog_keeps_the_first_twenty_whatever_the_listing_order()
+void test_catalog_keeps_25_names_whatever_the_listing_order()
 {
     MenuCatalog catalog;
     char name[16];
@@ -165,10 +165,10 @@ void test_catalog_keeps_the_first_twenty_whatever_the_listing_order()
         std::snprintf(name, sizeof name, "n%02d.atr", i);
         catalog.offer(name);
     }
-    TEST_ASSERT_EQUAL_UINT(20, catalog.count());
+    TEST_ASSERT_EQUAL_UINT(25, catalog.count());  // menu-navegacion N002: up to 999, no longer 20
     TEST_ASSERT_EQUAL_UINT(25, catalog.atrSeen());
     TEST_ASSERT_EQUAL_STRING("n00.atr", catalog.name(0));
-    TEST_ASSERT_EQUAL_STRING("n19.atr", catalog.name(19));
+    TEST_ASSERT_EQUAL_STRING("n24.atr", catalog.name(24));
 }
 
 void test_catalog_skips_names_the_repository_could_not_open()
@@ -634,7 +634,7 @@ int main()
 {
     UNITY_BEGIN();
     RUN_TEST(test_catalog_keeps_only_atr_names_in_case_insensitive_order);
-    RUN_TEST(test_catalog_keeps_the_first_twenty_whatever_the_listing_order);
+    RUN_TEST(test_catalog_keeps_25_names_whatever_the_listing_order);
     RUN_TEST(test_catalog_skips_names_the_repository_could_not_open);
     RUN_TEST(test_read_catalog_lists_the_demo_folder);
     RUN_TEST(test_read_catalog_fails_on_a_missing_folder);

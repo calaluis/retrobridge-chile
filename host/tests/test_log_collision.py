@@ -108,7 +108,7 @@ class ImagesFolderTest(HostCase):
 
     def make_21_images(self):
         """images/ with 21 ATRs: disk.atr plus img00..img19. In menu order disk.atr is
-        the first entry and img19.atr the 21st, outside the 20 the menu shows."""
+        the first entry and img19.atr the 21st, outside the first page of 20."""
         for n in range(20):
             (self.root / "images" / f"img{n:02d}.atr").write_bytes(ATR)
         outside = self.root / "images" / "img19.atr"
@@ -150,16 +150,17 @@ class ImagesFolderTest(HostCase):
         self.assertEqual(target.stat().st_mtime_ns, mtime, "the non-ANSI ATR was written")
         self.assertEqual(self.entries(), before, "a file was created")
 
-    def test_the_menu_still_shows_twenty_of_twenty_one(self):
+    def test_the_menu_keeps_all_twenty_one(self):
+        # menu-navegacion N002: the catalog keeps up to 999; the log numbers them from 1.
         self.make_21_images()
         result = self.run_folder("images", "run.jsonl")
         self.assertNotEqual(result.returncode, 2, result.stderr)
         log = (self.root / "run.jsonl").read_text(encoding="utf-8")
         entries = [line for line in log.splitlines() if '"name":"menu_entry"' in line]
-        self.assertEqual(len(entries), 20)
-        self.assertIn("entries=20 atr_seen=21", log)
-        self.assertIn('"detail":"T img18.atr"', log)
-        self.assertNotIn("img19.atr", log)
+        self.assertEqual(len(entries), 21)
+        self.assertIn("entries=21 atr_seen=21", log)
+        self.assertIn('"detail":"20 img18.atr"', log)
+        self.assertIn('"detail":"21 img19.atr"', log)
 
     # --sources (Issue #40): sources 2..8 of the main screen.
 
@@ -229,8 +230,8 @@ class ImagesFolderTest(HostCase):
         self.assertNotEqual(result.returncode, 2, result.stderr)
         self.assert_image_intact()
         log = (self.root / "run.jsonl").read_text(encoding="utf-8")
-        self.assertIn('"name":"menu_entry","detail":"A B.ATR"', log)
-        self.assertIn('"name":"menu_entry","detail":"B disk.atr"', log)
+        self.assertIn('"name":"menu_entry","detail":"1 B.ATR"', log)
+        self.assertIn('"name":"menu_entry","detail":"2 disk.atr"', log)
         # Nobody answers on port 9, so no step runs: the menu is requested, not yet applied.
         self.assertIn('"name":"menu_return","detail":"cold reset: menu requested for D1"', log)
 

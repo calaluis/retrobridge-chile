@@ -95,6 +95,8 @@ public:
     bool menuOnD1() const noexcept { return menuOnD1_; }
 
     void service();
+    // false if the listing block could not be reserved (main does not start then).
+    bool ready() const noexcept { return folder_.ready(); }
     MenuReply key(uint8_t code);
 
     // Name shown for drive 1..8 (for D1, the assigned image), or nullptr: the

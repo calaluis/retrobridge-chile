@@ -3,7 +3,9 @@
 // the title cut on the left.
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -15,10 +17,58 @@ using rb::host::TnfsListing;
 using rb::host::tnfsDisplay;
 using rb::host::tnfsTitle;
 
+// Every allocation of this test program (menu-navegacion N002: swap() must not allocate).
+static unsigned long g_allocations = 0;
+static bool g_refuseNothrow = false;  // new (std::nothrow) answers nullptr
+
+void* operator new(std::size_t size)
+{
+    ++g_allocations;
+    void* p = std::malloc(size == 0 ? 1 : size);
+    if (p == nullptr) {
+        std::abort();
+    }
+    return p;
+}
+void* operator new[](std::size_t size) { return ::operator new(size); }
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept
+{
+    ++g_allocations;
+    if (g_refuseNothrow) {
+        return nullptr;
+    }
+    return std::malloc(size == 0 ? 1 : size);
+}
+void* operator new[](std::size_t size, const std::nothrow_t& tag) noexcept { return ::operator new(size, tag); }
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete[](void* p) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
+
 namespace {
 
 TnfsListing file(const char* name) { return TnfsListing{name, false}; }
 TnfsListing dir(const char* name) { return TnfsListing{name, true}; }
+
+std::string pathOf(const TnfsFolder& folder, std::size_t index)
+{
+    char out[TnfsFolder::kMaxPath + 1];
+    const std::size_t length = folder.path(index, out);
+    TEST_ASSERT_EQUAL_size_t(std::strlen(out), length);
+    return out;
+}
+
+// count images named G0000.ATR.. listed in reverse order.
+std::vector<TnfsListing> images(int count)
+{
+    std::vector<TnfsListing> listed;
+    char name[32];
+    for (int i = count - 1; i >= 0; --i) {
+        std::snprintf(name, sizeof name, "G%04d.ATR", i);
+        listed.push_back(file(name));
+    }
+    return listed;
+}
 
 std::string notice(const TnfsFolder& folder)
 {
@@ -33,7 +83,7 @@ void setUp(void) {}
 void tearDown(void) {}
 
 // /Atari_Chile/ATR in pulgarcito: 129 entries, 128 after the filter (AC9).
-static void test_129_entries_keep_128_and_show_20(void)
+static void test_129_entries_keep_128(void)
 {
     std::vector<TnfsListing> listed;
     char name[32];
@@ -44,14 +94,81 @@ static void test_129_entries_keep_128_and_show_20(void)
     listed.push_back(file("LEEME.TXT"));  // not an image: filtered out
     const TnfsFolder folder = TnfsFolder::build("/Atari_Chile/ATR", std::move(listed));
     TEST_ASSERT_EQUAL_size_t(128, folder.total());
-    TEST_ASSERT_EQUAL_size_t(20, folder.shown());
+    TEST_ASSERT_EQUAL_size_t(128, folder.count());
     TEST_ASSERT_EQUAL_STRING("MOSTRANDO 20 DE 128", notice(folder).c_str());
-    for (std::size_t i = 0; i < 20; ++i) {
+    for (std::size_t i = 0; i < 128; ++i) {
         std::snprintf(name, sizeof name, "GAME%03u.ATR", static_cast<unsigned>(i));
         TEST_ASSERT_EQUAL_STRING(name, folder.entry(i).display);
-        TEST_ASSERT_EQUAL_STRING((std::string("/Atari_Chile/ATR/") + name).c_str(), folder.entry(i).path.c_str());
+        TEST_ASSERT_EQUAL_STRING((std::string("/Atari_Chile/ATR/") + name).c_str(), pathOf(folder, i).c_str());
         TEST_ASSERT_FALSE(folder.entry(i).isDir);
     }
+}
+
+// menu-navegacion N002 (AC2, AC10, M42-3): up to 999 entries are kept.
+static void test_205_entries_are_all_kept(void)
+{
+    const TnfsFolder folder = TnfsFolder::build("/OMS_ATR", images(205));
+    TEST_ASSERT_TRUE(folder.ready());
+    TEST_ASSERT_EQUAL_size_t(205, folder.total());
+    TEST_ASSERT_EQUAL_size_t(205, folder.count());
+    TEST_ASSERT_EQUAL_STRING("G0204.ATR", folder.entry(204).display);
+    TEST_ASSERT_EQUAL_STRING("/OMS_ATR/G0204.ATR", pathOf(folder, 204).c_str());
+}
+
+static void test_1200_entries_keep_the_first_999_and_the_total(void)
+{
+    const TnfsFolder folder = TnfsFolder::build("/", images(1200));
+    TEST_ASSERT_EQUAL_size_t(1200, folder.total());
+    TEST_ASSERT_EQUAL_size_t(TnfsFolder::kCapacity, folder.count());
+    TEST_ASSERT_EQUAL_size_t(999, TnfsFolder::kCapacity);
+    TEST_ASSERT_EQUAL_STRING("G0000.ATR", folder.entry(0).display);
+    TEST_ASSERT_EQUAL_STRING("G0127.ATR", folder.entry(127).display);
+    TEST_ASSERT_EQUAL_STRING("G0128.ATR", folder.entry(128).display);
+    TEST_ASSERT_EQUAL_STRING("G0998.ATR", folder.entry(998).display);
+    TEST_ASSERT_EQUAL_STRING("/G0998.ATR", pathOf(folder, 998).c_str());
+    TEST_ASSERT_EQUAL_STRING("MOSTRANDO 20 DE 1200", notice(folder).c_str());
+}
+
+// The loader hands a listing over by exchanging the storage (plan §8 point 3): the
+// same cost with 20 entries as with 999, no allocation, no entry visited.
+static void test_swap_exchanges_the_storage_without_allocating_or_walking_it(void)
+{
+    TnfsFolder big = TnfsFolder::build("/a", images(999));
+    TnfsFolder small = TnfsFolder::build("/b", images(20));
+    const TnfsFolder::Entry* bigFirst = &big.entry(0);
+    const TnfsFolder::Entry* smallFirst = &small.entry(0);
+    const unsigned long before = g_allocations;
+    big.swap(small);
+    TEST_ASSERT_EQUAL_UINT32(0, g_allocations - before);
+    TEST_ASSERT_EQUAL_PTR(smallFirst, &big.entry(0));
+    TEST_ASSERT_EQUAL_PTR(bigFirst, &small.entry(0));
+    TEST_ASSERT_EQUAL_size_t(20, big.count());
+    TEST_ASSERT_EQUAL_size_t(999, small.count());
+    TEST_ASSERT_EQUAL_STRING("/b/G0019.ATR", pathOf(big, 19).c_str());
+    TEST_ASSERT_EQUAL_STRING("/a/G0998.ATR", pathOf(small, 998).c_str());
+}
+
+// The loader never offers one (it could not be opened); build() keeps the same rule.
+static void test_a_path_longer_than_tnfs_allows_is_not_kept(void)
+{
+    const std::string fits(TnfsFolder::kMaxPath - 5 - 4, 'f');  // "/abc/" + name + ".atr" = 255
+    const std::string over(TnfsFolder::kMaxPath - 5 - 3, 'o');  // 256
+    const TnfsFolder folder = TnfsFolder::build("/abc", {file((fits + ".atr").c_str()), file((over + ".atr").c_str())});
+    TEST_ASSERT_EQUAL_size_t(1, folder.total());
+    TEST_ASSERT_EQUAL_size_t(TnfsFolder::kMaxPath, pathOf(folder, 0).size());
+}
+
+static void test_without_memory_the_folder_is_not_ready_and_keeps_nothing(void)
+{
+    g_refuseNothrow = true;
+    TnfsFolder folder;
+    g_refuseNothrow = false;
+    TEST_ASSERT_FALSE(folder.ready());
+    TEST_ASSERT_FALSE(folder.fill("/", images(3)));
+    TEST_ASSERT_EQUAL_size_t(0, folder.total());
+    TEST_ASSERT_EQUAL_size_t(0, folder.count());
+    TEST_ASSERT_EQUAL_STRING("CARPETA VACIA", notice(folder).c_str());
+    folder.clear();  // no block: nothing to forget, no crash
 }
 
 static void test_folders_first_marked_with_a_slash_then_images_without_case(void)
@@ -59,12 +176,12 @@ static void test_folders_first_marked_with_a_slash_then_images_without_case(void
     const TnfsFolder folder = TnfsFolder::build(
         "/", {file("zork.atr"), dir("juegos"), file("Alpha.ATR"), dir("Demos"), file("beta.Atr"), dir("arcade")});
     TEST_ASSERT_EQUAL_size_t(6, folder.total());
-    TEST_ASSERT_EQUAL_size_t(6, folder.shown());
+    TEST_ASSERT_EQUAL_size_t(6, folder.count());
     const char* expected[] = {"ARCADE/", "DEMOS/", "JUEGOS/", "ALPHA.ATR", "BETA.ATR", "ZORK.ATR"};
     const char* paths[] = {"/arcade", "/Demos", "/juegos", "/Alpha.ATR", "/beta.Atr", "/zork.atr"};
     for (std::size_t i = 0; i < 6; ++i) {
         TEST_ASSERT_EQUAL_STRING(expected[i], folder.entry(i).display);
-        TEST_ASSERT_EQUAL_STRING(paths[i], folder.entry(i).path.c_str());
+        TEST_ASSERT_EQUAL_STRING(paths[i], pathOf(folder, i).c_str());
         TEST_ASSERT_EQUAL(i < 3, folder.entry(i).isDir);
     }
     TEST_ASSERT_EQUAL_STRING("", notice(folder).c_str());
@@ -75,7 +192,7 @@ static void test_a_folder_is_kept_whatever_its_name(void)
     const TnfsFolder folder = TnfsFolder::build("/a", {dir("0- Prueba"), dir("ATR"), file("notas.txt")});
     TEST_ASSERT_EQUAL_size_t(2, folder.total());
     TEST_ASSERT_EQUAL_STRING("0- PRUEBA/", folder.entry(0).display);
-    TEST_ASSERT_EQUAL_STRING("/a/0- Prueba", folder.entry(0).path.c_str());
+    TEST_ASSERT_EQUAL_STRING("/a/0- Prueba", pathOf(folder, 0).c_str());
     TEST_ASSERT_EQUAL_STRING("ATR/", folder.entry(1).display);
 }
 
@@ -91,7 +208,7 @@ static void test_a_folder_without_folders_or_images_says_carpeta_vacia(void)
 {
     const TnfsFolder folder = TnfsFolder::build("/vacia", {file("leeme.txt"), file("a.xex"), dir(".x")});
     TEST_ASSERT_EQUAL_size_t(0, folder.total());
-    TEST_ASSERT_EQUAL_size_t(0, folder.shown());
+    TEST_ASSERT_EQUAL_size_t(0, folder.count());
     TEST_ASSERT_EQUAL_STRING("CARPETA VACIA", notice(folder).c_str());
     TEST_ASSERT_EQUAL_STRING("CARPETA VACIA", notice(TnfsFolder::build("/", {})).c_str());
 }
@@ -119,7 +236,7 @@ static void test_names_that_cannot_be_shown_are_replaced(void)
     TEST_ASSERT_EQUAL_size_t(5, folder.total());
     TEST_ASSERT_EQUAL_STRING("ATARI LOGO.ATR", folder.entry(0).display);
     TEST_ASSERT_EQUAL_STRING("ATARI TAROTS ESPA?OL5.ATR", folder.entry(1).display);
-    TEST_ASSERT_EQUAL_STRING("/Aportes/Atari Tarots Espa\xC3\xB1ol5.atr", folder.entry(1).path.c_str());
+    TEST_ASSERT_EQUAL_STRING("/Aportes/Atari Tarots Espa\xC3\xB1ol5.atr", pathOf(folder, 1).c_str());
     TEST_ASSERT_EQUAL_STRING("CAF?.ATR", folder.entry(2).display);  // three bytes, one '?'
     TEST_ASSERT_EQUAL_STRING("TAB?HERE.ATR", folder.entry(3).display);
     TEST_ASSERT_EQUAL_STRING("X?Y.ATR", folder.entry(4).display);  // a stray byte, one '?'
@@ -133,7 +250,7 @@ static void test_a_long_name_is_cut_and_a_folder_keeps_its_slash(void)
     const std::string shownDir = std::string(TnfsFolder::kDisplayWidth - 1, 'N') + "/";
     TEST_ASSERT_EQUAL_STRING(shownDir.c_str(), folder.entry(0).display);
     TEST_ASSERT_EQUAL_STRING(std::string(TnfsFolder::kDisplayWidth, 'N').c_str(), folder.entry(1).display);
-    TEST_ASSERT_EQUAL_STRING(("/" + longName + ".atr").c_str(), folder.entry(1).path.c_str());
+    TEST_ASSERT_EQUAL_STRING(("/" + longName + ".atr").c_str(), pathOf(folder, 1).c_str());
 }
 
 static void test_display_counts_a_utf8_character_as_one(void)
@@ -162,7 +279,12 @@ static void test_title_is_cut_on_the_left(void)
 int main(void)
 {
     UNITY_BEGIN();
-    RUN_TEST(test_129_entries_keep_128_and_show_20);
+    RUN_TEST(test_129_entries_keep_128);
+    RUN_TEST(test_205_entries_are_all_kept);
+    RUN_TEST(test_1200_entries_keep_the_first_999_and_the_total);
+    RUN_TEST(test_swap_exchanges_the_storage_without_allocating_or_walking_it);
+    RUN_TEST(test_a_path_longer_than_tnfs_allows_is_not_kept);
+    RUN_TEST(test_without_memory_the_folder_is_not_ready_and_keeps_nothing);
     RUN_TEST(test_folders_first_marked_with_a_slash_then_images_without_case);
     RUN_TEST(test_a_folder_is_kept_whatever_its_name);
     RUN_TEST(test_no_entry_starting_with_a_dot);

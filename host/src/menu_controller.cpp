@@ -17,13 +17,13 @@ using rb::core::ErrorCode;
 using rb::core::Span;
 using rb::domain::DriveNumber;
 
-static_assert(kListMaxEntries == MenuCatalog::kMaxEntries, "the list shows the whole catalog");
+static_assert(kListMaxEntries == TnfsFolder::kPageRows, "a page of the local list as long as a TNFS one");
 
 namespace {
 
 // Atari keyboard codes (CH, Shift and Control bits cleared).
 constexpr uint8_t kDigitCodes[MenuController::kDrives] = {0x1F, 0x1E, 0x1A, 0x18, 0x1D, 0x1B, 0x33, 0x35};  // 1..8
-constexpr uint8_t kLetterCodes[MenuCatalog::kMaxEntries] = {
+constexpr uint8_t kLetterCodes[kListMaxEntries] = {
     0x3F, 0x15, 0x12, 0x3A, 0x2A, 0x38, 0x3D, 0x39, 0x0D, 0x01,  // A B C D E F G H I J
     0x05, 0x00, 0x25, 0x23, 0x08, 0x0A, 0x2F, 0x28, 0x3E, 0x2D,  // K L M N O P Q R S T
 };
@@ -47,7 +47,7 @@ int digitOf(uint8_t code) noexcept
 
 int letterOf(uint8_t code) noexcept
 {
-    for (unsigned i = 0; i < MenuCatalog::kMaxEntries; ++i) {
+    for (unsigned i = 0; i < kListMaxEntries; ++i) {
         if (kLetterCodes[i] == code) {
             return static_cast<int>(i);
         }
@@ -489,7 +489,7 @@ MenuReply MenuController::render(uint8_t action) const noexcept
         reply.bytes[1] = kMenuLayoutList;
         std::memcpy(screen, kMenuListTemplate, kMenuScreenSize);
         put(screen, kListTitle, kMenuTitleWidth, " FUENTE 1: SD", true);
-        for (std::size_t i = 0; i < catalog_.count(); ++i) {
+        for (std::size_t i = 0; i < catalog_.count() && i < kListMaxEntries; ++i) {
             std::snprintf(text, sizeof text, " %c  %.*s", static_cast<char>('A' + i), static_cast<int>(kNameColumns),
                           catalog_.name(i));
             put(screen, static_cast<unsigned>(kListEntries + i * kMenuLineWidth), kMenuLineWidth, text, true);
@@ -532,7 +532,7 @@ void MenuController::renderFolder(uint8_t* screen, char* text, std::size_t size)
     const std::size_t room = kMenuTitleWidth > static_cast<unsigned>(prefix) ? kMenuTitleWidth - prefix : 0;
     tnfsTitle(path_, pathLength_, room, text + prefix);
     put(screen, kListTitle, kMenuTitleWidth, text, true);
-    for (std::size_t i = 0; i < folder_.shown(); ++i) {
+    for (std::size_t i = 0; i < folder_.count() && i < TnfsFolder::kPageRows; ++i) {
         std::snprintf(text, size, "%c %s", static_cast<char>('A' + i), folder_.entry(i).display);
         put(screen, static_cast<unsigned>(kListEntries + i * kMenuLineWidth), kMenuLineWidth, text, true);
     }
@@ -564,13 +564,15 @@ void MenuController::onFolder(uint8_t key)
         return;
     }
     const int entry = letterOf(key);
-    if (entry < 0 || static_cast<std::size_t>(entry) >= folder_.shown()) {
+    if (entry < 0 || static_cast<std::size_t>(entry) >= folder_.count()) {
         return;  // not a letter of the list
     }
     const TnfsFolder::Entry& chosen = folder_.entry(static_cast<std::size_t>(entry));
     if (chosen.isDir) {
         message_[0] = '\0';
-        startJob(Job::Enter, source_, chosen.path.data(), chosen.path.size());
+        char path[TnfsFolder::kMaxPath + 1];
+        const std::size_t length = folder_.path(static_cast<std::size_t>(entry), path);
+        startJob(Job::Enter, source_, path, length);
         return;
     }
     chosen_ = static_cast<int8_t>(entry);
@@ -590,12 +592,14 @@ void MenuController::onFolderPick(uint8_t key, int digit)
         return;
     }
     const TnfsFolder::Entry& chosen = folder_.entry(static_cast<std::size_t>(chosen_));
+    char path[TnfsFolder::kMaxPath + 1];
+    const std::size_t length = folder_.path(static_cast<std::size_t>(chosen_), path);
     std::snprintf(jobName_, sizeof jobName_, "%s", chosen.display);
     jobDrive_ = static_cast<unsigned>(digit);
     chosen_ = kNone;
     view_ = View::Folder;  // the view stays on the folder while the image comes
     message_[0] = '\0';
-    startJob(Job::Fetch, source_, chosen.path.data(), chosen.path.size());
+    startJob(Job::Fetch, source_, path, length);
 }
 
 void MenuController::startJob(Job job, unsigned source, const char* path, std::size_t length)
@@ -667,7 +671,8 @@ void MenuController::listed()
     message_[0] = '\0';
     char detail[kTnfsMaxPath + 64];
     std::snprintf(detail, sizeof detail, "source=%u tnfs path=%s entries=%u shown=%u", source_, path_,
-                  static_cast<unsigned>(folder_.total()), static_cast<unsigned>(folder_.shown()));
+                  static_cast<unsigned>(folder_.total()),
+                  static_cast<unsigned>(std::min(folder_.count(), TnfsFolder::kPageRows)));
     event("menu_open", detail);
 }
 

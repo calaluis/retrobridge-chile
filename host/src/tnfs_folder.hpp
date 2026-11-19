@@ -5,18 +5,24 @@
 //
 // Filter and order (plan §0): only folders and names ending in ".atr" (any
 // case); no entry whose name starts with '.'; folders first, then images, each
-// group in case-insensitive alphabetical order; at most kMaxShown entries;
-// total() counts every entry kept by the filter.
+// group in case-insensitive alphabetical order; at most kCapacity entries;
+// total() counts every entry kept by the filter. An entry whose path would be
+// longer than kMaxPath is not kept (it could never be opened).
 //
 // Display rule (as in #40): ASCII 'a'-'z' become upper case; every character
 // that is not printable ASCII (0x20-0x7E) becomes one '?'. A multi-byte UTF-8
 // character (its lead byte and its continuation bytes 0x80-0xBF) gives a single
-// '?', and so does a stray byte. path keeps the original bytes and is what the
-// loader opens.
+// '?', and so does a stray byte. path() gives the original bytes, which is what
+// the loader opens; it is built on demand from the folder and the entry's name.
 //
-// build() runs on the loader thread and allocates; the accessors do not.
+// Storage (menu-navegacion N002, M42-3): every TnfsFolder reserves one fixed block
+// for kCapacity entries when it is created (new (std::nothrow), outside the SIO
+// path); ready() says whether it got it. fill() runs on the loader thread and
+// allocates only temporaries; swap() exchanges the blocks, so handing a listing
+// over costs the same with 20 entries as with 999. The accessors do not allocate.
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -30,36 +36,59 @@ struct TnfsListing {
 
 class TnfsFolder {
 public:
-    static constexpr std::size_t kMaxShown = 20;
+    static constexpr std::size_t kCapacity = 999;     // entries kept (M42-3)
+    static constexpr std::size_t kPageRows = 20;      // rows of one screen of the list
     static constexpr std::size_t kDisplayWidth = 38;  // columns of a list row after the letter
+    static constexpr std::size_t kMaxPath = 255;      // bytes of a TNFS path (rb::net_tnfs::kMaxPath)
     // Longest notice: "MOSTRANDO 20 DE " and the digits of a size_t.
     static constexpr std::size_t kNoticeSize = 40;
 
     struct Entry {
         bool isDir = false;
         char display[kDisplayWidth + 1] = {};  // folders end in '/'
-        std::string path;                      // original bytes: folder + '/' + name
+        uint16_t nameLength = 0;
+        char name[kMaxPath + 1] = {};  // original bytes, as READDIR gave them
     };
+
+    TnfsFolder() noexcept;  // reserves the block; ready() is false if that failed
+    ~TnfsFolder();
+    TnfsFolder(TnfsFolder&& other) noexcept;
+    TnfsFolder(const TnfsFolder&) = delete;
+    TnfsFolder& operator=(const TnfsFolder&) = delete;
+    TnfsFolder& operator=(TnfsFolder&&) = delete;
 
     // folder: the path that was listed ("/" for the root of the source).
     static TnfsFolder build(const std::string& folder, std::vector<TnfsListing> listed);
+    // The same into this folder's block. false (and nothing kept) without a block.
+    bool fill(const std::string& folder, std::vector<TnfsListing> listed);
+    // Forgets the entries; keeps the block.
+    void clear() noexcept;
 
-    std::size_t total() const noexcept { return total_; }
-    std::size_t shown() const noexcept { return shown_; }
-    const Entry& entry(std::size_t index) const noexcept { return entries_[index]; }
+    bool ready() const noexcept { return storage_ != nullptr; }
+    std::size_t total() const noexcept { return storage_ != nullptr ? storage_->total : 0; }
+    std::size_t count() const noexcept { return storage_ != nullptr ? storage_->count : 0; }
+    // index < count().
+    const Entry& entry(std::size_t index) const noexcept { return storage_->entries[index]; }
+    // The path of entry index (< count()) into out, NUL-terminated; returns its length.
+    std::size_t path(std::size_t index, char (&out)[kMaxPath + 1]) const noexcept;
 
     // The message under the key footer: "CARPETA VACIA" with no entry,
-    // "MOSTRANDO 20 DE <total>" when more than kMaxShown were kept, "" otherwise.
+    // "MOSTRANDO 20 DE <total>" when more than kPageRows were kept, "" otherwise.
     void notice(char (&out)[kNoticeSize]) const noexcept;
 
-    // Exchanges the contents without allocating or freeing (T011: the loader
+    // Exchanges the blocks: no allocation, no entry visited (T011: the loader
     // hands a listing to the menu thread this way).
     void swap(TnfsFolder& other) noexcept;
 
 private:
-    Entry entries_[kMaxShown];
-    std::size_t shown_ = 0;
-    std::size_t total_ = 0;
+    struct Storage {
+        Entry entries[kCapacity];
+        char folder[kMaxPath + 1] = {};
+        std::size_t folderLength = 0;
+        std::size_t count = 0;
+        std::size_t total = 0;
+    };
+    Storage* storage_ = nullptr;
 };
 
 // The display form of `length` bytes of text: at most `width` characters into

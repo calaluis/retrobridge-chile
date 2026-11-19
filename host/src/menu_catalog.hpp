@@ -1,7 +1,8 @@
 #pragma once
 
 // Catalog of the boot menu (Issue #38): the .atr files of the --images folder,
-// in case-insensitive alphabetical order, at most kMenuMaxEntries. Fixed
+// in case-insensitive alphabetical order, at most kMaxEntries (999,
+// menu-navegacion M42-3; the list shows them a page at a time). Fixed
 // storage; names longer than an ImageLocation or with characters outside
 // printable ASCII are skipped, so every entry can be opened by the repository.
 
@@ -14,7 +15,7 @@ namespace rb::host {
 
 class MenuCatalog {
 public:
-    static constexpr std::size_t kMaxEntries = 20;
+    static constexpr std::size_t kMaxEntries = 999;
     static constexpr std::size_t kMaxName = rb::app::ImageLocation::kMaxLength;
 
     // Offers one directory entry. Returns true if it was kept (for now: a later,

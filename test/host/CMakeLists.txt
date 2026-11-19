@@ -182,6 +182,10 @@ target_link_libraries(test_memory_image_store PRIVATE Threads::Threads)
 set_tests_properties(test_memory_image_store PROPERTIES FIXTURES_REQUIRED menu_images)
 
 # The listing of a TNFS folder: filter, order, 20 entries and display names (menu-tnfs T010).
+# The local list: up to 999 .atr names (menu-navegacion N002).
+rb_add_host_test(test_menu_catalog menu/test_menu_catalog.cpp ${rb_root}/host/src/menu_catalog.cpp)
+target_include_directories(test_menu_catalog PRIVATE ${rb_root}/host/src)
+
 rb_add_host_test(test_tnfs_folder menu/test_tnfs_folder.cpp ${rb_root}/host/src/tnfs_folder.cpp
                  ${rb_root}/host/src/menu_catalog.cpp)
 target_include_directories(test_tnfs_folder PRIVATE ${rb_root}/host/src)

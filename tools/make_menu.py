@@ -9,9 +9,10 @@ two display lists and the screen buffer. The host serves this block as it is.
 The program is a thin terminal (ADR-017, amended for Issue #40):
   1. sets the colors of the main screen and its display list;
   2. sends command 'K' to the RetroBridge menu device ($5A) with AUX1 = $FF
-     (no key: draw the current screen) and AUX2 = a sequence number that
-     changes with every key (SIOV's own retries repeat it, so the host can
-     answer a retry without acting twice), and reads REPLY_SIZE bytes into the
+     (no key: draw the current screen) and AUX2 = a sequence number in bits
+     7-5 that changes with every key (SIOV's own retries repeat it, so the host
+     can answer a retry without acting twice) and, in bits 4-0, the row the
+     local bar shows (NO_ROW without one), and reads REPLY_SIZE bytes into the
      reply buffer: an action byte, a layout byte and SCREEN_SIZE bytes of
      screen codes, which the display lists show directly;
   3. layout 0 shows the main screen, layout 1 the list of a source;
@@ -72,8 +73,24 @@ PAGE_BEFORE, PAGE_AFTER = 0x01, 0x02
 CONFIRM_ROW = 0xC0           # RETURN or fire on a local cursor: CONFIRM_ROW + marked row (Control+Shift
                              # range, so Shift+digit from an older program stays a key)
 KEY_RETURN = 0x0C
+ROW_MASK = 0x1F              # AUX2 bits 4-0: the row the local bar shows (bits 7-5: sequence)
+NO_ROW = 0x1F                # in those bits: no local cursor on the screen shown
+# Text input (menu-editar-servidor, ADR-017 amendment 6). Action 3 edits a field of the screen
+# without SIO: the host puts three bytes at EDIT_AT (field offset low and high, text length).
+# RETURN sends the EDIT_WIDTH characters of the field as ASCII, one TEXT_COMMAND each (AUX1
+# position, AUX2 character; no data either way), then 'K' with EDIT_SAVE. Esc sends 'K' with
+# Esc. Writing a position twice gives the same text, so a retry of SIOV changes nothing.
+TEXT_COMMAND = 0x54          # 'T'
+EDIT_SAVE = 0xE0             # 'K' code after the text: away from CONFIRM_ROW + 20, POLL and NO_KEY
+EDIT_AT, EDIT_SIZE = CURSOR_AT - 3, 3
+EDIT_WIDTH = 32
+KEY_ESC, KEY_DELETE = 0x1C, 0x34
+SHIFT = 0x40                 # CH bit of the Shift key
 
-ACTION_SHOW, ACTION_BOOT, ACTION_WAIT = 0, 1, 2
+ACTION_SHOW, ACTION_BOOT, ACTION_WAIT, ACTION_EDIT = 0, 1, 2, 3
+# No host: the screen below the title is cleared in four strides of CLEAR_STEP bytes.
+CLEAR_STEP = (SCREEN_SIZE - TITLE_WIDTH) // 4
+assert 4 * CLEAR_STEP == SCREEN_SIZE - TITLE_WIDTH and CLEAR_STEP <= 0x100
 LAYOUT_MAIN, LAYOUT_LIST = 0, 1
 
 # Main screen (layout 0): offsets in the screen buffer.
@@ -167,6 +184,23 @@ def list_template() -> bytes:
     return bytes(screen)
 
 
+# Keyboard codes (CH without Shift and Control) of the characters a server name can have.
+KEYBOARD = {
+    0x3F: "a", 0x15: "b", 0x12: "c", 0x3A: "d", 0x2A: "e", 0x38: "f", 0x3D: "g", 0x39: "h", 0x0D: "i",
+    0x01: "j", 0x05: "k", 0x00: "l", 0x25: "m", 0x23: "n", 0x08: "o", 0x0A: "p", 0x2F: "q", 0x28: "r",
+    0x3E: "s", 0x2D: "t", 0x0B: "u", 0x10: "v", 0x2E: "w", 0x16: "x", 0x2B: "y", 0x17: "z",
+    0x1F: "1", 0x1E: "2", 0x1A: "3", 0x18: "4", 0x1D: "5", 0x1B: "6", 0x33: "7", 0x35: "8", 0x30: "9",
+    0x32: "0", 0x22: ".", 0x0E: "-",
+}
+
+
+def char_table() -> bytes:
+    table = bytearray(KEY_MASK + 1)
+    for code, char in KEYBOARD.items():
+        table[code] = screen_codes(char, 1)[0]
+    return bytes(table)
+
+
 def abs_op(opcode: int, address: int) -> bytes:
     return bytes([opcode, address & 0xFF, address >> 8])
 
@@ -205,10 +239,20 @@ def menu_program():
         *store(REPLY_SIZE >> 8, DBYTHI),
         b"\xEE", ("abs", "seq"),                      # INC seq (one number per key; SIOV's retries keep it)
         b"\xAD", ("abs", "seq"),                      # LDA seq
+        b"\x0A\x0A\x0A\x0A\x0A",                      # ASL x5 (bits 7-5: the sequence)
+        b"\xAC", ("abs", "cur_count"),                # LDY cur_count
+        b"\xD0", ("rel", "with_row"),                 # BNE with_row (a local cursor is shown)
+        bytes([0x09, NO_ROW]),                        # ORA #NO_ROW
+        b"\xD0", ("rel", "aux2"),                     # BNE aux2 (always: NO_ROW is not 0)
+        ("label", "with_row"),
+        b"\x0D", ("abs", "cur_row"),                  # ORA cur_row (the row the bar shows)
+        ("label", "aux2"),
         abs_op(0x8D, DAUX2),                          # STA DAUX2
         abs_op(0x20, SIOV),                           # JSR SIOV
         b"\x98",                                      # TYA (SIO status)
-        b"\x30", ("rel", "nohost"),                   # BMI nohost (negative status: error)
+        b"\x10", ("rel", "answered"),                 # BPL answered
+        b"\x4C", ("abs", "nohost"),                   # JMP nohost (negative status: error)
+        ("label", "answered"),
         b"\xAD", ("abs", "layout"),                   # LDA layout
         b"\x29\x01",                                  # AND #1 (two layouts)
         b"\xAA",                                      # TAX
@@ -217,8 +261,12 @@ def menu_program():
         b"\xAD", ("abs", "action"),                   # LDA action
         b"\xF0", ("rel", "key"),                      # BEQ key (show)
         bytes([0xC9, ACTION_WAIT]),                   # CMP #2
+        b"\xF0", ("rel", "wait"),                     # BEQ wait
+        bytes([0xC9, ACTION_EDIT]),                   # CMP #3
         b"\xD0", ("rel", "boot"),                     # BNE boot (1, or any other: boot, as before)
+        b"\x4C", ("abs", "edit"),                     # JMP edit (menu-editar-servidor)
         # Action 2: watch CH for WAIT_TICKS frames, then poll.
+        ("label", "wait"),
         bytes([0xA2, WAIT_TICKS]),                    # LDX #WAIT_TICKS
         ("label", "tick"),
         bytes([0xA5, RTCLOK_LOW]),                    # LDA RTCLOK
@@ -236,7 +284,7 @@ def menu_program():
         b"\xCA",                                      # DEX
         b"\xD0", ("rel", "tick"),                     # BNE tick
         bytes([0xA9, POLL]),                          # LDA #POLL
-        b"\xD0", ("rel", "send"),                     # BNE send (always: POLL is not 0)
+        b"\x4C", ("abs", "send"),                     # JMP send (too far for a branch)
         ("label", "waitkey"),
         b"\x98",                                      # TYA (the key)
         ("label", "got"),                             # A = CH, not $FF
@@ -271,6 +319,16 @@ def menu_program():
         abs_op(0x4C, COLDSV),                         # JMP COLDSV: boot what the host put on D1
         ("label", "nohost"),
         b"\xA9\x00", b"\x8D", ("abs", "cur_count"),   # no local bar on the stale screen (N007)
+        # The buffer may hold a list, or a reply cut or mixed (two hosts on the hub, seen in the
+        # demo of menu-editar-servidor): clear everything below the title, which both layouts
+        # share, so the main display list shows only the title and the message.
+        b"\xA2", bytes([CLEAR_STEP - 1]),             # LDX #CLEAR_STEP-1 (A = 0)
+        ("label", "clear"),
+        b"\x9D", ("abs", "clear0"), b"\x9D", ("abs", "clear1"),  # STA clear0,X / STA clear1,X
+        b"\x9D", ("abs", "clear2"), b"\x9D", ("abs", "clear3"),  # STA clear2,X / STA clear3,X
+        b"\xCA",                                      # DEX
+        b"\xE0\xFF",                                  # CPX #$FF
+        b"\xD0", ("rel", "clear"),                    # BNE clear (X = 0 included)
         b"\xA2", bytes([LINE_WIDTH - 1]),             # LDX #39
         ("label", "copy"),
         b"\xBD", ("abs", "nohost_text"),              # LDA nohost_text,X
@@ -405,6 +463,128 @@ def menu_program():
         b"\x8C", ("abs", "stick_prev"),               # STY stick_prev
         ("label", "joy_none"),
         b"\xA9\xFF", b"\x60",                         # LDA #$FF / RTS
+        # edit (action 3, menu-editar-servidor): the field is EDIT_WIDTH screen bytes at
+        # screen + the offset the host wrote at EDIT_AT, with ed_len characters typed. The
+        # character after the text is shown in inverse video as the cursor. No SIO until
+        # RETURN or Esc; the joystick is not read.
+        ("label", "edit"),
+        b"\x18",                                      # CLC
+        b"\xAD", ("abs", "edit_lo"),                  # LDA edit_lo
+        b"\x69", ("lo", "screen"),                    # ADC #<screen
+        b"\x8D", ("abs", "eg_lo"), b"\x8D", ("abs", "ep_lo"),
+        b"\xAD", ("abs", "edit_hi"),                  # LDA edit_hi
+        b"\x69", ("hi", "screen"),                    # ADC #>screen
+        b"\x8D", ("abs", "eg_hi"), b"\x8D", ("abs", "ep_hi"),
+        b"\xAD", ("abs", "edit_len"),                 # LDA edit_len
+        bytes([0xC9, EDIT_WIDTH + 1]),                # CMP #33
+        b"\x90", ("rel", "ed_len_ok"),                # BCC ed_len_ok
+        bytes([0xA9, EDIT_WIDTH]),                    # LDA #32 (never past the field)
+        ("label", "ed_len_ok"),
+        b"\x8D", ("abs", "ed_len"),                   # STA ed_len
+        b"\x20", ("abs", "ed_flip"),                  # JSR ed_flip (show the cursor)
+        ("label", "ed_key"),
+        abs_op(0xAC, CH),                             # LDY CH
+        b"\xC0\xFF",                                  # CPY #$FF
+        b"\xF0", ("rel", "ed_key"),                   # BEQ ed_key (no key yet)
+        b"\xA2\xFF", abs_op(0x8E, CH),                # LDX #$FF / STX CH (consume the key)
+        b"\x98",                                      # TYA
+        b"\x30", ("rel", "ed_key"),                   # BMI ed_key (Control: not text)
+        bytes([0x29, KEY_MASK]),                      # AND #KEY_MASK
+        bytes([0xC9, KEY_ESC]),                       # CMP #Esc
+        b"\xD0", ("rel", "ed_ret"),                   # BNE ed_ret
+        b"\x4C", ("abs", "send"),                     # JMP send (A = Esc: the host cancels)
+        ("label", "ed_ret"),
+        bytes([0xC9, KEY_RETURN]),                    # CMP #RETURN
+        b"\xD0", ("rel", "ed_del"),                   # BNE ed_del
+        b"\x4C", ("abs", "ed_save"),                  # JMP ed_save
+        ("label", "ed_del"),
+        bytes([0xC9, KEY_DELETE]),                    # CMP #Delete (Backspace)
+        b"\xD0", ("rel", "ed_char"),                  # BNE ed_char
+        b"\xAD", ("abs", "ed_len"),                   # LDA ed_len
+        b"\xF0", ("rel", "ed_key"),                   # BEQ ed_key (nothing to delete)
+        b"\x20", ("abs", "ed_flip"),                  # JSR ed_flip (hide the cursor)
+        b"\xCE", ("abs", "ed_len"),                   # DEC ed_len
+        b"\xAC", ("abs", "ed_len"),                   # LDY ed_len
+        b"\xA9\x00",                                  # LDA #0 (a space)
+        b"\x20", ("abs", "ed_put"),                   # JSR ed_put
+        b"\x20", ("abs", "ed_flip"),                  # JSR ed_flip (the cursor goes back one)
+        b"\x4C", ("abs", "ed_key"),                   # JMP ed_key
+        ("label", "ed_char"),
+        b"\xAA",                                      # TAX
+        b"\xBD", ("abs", "chartab"),                  # LDA chartab,X (screen code, 0: not allowed)
+        b"\xF0", ("rel", "ed_key"),                   # BEQ ed_key
+        b"\x8D", ("abs", "ed_ch"),                    # STA ed_ch
+        b"\x98",                                      # TYA (the key as read)
+        bytes([0x29, SHIFT]),                         # AND #Shift
+        b"\xF0", ("rel", "ed_plain"),                 # BEQ ed_plain
+        b"\xAD", ("abs", "ed_ch"),                    # LDA ed_ch
+        b"\xC9\x61",                                  # CMP #'a' (screen code of a lowercase letter)
+        b"\x90", ("rel", "ed_key"),                   # BCC ed_key (Shift + digit, '.', '-': not text)
+        b"\x29\xBF",                                  # AND #$BF (the capital letter)
+        b"\x8D", ("abs", "ed_ch"),                    # STA ed_ch
+        ("label", "ed_plain"),
+        b"\xAC", ("abs", "ed_len"),                   # LDY ed_len
+        bytes([0xC0, EDIT_WIDTH]),                    # CPY #32
+        b"\xB0", ("rel", "ed_key"),                   # BCS ed_key (the field is full)
+        b"\xAD", ("abs", "ed_ch"),                    # LDA ed_ch
+        b"\x20", ("abs", "ed_put"),                   # JSR ed_put (over the cursor)
+        b"\xEE", ("abs", "ed_len"),                   # INC ed_len
+        b"\x20", ("abs", "ed_flip"),                  # JSR ed_flip (the cursor moves on)
+        b"\x4C", ("abs", "ed_key"),                   # JMP ed_key
+        # RETURN: every position of the field goes to the host as ASCII, then 'K' EDIT_SAVE.
+        ("label", "ed_save"),
+        b"\x20", ("abs", "ed_flip"),                  # JSR ed_flip (hide the cursor)
+        b"\xA2\x00",                                  # LDX #0
+        ("label", "ed_tx"),
+        b"\x8E", ("abs", "ed_x"),                     # STX ed_x (SIOV does not keep X)
+        abs_op(0x8E, DAUX1),                          # STX DAUX1 (the position)
+        b"\x8A", b"\xA8",                             # TXA / TAY
+        b"\x20", ("abs", "ed_get"),                   # JSR ed_get
+        b"\x29\x7F",                                  # AND #$7F
+        b"\xC9\x40",                                  # CMP #$40
+        b"\xB0", ("rel", "ed_ascii"),                 # BCS ed_ascii ($60-$7F: the same in ASCII)
+        b"\x69\x20",                                  # ADC #$20 (C = 0: $00-$3F -> $20-$5F)
+        ("label", "ed_ascii"),
+        abs_op(0x8D, DAUX2),                          # STA DAUX2 (the character)
+        *store(MENU_DEVICE, DDEVIC),
+        *store(0x01, DUNIT),
+        *store(TEXT_COMMAND, DCOMND),
+        *store(0x00, DSTATS),                         # no data either way
+        *store(MENU_TIMEOUT_S, DTIMLO),
+        abs_op(0x20, SIOV),                           # JSR SIOV
+        b"\x98",                                      # TYA (SIO status)
+        b"\x10", ("rel", "ed_next"),                  # BPL ed_next
+        b"\x4C", ("abs", "nohost"),                   # JMP nohost
+        ("label", "ed_next"),
+        b"\xAE", ("abs", "ed_x"),                     # LDX ed_x
+        b"\xE8",                                      # INX
+        bytes([0xE0, EDIT_WIDTH]),                    # CPX #32
+        b"\xD0", ("rel", "ed_tx"),                    # BNE ed_tx
+        bytes([0xA9, EDIT_SAVE]),                     # LDA #EDIT_SAVE
+        b"\x4C", ("abs", "send"),                     # JMP send
+        # ed_flip: inverts the cursor cell (position ed_len) if it is inside the field.
+        ("label", "ed_flip"),
+        b"\xAC", ("abs", "ed_len"),                   # LDY ed_len
+        bytes([0xC0, EDIT_WIDTH]),                    # CPY #32
+        b"\xB0", ("rel", "ed_rts"),                   # BCS ed_rts
+        b"\x20", ("abs", "ed_get"),                   # JSR ed_get
+        b"\x49\x80",                                  # EOR #$80
+        b"\x20", ("abs", "ed_put"),                   # JSR ed_put
+        ("label", "ed_rts"),
+        b"\x60",                                      # RTS
+        # ed_get / ed_put: A = field[Y] / field[Y] = A (the field address is patched in).
+        ("label", "ed_get"),
+        b"\xB9", ("label", "eg_lo"), b"\x00", ("label", "eg_hi"), b"\x00",  # LDA field,Y
+        b"\x60",                                      # RTS
+        ("label", "ed_put"),
+        b"\x99", ("label", "ep_lo"), b"\x00", ("label", "ep_hi"), b"\x00",  # STA field,Y
+        b"\x60",                                      # RTS
+        # Keyboard code (without Shift and Control) -> screen code of the character typed:
+        # lowercase letters, digits, '.' and '-'; 0 for any other key.
+        ("label", "chartab"), char_table(),
+        ("label", "ed_len"), b"\x00",
+        ("label", "ed_ch"), b"\x00",
+        ("label", "ed_x"), b"\x00",
         # STICK0 -> code: 14 up, 13 down, 11 left, 7 right; anything else $FF.
         ("label", "dirtab"),
         bytes([0xFF] * 7 + [NAV_RIGHT] + [0xFF] * 3 + [NAV_LEFT, 0xFF, NAV_DOWN, NAV_UP, 0xFF]),
@@ -453,6 +633,8 @@ def menu_program():
         "list_message": LIST_MESSAGE,
         "cur_base": CURSOR_AT, "cur_base_hi": CURSOR_AT + 1, "cur_count": CURSOR_AT + 2,
         "cur_row": CURSOR_AT + 3, "cur_paged": CURSOR_AT + 4,
+        "edit_lo": EDIT_AT, "edit_hi": EDIT_AT + 1, "edit_len": EDIT_AT + 2,
+        **{f"clear{n}": TITLE_WIDTH + n * CLEAR_STEP for n in range(4)},
     }
     sizes = {"lo": 1, "hi": 1, "abs": 2, "rel": 1}
 
@@ -509,6 +691,9 @@ def render_include(block: bytes, labels: dict) -> str:
         "kListFooter": LIST_FOOTER, "kListMessage": LIST_MESSAGE,
         "kMenuCursor": CURSOR_AT, "kMenuConfirmRow": CONFIRM_ROW,
         "kMenuPageBefore": PAGE_BEFORE, "kMenuPageAfter": PAGE_AFTER,
+        "kMenuRowMask": ROW_MASK, "kMenuNoRow": NO_ROW,
+        "kMenuActionEdit": ACTION_EDIT, "kMenuEditSave": EDIT_SAVE, "kMenuEdit": EDIT_AT,
+        "kMenuEditWidth": EDIT_WIDTH,
     }
     lines = [
         "// Generated by tools/make_menu.py (Issues #38 and #40, menu-tnfs). Do not edit: regenerate with",
@@ -519,7 +704,8 @@ def render_include(block: bytes, labels: dict) -> str:
     ]
     lines += [f"constexpr unsigned {name} = {value};" for name, value in constants.items()]
     lines += [f"constexpr unsigned char kMenuDevice = 0x{MENU_DEVICE:02X};",
-              f"constexpr unsigned char kMenuCommand = 0x{MENU_COMMAND:02X};"]
+              f"constexpr unsigned char kMenuCommand = 0x{MENU_COMMAND:02X};",
+              f"constexpr unsigned char kMenuTextCommand = 0x{TEXT_COMMAND:02X};"]
     lines += c_array("kMenuMainTemplate", main_template())
     lines += c_array("kMenuListTemplate", list_template())
     lines += c_array("kMenuBlock", block)

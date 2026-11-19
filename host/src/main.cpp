@@ -400,22 +400,22 @@ int runMenu(const Options& options)
     rb::app::DriveBay bay{rb::host::MenuController::kDrives};
     rb::app::InlineDriveMailbox mailbox;
     LogMenuEvents events{log};
-    // TNFS: one link per configured source, and the loader thread. It is
+    // TNFS: one link per source 2..8, configured or not, so E can add one while
+    // the host runs (menu-editar-servidor); and the loader thread. It is
     // stopped in onStop, before the log is closed (it writes to it).
     rb::host::SystemNameResolver resolver;
     std::optional<rb::host::UdpTnfsLink> links[rb::host::TnfsLoader::kMaxSource + 1];
     rb::host::TnfsLink* linkOf[rb::host::TnfsLoader::kMaxSource + 1] = {};
     for (unsigned n = 2; n <= rb::host::TnfsLoader::kMaxSource; ++n) {
-        if (sources.name(n) != nullptr) {
-            links[n].emplace(sources.name(n), n, resolver, events);
-            linkOf[n] = &*links[n];
-        }
+        links[n].emplace(sources.name(n) != nullptr ? sources.name(n) : "", n, resolver, events);
+        linkOf[n] = &*links[n];
     }
     rb::host::HostTnfsClock tnfsClock{clock};
     rb::host::HeapImageMemory imageMemory;
     std::optional<rb::host::TnfsLoader> loader;
     loader.emplace(linkOf, repository.memory(), tnfsClock, imageMemory);
     rb::host::MenuController controller{catalog, sources, repository, mailbox, &events, &*loader};
+    controller.setSourcesFile(options.sources);
     if (!loader->ready() || !controller.ready()) {
         loader.reset();  // its thread is joined before the log closes
         std::fclose(logFile);
@@ -466,10 +466,12 @@ int runMenu(const Options& options)
                  [&transport, &log, &loader] {
                      loader.reset();  // joins the loader thread while the log is still open
                      const rb::host::MenuTransportStats& m = transport.stats();
-                     char stats[128];
+                     char stats[160];
                      std::snprintf(stats, sizeof stats,
-                                   "menu_commands=%u menu_retries=%u menu_naks=%u dropped_after_reset=%u",
-                                   m.menuCommands, m.menuRetries, m.menuNaks, m.droppedAfterReset);
+                                   "menu_commands=%u menu_retries=%u menu_naks=%u dropped_after_reset=%u "
+                                   "text_commands=%u",
+                                   m.menuCommands, m.menuRetries, m.menuNaks, m.droppedAfterReset,
+                                   m.textCommands);
                      log.event("menu_stats", stats);
                      std::printf("retrobridge_host: %s\n", stats);
                  });

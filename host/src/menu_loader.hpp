@@ -61,6 +61,11 @@ public:
     // it; while it is still open or attached, it stays marked for a later try.
     virtual void recycle(std::size_t slot) noexcept = 0;
 
+    // Source `source` (2..8) now names `server` (menu-editar-servidor). Before
+    // its next job the loader thread ends the old session (one UMOUNT, without
+    // waiting) and the link opens the new server. Copies `server`; no allocation.
+    virtual void changeServer(unsigned source, const char* server) noexcept = 0;
+
 protected:
     MenuLoader() = default;
     ~MenuLoader() = default;

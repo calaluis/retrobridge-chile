@@ -306,7 +306,9 @@ void test_servers_and_edit_say_what_is_missing_and_change_nothing()
     assert_line(rig.keys({K2}), rb::host::kMainMessage, line(" PENDIENTE: FALTA EL CLIENTE TNFS"));
     assert_line(rig.keys({K4}), rb::host::kMainMessage, line(" FUENTE 4 SIN CONFIGURAR"));
     const MenuReply edit = rig.keys({KE});
-    assert_line(edit, rb::host::kMainMessage, line(" PENDIENTE: E NECESITA ENTRADA DE TEXTO"));
+    // Without --sources there is no file to save to (menu-editar-servidor; edit tests in test_menu_editar).
+    assert_line(edit, rb::host::kMainMessage, line(" SIN ARCHIVO DE FUENTES"));
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, edit.action());
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutMain, edit.layout());
     TEST_ASSERT_TRUE(rig.mailbox.idle());
     TEST_ASSERT_TRUE(rig.controller->menuOnD1());
@@ -576,6 +578,28 @@ void test_a_redraw_forgets_the_last_key()
     TEST_ASSERT_EQUAL_UINT(3, rig.transport.stats().menuCommands);
 }
 
+// AUX2 bits 4-0 carry the row the Atari's bar shows: RETURN takes that row, not the
+// one the host drew last (bits 7-5 stay the sequence number).
+void test_the_row_in_aux2_reaches_the_controller()
+{
+    DecoratorRig rig;
+    const MenuReply list = rig.menu.keys({K1});  // the local list; the host on row 0 (demo-dos.atr)
+    TEST_ASSERT_EQUAL_UINT8(0, list.screen()[rb::host::kMenuCursor + 3]);
+    rig.inner.push_frame(frame(0x5A, 0x4B, 0x0C, 3 << 5 | 2));  // RETURN, the bar on row 2
+    TEST_ASSERT_FALSE(rig.transport.waitCommandFrame(20000).ok());
+    assert_line(rig.menu.press(rb::host::kMenuNoKey), rb::host::kMainMessage, line(" UNIDAD PARA: rota.atr"));
+}
+
+// Without a row (kMenuNoRow: no local bar on the Atari) the host keeps its own row.
+void test_no_row_keeps_the_row_of_the_host()
+{
+    MenuRig rig;
+    // A down that reaches the host is an edge move: it starts from the last row (rota.atr).
+    const MenuReply moved = rig.keys({K1, rb::host::kMenuNavDown});
+    TEST_ASSERT_EQUAL_UINT8(2, moved.screen()[rb::host::kMenuCursor + 3]);
+    assert_line(rig.press(0x0C), rb::host::kMainMessage, line(" UNIDAD PARA: rota.atr"));
+}
+
 void test_a_cold_reset_forgets_the_last_key_too()
 {
     DecoratorRig rig;
@@ -669,6 +693,8 @@ int main()
     RUN_TEST(test_key_command_gets_ack_then_the_screen_in_blocks_with_checksum);
     RUN_TEST(test_a_key_repeated_by_siov_is_answered_again_but_applied_once);
     RUN_TEST(test_a_redraw_forgets_the_last_key);
+    RUN_TEST(test_the_row_in_aux2_reaches_the_controller);
+    RUN_TEST(test_no_row_keeps_the_row_of_the_host);
     RUN_TEST(test_a_cold_reset_forgets_the_last_key_too);
     RUN_TEST(test_other_menu_commands_are_nacked_and_bad_checksums_ignored);
     RUN_TEST(test_drive_frames_pass_through_unchanged);

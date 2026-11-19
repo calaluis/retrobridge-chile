@@ -111,8 +111,15 @@ struct FakeLink final : TnfsLink {
         return {};
     }
     rb::netsio::DatagramPort& port() override { return port_; }
+    void rename(const char* server) noexcept override
+    {
+        std::snprintf(renamedTo, sizeof renamedTo, "%s", server);
+        renames.fetch_add(1);
+    }
     rb::netsio::DatagramPort& port_;
     std::optional<ErrorCode> failWith;
+    char renamedTo[33] = {};      // written on the loader thread; read after renames is seen
+    std::atomic<int> renames{0};
 };
 
 struct TestMemory final : rb::host::ImageMemory {
@@ -356,6 +363,17 @@ struct Rig {
         return rawPress(code);
     }
 
+    // The row the 6502 puts in AUX2 bits 4-0: the marked row of a shown screen with a
+    // local cursor, else kMenuNoRow (tools/make_menu.py).
+    uint8_t sentRow() const
+    {
+        const uint8_t* block = shown.bytes.data() + 2 + rb::host::kMenuCursor;
+        if (shown.action() != rb::host::kMenuActionShow || block[2] == 0) {
+            return rb::host::kMenuNoRow;
+        }
+        return block[3];
+    }
+
     // One 'K' round trip: timed, and without any allocation on the menu thread
     // (ADR-011), whether it starts, polls, ends or cancels a job.
     MenuReply rawPress(uint8_t code)
@@ -364,7 +382,7 @@ struct Rig {
         const auto begin = std::chrono::steady_clock::now();
         t_allocations = 0;
         t_counting = true;
-        const MenuReply reply = controller->key(code);
+        const MenuReply reply = controller->key(code, sentRow());
         t_counting = false;
         const auto took = std::chrono::steady_clock::now() - begin;
         TEST_ASSERT_TRUE_MESSAGE(took <= std::chrono::milliseconds(250), "a 'K' took more than 250 ms");

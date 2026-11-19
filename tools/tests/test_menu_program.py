@@ -109,6 +109,8 @@ class Menu6502:
                 self.a = self.read(ab); self.flags(self.a); pc += 3
             elif op == 0xAC:
                 self.y = self.read(ab); self.flags(self.y); pc += 3
+            elif op == 0xAE:
+                self.x = self.read(ab); self.flags(self.x); pc += 3
             elif op == 0xC0:
                 self.compare(self.y, imm); pc += 2
             elif op == 0xBD:
@@ -151,6 +153,10 @@ class Menu6502:
                 self.a &= imm; self.flags(self.a); pc += 2
             elif op == 0x2D:
                 self.a &= self.read(ab); self.flags(self.a); pc += 3
+            elif op == 0x09:
+                self.a |= imm; self.flags(self.a); pc += 2
+            elif op == 0x0D:
+                self.a |= self.read(ab); self.flags(self.a); pc += 3
             elif op == 0x49:
                 self.a ^= imm; self.flags(self.a); pc += 2
             elif op == 0xAA:
@@ -261,6 +267,36 @@ def marked_rows(screen: bytes, count: int, base: int = None):
 
 
 KEY_1, KEY_A, KEY_ESC = 0x1F, 0x3F, 0x1C
+KEY_RETURN, KEY_DELETE = 0x0C, 0x34
+FIELD = make_menu.MAIN_SOURCES + 2 * 40 + 3  # source 3, after "3  "
+
+
+def edit_reply(text: str, length: int = None, field: int = FIELD) -> bytes:
+    """Action 3 (menu-editar-servidor): the main screen with `text` in the field and the
+    edit block the host writes; no local cursor."""
+    screen = bytearray(make_menu.SCREEN_SIZE)
+    screen[field:field + len(text)] = make_menu.screen_codes(text, len(text))
+    at = make_menu.EDIT_AT
+    screen[at:at + 3] = bytes([field & 0xFF, field >> 8, len(text) if length is None else length])
+    return bytes([make_menu.ACTION_EDIT, make_menu.LAYOUT_MAIN]) + bytes(screen)
+
+
+def edit_host(first: bytes, after=None, fail_text_at=None):
+    """A host that answers the first 'K' with `first`, every 'T' with no data (None from
+    position `fail_text_at` on: no answer), and the next 'K's with `after`."""
+    after = host_reply(0, 0) if after is None else after
+    state = {"k": 0}
+
+    def siov(dcb):
+        if dcb["command"] == make_menu.TEXT_COMMAND:
+            return None if fail_text_at is not None and dcb["aux1"] >= fail_text_at else b""
+        state["k"] += 1
+        return first if state["k"] == 1 else after
+    return siov
+
+
+def field_text(screen: bytes, width: int = make_menu.EDIT_WIDTH, field: int = FIELD) -> bytes:
+    return screen[field:field + width]
 
 
 class MenuProgramTest(unittest.TestCase):
@@ -361,7 +397,7 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(len(cpu.siov_calls), 1)
         call = cpu.siov_calls[0]
         self.assertEqual((call["device"], call["unit"], call["command"]), (0x5A, 1, 0x4B))
-        self.assertEqual((call["dstats"], call["aux1"], call["aux2"]), (0x40, 0xFF, 1))
+        self.assertEqual((call["dstats"], call["aux1"], call["aux2"]), (0x40, 0xFF, 1 << 5 | make_menu.NO_ROW))
         self.assertEqual((call["buffer"], call["length"]), (self.labels["reply"], 962))
         self.assertEqual(call["timeout"], make_menu.MENU_TIMEOUT_S)
         self.assertEqual(cpu.word(make_menu.SDLSTL), self.labels["dl_main"])
@@ -372,8 +408,9 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(cpu.run_until_idle(), "waiting")
         # Shift+A goes out as A: the program sends CH AND $3F (menu-tnfs, M41-3).
         self.assertEqual([c["aux1"] for c in cpu.siov_calls], [0xFF, KEY_1, KEY_ESC, KEY_A])
-        # One sequence number per key, so the host can tell a new key from SIOV's retry.
-        self.assertEqual([c["aux2"] for c in cpu.siov_calls], [1, 2, 3, 4])
+        # One sequence number per key in bits 7-5, so the host can tell a new key from SIOV's
+        # retry; bits 4-0 hold NO_ROW, as there is no local cursor.
+        self.assertEqual([c["aux2"] for c in cpu.siov_calls], [n << 5 | make_menu.NO_ROW for n in (1, 2, 3, 4)])
 
     def test_shift_and_control_are_removed_before_sending(self):
         # A, Shift+A, Control+A, Control+Shift+S, and L (code $00, so AND gives zero).
@@ -390,7 +427,7 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(cpu.run_until_idle(), "waiting")
         calls = cpu.siov_calls
         self.assertEqual([c["aux1"] for c in calls], [0xFF, KEY_1, 0xFE, 0xFE])
-        self.assertEqual([c["aux2"] for c in calls], [1, 2, 3, 4])
+        self.assertEqual([c["aux2"] >> 5 for c in calls], [1, 2, 3, 4])
         # The wait loop counts 15 frames between the answer "wait" and the poll, and RTCLOK
         # really moved that much (one more for the instructions around the loop).
         for before, after in ((calls[1], calls[2]), (calls[2], calls[3])):
@@ -408,7 +445,7 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(cpu.run_until_idle(), "waiting")
         calls = cpu.siov_calls
         self.assertEqual([c["aux1"] for c in calls], [0xFF, KEY_1, 0x3E])
-        self.assertEqual([c["aux2"] for c in calls], [1, 2, 3])
+        self.assertEqual([c["aux2"] >> 5 for c in calls], [1, 2, 3])
         ticks = (calls[2]["rtclok"] - calls[1]["rtclok"]) & 0xFF
         self.assertLess(ticks, 15)  # sent at once, without waiting the rest
         self.assertEqual(cpu.mem[make_menu.CH], 0xFF)
@@ -420,8 +457,8 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual([c["aux1"] for c in cpu.siov_calls], [0xFF, KEY_A, 0xFE])
 
     def test_an_unknown_action_still_cold_starts(self):
-        # Only action 2 waits; any other non-zero action boots, as before menu-tnfs.
-        for action in (3, 0xFF):
+        # Only action 2 waits and action 3 edits; any other non-zero action boots, as before.
+        for action in (4, 0xFF):
             replies = [host_reply(0, 0), host_reply(action, 0)]
             cpu = Menu6502(self.block, [KEY_A], lambda dcb: replies.pop(0))
             self.assertEqual(cpu.run_until_idle(), "coldstart", action)
@@ -450,9 +487,13 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(cpu.run_until_idle(), "waiting")
         self.assertEqual(cpu.word(make_menu.SDLSTL), self.labels["dl_main"])
         message = make_menu.MAIN_MESSAGE
-        self.assertEqual(cpu.screen()[message:message + 40], make_menu.screen_line(make_menu.NO_HOST_TEXT))
-        self.assertEqual(cpu.screen()[message - 1], 0x21)  # nothing else was overwritten
-        self.assertEqual(cpu.screen()[message + 40], 0x21)
+        screen = cpu.screen()
+        self.assertEqual(screen[message:message + 40], make_menu.screen_line(make_menu.NO_HOST_TEXT))
+        # The list that was shown is gone: only the title (shared by both layouts) stays, so the
+        # main display list never shows list rows in its title modes (demo of menu-editar-servidor).
+        self.assertEqual(screen[:make_menu.TITLE_WIDTH], bytes([0x21]) * make_menu.TITLE_WIDTH)
+        rest = screen[make_menu.TITLE_WIDTH:message] + screen[message + 40:]
+        self.assertEqual(rest, bytes(len(rest)))
 
     def test_no_answer_turns_the_local_cursor_off(self):
         # A list with the bar, then no answer: the arrows go to the host again, nothing flips.
@@ -560,6 +601,16 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(marked_rows(cpu.screen(), 5), [2])
         self.assertEqual(cpu.screen()[make_menu.CURSOR_AT + 3], 2)
 
+    def test_every_key_carries_the_row_the_bar_shows(self):
+        # A key the 6502 does not take sends the marked row in AUX2 bits 4-0, so the host
+        # keeps the bar where the Atari shows it (ADR-017, enmienda 4, punto 2).
+        cpu = Menu6502(self.block, [0x8F, 0x8F, KEY_A, 0x8F, KEY_ESC], lambda dcb: cursor_reply(5, 0, 0))
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        calls = cpu.siov_calls
+        self.assertEqual([c["aux1"] for c in calls], [0xFF, KEY_A, KEY_ESC])
+        self.assertEqual([c["aux2"] & make_menu.ROW_MASK for c in calls], [make_menu.NO_ROW, 2, 1])
+        self.assertEqual([c["aux2"] >> 5 for c in calls], [1, 2, 3])
+
     def test_return_and_fire_send_the_marked_row(self):
         # Each answer draws row 1 again, so the second RETURN (with Shift) sends row 1.
         cpu, sent = self.local_run([0x8F, 0x8F, 0x0C, 0x4C], cursor_reply(5, 1, 0))
@@ -635,6 +686,89 @@ class MenuProgramTest(unittest.TestCase):
         self.assertGreater(min(codes), make_menu.NAV_FIRE)
         self.assertLess(max(codes), make_menu.POLL)
         self.assertEqual(self.labels["cur_base"], self.labels["screen"] + make_menu.CURSOR_AT)
+
+    # --- Text input (menu-editar-servidor, M43) -------------------------------------------
+
+    def test_the_field_edits_on_the_atari_and_return_sends_every_position(self):
+        keys = [0x3F, 0x15 | 0x40, 0x22, 0x1F, KEY_DELETE, 0x33,  # a, Shift+b, ., 1, Delete, 7
+                0x3F | 0x80, 0x1F | 0x40, 0x26, KEY_RETURN]       # Control+a, Shift+1, /: not text
+        cpu = Menu6502(self.block, keys, edit_host(edit_reply("srv")))
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        k = [c for c in cpu.siov_calls if c["command"] == make_menu.MENU_COMMAND]
+        t = [c for c in cpu.siov_calls if c["command"] == make_menu.TEXT_COMMAND]
+        self.assertEqual([c["aux1"] for c in k], [0xFF, make_menu.EDIT_SAVE])
+        self.assertEqual([c["aux1"] for c in t], list(range(32)))
+        self.assertEqual(bytes(c["aux2"] for c in t), b"srvaB.7".ljust(32))
+        for c in t:
+            self.assertEqual((c["device"], c["unit"], c["dstats"]), (0x5A, 1, 0x00))
+            self.assertEqual(c["timeout"], make_menu.MENU_TIMEOUT_S)
+        # The save comes last and is a new key (sequence) with no row.
+        self.assertEqual(cpu.siov_calls[-1]["command"], make_menu.MENU_COMMAND)
+        self.assertNotEqual(k[0]["aux2"] >> 5, k[1]["aux2"] >> 5)
+        self.assertEqual(k[1]["aux2"] & make_menu.ROW_MASK, make_menu.NO_ROW)
+
+    def test_the_cursor_follows_the_text_and_is_gone_before_sending(self):
+        seen = []
+
+        def siov(dcb):
+            if dcb["command"] == make_menu.TEXT_COMMAND:
+                if dcb["aux1"] == 0:
+                    seen.append(field_text(cpu.screen()))
+                return b""
+            return edit_reply("ab") if not seen else host_reply(0, 0)
+        cpu = Menu6502(self.block, [0x2D], siov)  # t
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        typed = field_text(cpu.screen())
+        self.assertEqual(typed[:3], make_menu.screen_codes("abt", 3))
+        self.assertEqual(typed[3], 0x80, "the cursor: an inverse space after the text")
+        self.assertTrue(all(b == 0 for b in typed[4:]))
+        cpu.keys = [KEY_RETURN]
+        cpu.run_until_idle(pc=self.labels["ed_key"])
+        self.assertEqual(seen[0][:4], make_menu.screen_codes("abt ", 4), "no inverse cell is sent")
+
+    def test_the_field_takes_32_characters_and_delete_stops_at_the_start(self):
+        cpu = Menu6502(self.block, [0x3F, 0x15, KEY_RETURN], edit_host(edit_reply("x" * 31)))
+        cpu.run_until_idle()
+        t = [c["aux2"] for c in cpu.siov_calls if c["command"] == make_menu.TEXT_COMMAND]
+        self.assertEqual(bytes(t), b"x" * 31 + b"a")
+        cpu = Menu6502(self.block, [KEY_DELETE, KEY_DELETE, 0x3F, KEY_RETURN], edit_host(edit_reply("")))
+        cpu.run_until_idle()
+        t = [c["aux2"] for c in cpu.siov_calls if c["command"] == make_menu.TEXT_COMMAND]
+        self.assertEqual(bytes(t), b"a".ljust(32))
+        # A length past the field from the host is taken as a full field.
+        cpu = Menu6502(self.block, [0x3F, KEY_RETURN], edit_host(edit_reply("y" * 32, length=200)))
+        cpu.run_until_idle()
+        t = [c["aux2"] for c in cpu.siov_calls if c["command"] == make_menu.TEXT_COMMAND]
+        self.assertEqual(bytes(t), b"y" * 32)
+
+    def test_esc_sends_esc_and_no_text(self):
+        cpu = Menu6502(self.block, [0x3F, KEY_ESC | 0x40], edit_host(edit_reply("srv")))
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        self.assertEqual([(c["command"], c["aux1"]) for c in cpu.siov_calls],
+                         [(make_menu.MENU_COMMAND, 0xFF), (make_menu.MENU_COMMAND, KEY_ESC)])
+
+    def test_a_text_command_without_answer_shows_that_the_host_does_not_answer(self):
+        cpu = Menu6502(self.block, [KEY_RETURN], edit_host(edit_reply("srv"), fail_text_at=5))
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        t = [c for c in cpu.siov_calls if c["command"] == make_menu.TEXT_COMMAND]
+        self.assertEqual(len(t), 6)
+        self.assertEqual(cpu.siov_calls[-1]["command"], make_menu.TEXT_COMMAND, "no save after a failure")
+        message = cpu.screen()[make_menu.MAIN_MESSAGE:make_menu.MAIN_MESSAGE + 40]
+        self.assertEqual(message, make_menu.screen_line(make_menu.NO_HOST_TEXT))
+
+    def test_the_edit_codes_stay_clear_of_every_other_code(self):
+        self.assertGreaterEqual(make_menu.EDIT_AT, max(make_menu.MAIN_END, make_menu.LIST_END))
+        self.assertEqual(make_menu.EDIT_AT + make_menu.EDIT_SIZE, make_menu.CURSOR_AT)
+        rows = range(make_menu.CONFIRM_ROW, make_menu.CONFIRM_ROW + make_menu.LIST_MAX_ENTRIES)
+        self.assertNotIn(make_menu.EDIT_SAVE, rows)
+        self.assertNotIn(make_menu.EDIT_SAVE, (make_menu.POLL, make_menu.NO_KEY))
+        self.assertGreater(make_menu.EDIT_SAVE, make_menu.NAV_FIRE)
+        self.assertNotIn(make_menu.TEXT_COMMAND, (make_menu.MENU_COMMAND, 0x4D))
+        self.assertLessEqual(3 + make_menu.EDIT_WIDTH, make_menu.LINE_WIDTH)
+        # Every key with a character maps to it, and nothing else does.
+        table = make_menu.char_table()
+        self.assertEqual(sum(1 for b in table if b), len(make_menu.KEYBOARD))
+        self.assertEqual(table[0x22], make_menu.screen_codes(".", 1)[0])
 
     def test_committed_include_matches_the_generator(self):
         include = REPO / "host" / "src" / "menu_program.inc"

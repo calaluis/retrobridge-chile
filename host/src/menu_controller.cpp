@@ -255,7 +255,7 @@ void MenuController::service()
     }
 }
 
-MenuReply MenuController::key(uint8_t code)
+MenuReply MenuController::key(uint8_t code, uint8_t row)
 {
     if (job_ != Job::None) {
         return onLoading(code);
@@ -263,6 +263,17 @@ MenuReply MenuController::key(uint8_t code)
     // $FF (redraw) and $FE (poll) are not keys: compared before the mask.
     if (code == kMenuNoKey || code == kMenuPollKey) {
         return render(kMenuActionShow);
+    }
+    // Editing a server (menu-editar-servidor): kMenuEditSave and Esc, compared before
+    // the row and the mask (kMenuEditSave is not a key of the keyboard matrix).
+    if (view_ == View::Edit) {
+        onEdit(code);
+        return render(kMenuActionShow);
+    }
+    // The bar may have moved on the Atari since the host drew it: start from the row it
+    // shows. A row not on the screen changes nothing.
+    if (row != kMenuNoRow) {
+        (void)selectRow(row);
     }
     // RETURN or fire on a row the 6502 marked by itself (N007): the cursor goes there
     // first, then it is RETURN on the marked row. A row not on the screen does nothing.
@@ -314,6 +325,8 @@ MenuReply MenuController::key(uint8_t code)
             onFolderPick(key, driveDigit(key, digit));
         }
         break;
+    case View::Edit:
+        break;  // answered above
     }
     if (job_ != Job::None) {
         return advance();  // the key started a TNFS job
@@ -375,8 +388,7 @@ void MenuController::onMain(int digit, uint8_t key)
         }
         event("menu_pending", detail);
     } else if (key == kKeyE) {
-        say(" PENDIENTE: E NECESITA ENTRADA DE TEXTO");
-        event("menu_pending", "edit server: needs text input on the Atari and a writable source list");
+        startEdit();
     } else if (key == kKeyU) {
         view_ = View::Unmount;
         driveLine_ = 0;
@@ -508,6 +520,8 @@ bool MenuController::selectRow(unsigned row) noexcept
         }
         folderCursor_.row = static_cast<uint8_t>(row);
         return true;
+    case View::Edit:
+        return false;  // the 6502 has no bar while it edits
     }
     return false;
 }
@@ -678,6 +692,9 @@ bool MenuController::boot()
 
 MenuReply MenuController::render(uint8_t action) const noexcept
 {
+    if (view_ == View::Edit && action == kMenuActionShow) {
+        action = kMenuActionEdit;  // the 6502 edits the row (menu-editar-servidor)
+    }
     MenuReply reply;
     reply.bytes[0] = action;
     uint8_t* screen = reply.bytes.data() + 2;
@@ -722,8 +739,10 @@ MenuReply MenuController::render(uint8_t action) const noexcept
     reply.bytes[1] = kMenuLayoutMain;
     std::memcpy(screen, kMenuMainTemplate, kMenuScreenSize);
     put(screen, kMainSources, kMenuLineWidth, "1  SD", false);
+    char edited[kMenuEditWidth + 1];
+    const std::size_t editedLength = view_ == View::Edit ? editedText(edited) : 0;
     for (unsigned n = 2; n <= kDrives; ++n) {
-        const char* name = sources_.name(n);
+        const char* name = view_ == View::Edit && n == editSource_ ? edited : sources_.name(n);
         std::snprintf(text, sizeof text, "%u  %.*s", n, static_cast<int>(kLabelColumns), name != nullptr ? name : "");
         put(screen, kMainSources + (n - 1) * kMenuLineWidth, kMenuLineWidth, text, false);
     }
@@ -735,7 +754,14 @@ MenuReply MenuController::render(uint8_t action) const noexcept
     }
     put(screen, kMainTape, kMenuLineWidth, "C: SIN CINTA", true);
     const bool local = action == kMenuActionShow && job_ == Job::None;  // the 6502 moves the bar (N007)
-    if (view_ == View::Main) {
+    if (view_ == View::Edit) {
+        // No bar: the 6502 shows its own cursor in the field (after "n  ").
+        cursorBlock(screen, kMainSources, 0, 0, 0);
+        const unsigned field = kMainSources + (editSource_ - 1) * kMenuLineWidth + 3;
+        screen[kMenuEdit] = static_cast<uint8_t>(field & 0xFF);
+        screen[kMenuEdit + 1] = static_cast<uint8_t>(field >> 8);
+        screen[kMenuEdit + 2] = static_cast<uint8_t>(editedLength);
+    } else if (view_ == View::Main) {
         invert(screen, kMainSources + sourceLine_ * kMenuLineWidth);
         cursorBlock(screen, kMainSources, local ? kDrives : 0, sourceLine_, 0);
     } else {  // Pick, FolderPick, Unmount: the drive under the cursor
@@ -749,6 +775,101 @@ MenuReply MenuController::render(uint8_t action) const noexcept
         put(screen, kMainMessage, kMenuLineWidth, message_.data(), true);
     }
     return reply;
+}
+
+// ---------------------------------------------------------------------------
+// Editing a server (menu-editar-servidor, M43).
+
+void MenuController::startEdit()
+{
+    const unsigned source = sourceLine_ + 1u;
+    if (source == 1) {
+        say(" LA FUENTE 1 ES LOCAL");
+        event("menu_pending", "edit server: source 1 is the local folder");
+        return;
+    }
+    if (sourcesFile_ == nullptr) {
+        say(" SIN ARCHIVO DE FUENTES");
+        event("menu_pending", "edit server: no --sources file");
+        return;
+    }
+    view_ = View::Edit;
+    editSource_ = source;
+    editText_.fill(' ');
+    const char* name = sources_.name(source);
+    for (std::size_t i = 0; name != nullptr && name[i] != '\0' && i < editText_.size(); ++i) {
+        editText_[i] = name[i];
+    }
+    say(" RETURN GUARDA, ESC CANCELA");
+}
+
+void MenuController::text(uint8_t position, uint8_t ascii) noexcept
+{
+    if (view_ == View::Edit && position < editText_.size()) {
+        editText_[position] = static_cast<char>(ascii);
+    }
+}
+
+std::size_t MenuController::editedText(char* out) const noexcept
+{
+    std::size_t length = editText_.size();
+    while (length > 0 && editText_[length - 1] == ' ') {
+        --length;
+    }
+    std::memcpy(out, editText_.data(), length);
+    out[length] = '\0';
+    return length;
+}
+
+void MenuController::onEdit(uint8_t code)
+{
+    if (code == kMenuEditSave) {
+        saveEdit();
+    } else if ((code & kMenuKeyMask) == kKeyEsc) {
+        view_ = View::Main;
+        message_[0] = '\0';
+    }
+    // Anything else: the 6502 sends only those two while it edits; the field is drawn again.
+}
+
+void MenuController::saveEdit()
+{
+    char name[kMenuEditWidth + 1];
+    char detail[160];
+    const std::size_t length = editedText(name);
+    if (length == 0) {  // empty: as Esc (clarify, 2026-11-19)
+        view_ = View::Main;
+        message_[0] = '\0';
+        return;
+    }
+    if (!MenuSources::validServer(name)) {
+        say(" NOMBRE O IPV4 NO VALIDO");  // still editing, with the text typed
+        std::snprintf(detail, sizeof detail, "source=%u reason=not a name or IPv4: %s", editSource_, name);
+        event("menu_source_rejected", detail);
+        return;
+    }
+    // An empty row past the last source adds one: it takes the first free number.
+    const std::size_t index = editSource_ - 2u < sources_.count() ? editSource_ - 2u : sources_.count();
+    char error[96];
+    view_ = View::Main;
+    if (!writeSourcesFile(sourcesFile_, index, name, error, sizeof error)) {
+        say(" NO SE PUDO GUARDAR EL ARCHIVO");
+        std::snprintf(detail, sizeof detail, "source=%u reason=%s", editSource_, error);
+        event("menu_source_rejected", detail);
+        return;
+    }
+    const unsigned number = sources_.set(static_cast<unsigned>(index + 2), name);
+    if (loader_ != nullptr) {
+        loader_->changeServer(number, name);
+    }
+    sourceLine_ = static_cast<uint8_t>(number - 1);
+    if (number == editSource_) {
+        say(" FUENTE %u GUARDADA", number);
+    } else {
+        say(" GUARDADA COMO FUENTE %u", number);
+    }
+    std::snprintf(detail, sizeof detail, "source=%u name=%s", number, name);
+    event("menu_source_saved", detail);
 }
 
 // ---------------------------------------------------------------------------

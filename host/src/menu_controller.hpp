@@ -13,8 +13,11 @@
 // Screens and keys (keyboard codes, Shift and Control ignored):
 //   main      1 opens the local source (--images); 2..8 open a TNFS source
 //             (menu-tnfs; without a loader they say the client is missing);
-//             E shows what is missing (no text input yet); A boots the image
+//             E edits the server of the source under the bar, or adds one
+//             on an empty row (menu-editar-servidor); A boots the image
 //             assigned to D1; U asks which drive to unmount.
+//   edit      action 3: the 6502 edits the row by itself; its text comes with
+//             text() and 'K' kMenuEditSave saves it in --sources; Esc cancels.
 //   list      A..T choose an image of the local source; Esc goes back.
 //   pick      after a choice, 1..8 is the drive; Esc cancels.
 //   unmount   1..8 is the drive to empty; Esc cancels.
@@ -76,7 +79,7 @@ class MenuController {
 public:
     static constexpr unsigned kDrives = 8;
 
-    MenuController(const MenuCatalog& catalog, const MenuSources& sources, rb::app::ImageRepository& repository,
+    MenuController(const MenuCatalog& catalog, MenuSources& sources, rb::app::ImageRepository& repository,
                    rb::app::InlineDriveMailbox& mailbox, MenuEvents* events, MenuLoader* loader = nullptr) noexcept
         : catalog_(catalog),
           sources_(sources),
@@ -91,13 +94,20 @@ public:
     }
 
     void onColdReset() noexcept;
+    // The --sources file E rewrites (menu-editar-servidor); nullptr: E says there is none.
+    void setSourcesFile(const char* path) noexcept { sourcesFile_ = path; }
+    // Command 'T': character `ascii` at `position` of the text being edited. Writing
+    // a position again gives the same text, so a retry of SIOV changes nothing.
+    void text(uint8_t position, uint8_t ascii) noexcept;
     bool coldResetPending() const noexcept { return coldResetPending_; }
     bool menuOnD1() const noexcept { return menuOnD1_; }
 
     void service();
     // false if the listing block could not be reserved (main does not start then).
     bool ready() const noexcept { return folder_.ready(); }
-    MenuReply key(uint8_t code);
+    // `row`: the row the Atari's local bar shows (AUX2 bits 4-0), or kMenuNoRow. A key
+    // first puts the cursor there, so a key the host does not use keeps the bar in place.
+    MenuReply key(uint8_t code, uint8_t row = static_cast<uint8_t>(kMenuNoRow));
 
     // Name shown for drive 1..8 (for D1, the assigned image), or nullptr: the
     // catalog name of a local image, the display name of a TNFS one.
@@ -117,7 +127,7 @@ private:
         uint16_t page = 0;
     };
     static constexpr std::size_t kStackDepth = 32;  // folder levels remembered for Esc (M42-3)
-    enum class View : uint8_t { Main, List, Pick, Unmount, Folder, FolderPick };
+    enum class View : uint8_t { Main, List, Pick, Unmount, Folder, FolderPick, Edit };
     enum class InFlight : uint8_t { None, Menu, Boot, Mount, Unmount };
     enum class Job : uint8_t { None, Open, Enter, Up, Fetch };
 
@@ -143,6 +153,11 @@ private:
     void onList(uint8_t code);
     void onPick(int digit);
     void onUnmount(int digit);
+    void startEdit();
+    void onEdit(uint8_t code);
+    void saveEdit();
+    // The edited text without the spaces after it, in `out` (kMenuEditWidth + 1 bytes).
+    std::size_t editedText(char* out) const noexcept;
     bool boot();
     void assignD1(EntryIndex entry);
     void mountOn(unsigned drive, EntryIndex entry);
@@ -186,7 +201,7 @@ private:
     Cursor popPosition() noexcept;
 
     const MenuCatalog& catalog_;
-    const MenuSources& sources_;
+    MenuSources& sources_;
     rb::app::ImageRepository& repository_;
     rb::app::InlineDriveMailbox& mailbox_;
     rb::app::MountDiskImage mount_;
@@ -224,6 +239,11 @@ private:
     unsigned jobDrive_ = 0;
     char jobName_[TnfsFolder::kDisplayWidth + 1] = {};
     uint8_t percent_ = 0;
+
+    // E (menu-editar-servidor): the source edited (2..8) and the field the 6502 sends.
+    const char* sourcesFile_ = nullptr;
+    unsigned editSource_ = 0;
+    std::array<char, kMenuEditWidth> editText_{};
 
     std::array<char, kMenuLineWidth + 1> message_{};
     bool coldResetPending_ = false;

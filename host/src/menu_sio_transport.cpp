@@ -40,6 +40,10 @@ void MenuSioTransport::serveMenu(const CommandBytes& command)
         inner_.releaseDataLine();
         return;
     }
+    if (command.bytes[1] == kMenuTextCommand) {
+        serveText(command);
+        return;
+    }
     if (command.bytes[1] != kMenuCommand) {
         ++stats_.menuNaks;
         const uint8_t nak = rb::sio::code::kNak;
@@ -55,6 +59,7 @@ void MenuSioTransport::serveMenu(const CommandBytes& command)
     }
     const uint64_t ackEnd = clock_.nowMicros();
     const uint8_t key = command.bytes[2];
+    // AUX2: the sequence number in bits 7-5, the row of the local bar in bits 4-0.
     const uint8_t sequence = command.bytes[3];
     // SIOV retries a command whose reply did not arrive with the same AUX1 and
     // AUX2. Acting on it again would apply the key twice (a second mount, or a
@@ -63,7 +68,7 @@ void MenuSioTransport::serveMenu(const CommandBytes& command)
     if (key != kMenuNoKey && haveLast_ && key == lastKey_ && sequence == lastSequence_) {
         ++stats_.menuRetries;
     } else {
-        const MenuReply reply = controller_.key(key);
+        const MenuReply reply = controller_.key(key, static_cast<uint8_t>(sequence & kMenuRowMask));
         response_[0] = rb::sio::code::kComplete;
         for (std::size_t i = 0; i < MenuReply::kSize; ++i) {
             response_[1 + i] = reply.bytes[i];
@@ -84,6 +89,25 @@ void MenuSioTransport::serveMenu(const CommandBytes& command)
             break;  // the Atari's SIOV times out and shows that the host does not answer
         }
     }
+    inner_.releaseDataLine();
+}
+
+// 'T' (menu-editar-servidor): AUX1 is a position of the text being edited, AUX2 its
+// ASCII character. No data either way: ACK, then COMPLETE after the same delay as
+// SioSession. A retry writes the same character again, so nothing is remembered.
+void MenuSioTransport::serveText(const CommandBytes& command)
+{
+    ++stats_.textCommands;
+    const uint8_t ack = rb::sio::code::kAck;
+    if (!inner_.send(Span<const uint8_t>{&ack, 1}).ok()) {
+        inner_.releaseDataLine();
+        return;
+    }
+    const uint64_t ackEnd = clock_.nowMicros();
+    controller_.text(command.bytes[2], command.bytes[3]);
+    clock_.waitUntil(ackEnd + rb::sio::SioSession::kCompleteDelayUs);
+    const uint8_t complete = rb::sio::code::kComplete;
+    (void)inner_.send(Span<const uint8_t>{&complete, 1});
     inner_.releaseDataLine();
 }
 

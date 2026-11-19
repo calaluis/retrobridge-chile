@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 
 #include "menu_controller.hpp"
 #include "rb/app/ports/clock.hpp"
@@ -22,6 +23,8 @@
 #include "udp_tnfs_port.hpp"
 
 namespace rb::host {
+
+static_assert(TnfsLoader::kMaxServer == MenuSources::kMaxName, "a link holds any name of --sources");
 
 // One line for the log about a request: "cmd=OPEN seq=3 flags=0x0001
 // mode=0x0000 path=/a.atr". Unknown commands are shown by number; a datagram
@@ -49,10 +52,12 @@ private:
 
 class UdpTnfsLink final : public TnfsLink {
 public:
-    // `server` must outlive the link (MenuSources keeps it).
+    // The link keeps its own copy of `server` ("" for a source not configured yet),
+    // so the loader thread never reads MenuSources while the menu edits it.
     UdpTnfsLink(const char* server, unsigned source, NameResolver& resolver, MenuEvents& events) noexcept
-        : server_(server), udp_(resolver), trace_(udp_, source, events)
+        : udp_(resolver), trace_(udp_, source, events)
     {
+        rename(server);
     }
     UdpTnfsLink(const UdpTnfsLink&) = delete;
     UdpTnfsLink& operator=(const UdpTnfsLink&) = delete;
@@ -60,9 +65,14 @@ public:
     // NotFound when the name does not resolve (ERROR: SERVIDOR NO ENCONTRADO).
     rb::core::Result<void> open() override { return udp_.open(server_); }
     rb::netsio::DatagramPort& port() override { return trace_; }
+    void rename(const char* server) noexcept override
+    {
+        std::snprintf(server_, sizeof server_, "%s", server != nullptr ? server : "");
+    }
+    const char* server() const noexcept { return server_; }
 
 private:
-    const char* server_;
+    char server_[TnfsLoader::kMaxServer + 1] = {};
     UdpTnfsPort udp_;
     TnfsTracePort trace_;
 };

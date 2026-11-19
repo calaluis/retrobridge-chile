@@ -30,6 +30,7 @@ struct MenuTransportStats {
     uint32_t menuNaks = 0;
     uint32_t droppedAfterReset = 0;
     uint32_t menuRetries = 0;  // a key repeated by SIOV, answered with the same reply
+    uint32_t textCommands = 0;  // 'T': characters of an edited server (menu-editar-servidor)
 };
 
 class MenuSioTransport final : public rb::app::SioTransport {
@@ -47,6 +48,7 @@ public:
 
 private:
     void serveMenu(const rb::app::CommandBytes& command);
+    void serveText(const rb::app::CommandBytes& command);
 
     rb::app::SioTransport& inner_;
     rb::app::Clock& clock_;

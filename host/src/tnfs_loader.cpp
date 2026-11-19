@@ -302,6 +302,48 @@ void TnfsLoader::recycle(std::size_t slot) noexcept
     wake_.notify_all();
 }
 
+void TnfsLoader::changeServer(unsigned source, const char* server) noexcept
+{
+    if (source < 2 || source > kMaxSource || links_[source] == nullptr) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::snprintf(rename_[source], sizeof rename_[source], "%s", server);
+        renamed_[source] = true;
+        renameReady_ = true;
+    }
+    wake_.notify_all();
+}
+
+// Loader thread: a renamed source ends its session with the old server (one
+// UMOUNT, without waiting, as at shutdown) and its link takes the new name; the
+// next job opens it.
+void TnfsLoader::applyRenames()
+{
+    char names[kMaxSource + 1][kMaxServer + 1] = {};
+    bool renamed[kMaxSource + 1] = {};
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (unsigned n = 2; n <= kMaxSource; ++n) {
+            renamed[n] = renamed_[n];
+            renamed_[n] = false;
+            std::memcpy(names[n], rename_[n], sizeof names[n]);
+        }
+        renameReady_ = false;
+    }
+    for (unsigned n = 2; n <= kMaxSource; ++n) {
+        if (!renamed[n]) {
+            continue;
+        }
+        if (opened_[n]) {
+            clients_[n]->umountWithoutWaiting();
+            opened_[n] = false;
+        }
+        links_[n]->rename(names[n]);
+    }
+}
+
 // Loader thread: frees every marked slot it can. One still open or attached
 // keeps its mark for the next wake; a free one drops it.
 void TnfsLoader::freeRecycled()
@@ -347,7 +389,8 @@ void TnfsLoader::run()
         bool stopping = false;
         {
             std::unique_lock<std::mutex> lock(mutex_);
-            wake_.wait(lock, [this] { return stop_ || pendingReady_ || discard_ || recycleReady_; });
+            wake_.wait(lock,
+                       [this] { return stop_ || pendingReady_ || discard_ || recycleReady_ || renameReady_; });
             if (discard_) {
                 freeSlot = doneHasSlot_;
                 slot = doneStatus_.slot;
@@ -372,6 +415,7 @@ void TnfsLoader::run()
         if (stopping) {
             return;
         }
+        applyRenames();  // before every job, so a source opens the server it names now
         freeRecycled();  // before every job, so its image finds the slots given back
         if (haveJob) {
             Outcome out;
@@ -412,6 +456,15 @@ void TnfsLoader::execute(const Job& job, Outcome& out)
         list(job, client, out);
     } else {
         fetch(job, client, out);
+    }
+    // A server that does not answer may have moved (its name now resolves to another
+    // address): the next job resolves the name again and opens a new socket. Seen in
+    // the demo of menu-editar-servidor, after a DNS record was fixed.
+    if (out.status.kind == LoaderStatus::Kind::Error && out.status.error == LoaderError::NoResponde) {
+        if (client.mounted()) {
+            client.umountWithoutWaiting();
+        }
+        opened_[source] = false;
     }
 }
 

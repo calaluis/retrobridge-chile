@@ -173,6 +173,13 @@ rb_add_host_test(test_host_menu menu/test_host_menu.cpp
 target_include_directories(test_host_menu PRIVATE ${rb_root}/host/src)
 target_compile_definitions(test_host_menu PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
 set_tests_properties(test_host_menu PROPERTIES FIXTURES_REQUIRED menu_images)
+# Memory slots for images brought over TNFS and the *tnfs*<n> locations (menu-tnfs T009).
+find_package(Threads REQUIRED)
+rb_add_host_test(test_memory_image_store menu/test_memory_image_store.cpp ${rb_root}/host/src/menu_image.cpp)
+target_include_directories(test_memory_image_store PRIVATE ${rb_root}/host/src)
+target_compile_definitions(test_memory_image_store PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
+target_link_libraries(test_memory_image_store PRIVATE Threads::Threads)
+set_tests_properties(test_memory_image_store PROPERTIES FIXTURES_REQUIRED menu_images)
 
 # SHA-256 of the images loaded over TNFS (menu-tnfs T004). RB_REF_ATR, when set,
 # points at the spec's reference ATR (not in the repository).

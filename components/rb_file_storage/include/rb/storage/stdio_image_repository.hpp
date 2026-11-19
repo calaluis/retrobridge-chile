@@ -20,17 +20,25 @@ namespace rb::storage {
 // context, outside the SIO path, H3-13).
 // Used only from the storage context (ADR-014). The ownership rules (no close
 // or reuse while attached) are enforced by the ImageRepository base (H2-11).
+// The base path is configuration from outside (a command-line folder, a build
+// directory): an empty one or one longer than kMaxBasePath is not copied and
+// every open() then fails with InvalidArgument; baseValid() reports it.
 template <std::size_t Slots>
 class StdioImageRepository final : public rb::app::ImageRepository {
 public:
-    static constexpr std::size_t kMaxBasePath = 127;
+    static constexpr std::size_t kMaxBasePath = kMaxImageBase;
 
     explicit StdioImageRepository(const char* basePath)
     {
+        RB_ASSERT(basePath != nullptr);  // programming error
         const std::size_t length = std::strlen(basePath);
-        RB_ASSERT(length > 0 && length <= kMaxBasePath);  // configuration error
-        std::memcpy(base_.data(), basePath, length + 1);
+        if (length > 0 && length <= kMaxBasePath) {
+            std::memcpy(base_.data(), basePath, length + 1);
+            baseValid_ = true;
+        }
     }
+
+    bool baseValid() const noexcept { return baseValid_; }
 
     std::size_t open_count() const noexcept
     {
@@ -42,9 +50,12 @@ public:
     }
 
 protected:
-    // InvalidLocation, NoFreeSlot, NotFound or IoError.
+    // InvalidArgument (unusable base), InvalidLocation, NoFreeSlot, NotFound or IoError.
     rb::core::Result<rb::domain::ImageByteSource*> doOpen(const rb::app::ImageLocation& location) override
     {
+        if (!baseValid_) {
+            return rb::core::Failure{rb::core::ErrorCode::InvalidArgument};
+        }
         std::array<char, kMaxImagePath + 1> path{};
         const rb::core::Result<std::size_t> built =
             build_image_path(base_.data(), location, rb::core::Span<char>{path});
@@ -78,6 +89,7 @@ protected:
 private:
     std::array<StdioByteSource, Slots> slots_{};
     std::array<char, kMaxBasePath + 1> base_{};
+    bool baseValid_ = false;
 };
 
 }  // namespace rb::storage

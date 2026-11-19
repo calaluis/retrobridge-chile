@@ -27,7 +27,9 @@ H3 debe leer imágenes ATR de una microSD FAT32 en el ESP32 reutilizando los pue
    - una `/` o `\` inicial;
    - cualquier `\` o `:`;
    - segmentos vacíos, `.` o `..`;
-   - rutas que no caben en el búfer fijo (255 caracteres).
+   - rutas que no caben en el búfer fijo (387 caracteres: base de hasta 259, `/` y ubicación de hasta 127).
+   Una base vacía o de más de 259 caracteres (MAX_PATH de Windows menos el NUL) no aborta: `baseValid()` es
+   falso y cada `open()` devuelve `InvalidArgument`.
 4. **Mapeo de errores:**
    - `ENOENT`/`ENOTDIR`, o algo que no es un archivo regular (comprobado con `stat`) → `NotFound`;
    - otros errores de apertura → `IoError`;

@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <optional>
+#include <string>
 
 #include "contracts/image_byte_source_contract.hpp"
 #include "contracts/image_repository_contract.hpp"
@@ -48,7 +49,9 @@ uint8_t sd_expected(uint32_t offset)
 
 void data_path(const char* name, std::array<char, 300>& out)
 {
-    std::snprintf(out.data(), out.size(), "%s/%s", RB_TEST_DATA_DIR, name);
+    const int written = std::snprintf(out.data(), out.size(), "%s/%s", RB_TEST_DATA_DIR, name);
+    TEST_ASSERT_TRUE_MESSAGE(written > 0 && static_cast<std::size_t>(written) < out.size(),
+                             "RB_TEST_DATA_DIR too long for the test's path buffer");
 }
 
 // Writes `header` followed by FakeByteSource's deterministic data, `size` bytes in total.
@@ -156,6 +159,47 @@ static void test_directory_is_not_an_image(void)
     TEST_ASSERT_EQUAL_size_t(0, repository.open_count());
 }
 
+// --- Base path length ------------------------------------------------------------------------
+
+// RB_TEST_DATA_DIR padded with "/." segments up to `length` characters: the same
+// folder, spelled long, as a deep build directory or images folder would be.
+std::string padded_base(std::size_t length)
+{
+    std::string base = RB_TEST_DATA_DIR;
+    TEST_ASSERT_TRUE(base.size() + 2 <= length);
+    if ((length - base.size()) % 2 != 0) {
+        base += '/';  // "dir//." still names dir
+    }
+    while (base.size() < length) {
+        base += "/.";
+    }
+    TEST_ASSERT_EQUAL_size_t(length, base.size());
+    return base;
+}
+
+static void test_long_base_path_opens_images(void)
+{
+    const std::string base = padded_base(200);  // longer than 127, within Windows MAX_PATH
+    StdioImageRepository<1> repository{base.c_str()};
+    TEST_ASSERT_TRUE(repository.baseValid());
+    ImageByteSource* source = repository.open(location("sub/dd.atr")).value();
+    TEST_ASSERT_EQUAL_UINT32(kAtrHeaderSize + dd_data_size(720), source->size());
+    repository.close(source);
+}
+
+static void test_too_long_or_empty_base_path_is_an_error_not_an_abort(void)
+{
+    const std::string tooLong(StdioImageRepository<1>::kMaxBasePath + 1, 'a');
+    StdioImageRepository<1> longRepository{tooLong.c_str()};
+    TEST_ASSERT_FALSE(longRepository.baseValid());
+    TEST_ASSERT_TRUE(longRepository.open(location("sd.atr")).error() == ErrorCode::InvalidArgument);
+    TEST_ASSERT_EQUAL_size_t(0, longRepository.open_count());
+
+    StdioImageRepository<1> emptyRepository{""};
+    TEST_ASSERT_FALSE(emptyRepository.baseValid());
+    TEST_ASSERT_TRUE(emptyRepository.open(location("sd.atr")).error() == ErrorCode::InvalidArgument);
+}
+
 // --- Sector reads through the domain -------------------------------------------------------
 
 static void test_reads_128_and_256_byte_sectors_and_the_last_one(void)
@@ -219,6 +263,8 @@ int main(void)
     RUN_TEST(test_repository_meets_contract);
     RUN_TEST(test_invalid_paths_are_rejected_without_using_a_slot);
     RUN_TEST(test_directory_is_not_an_image);
+    RUN_TEST(test_long_base_path_opens_images);
+    RUN_TEST(test_too_long_or_empty_base_path_is_an_error_not_an_abort);
     RUN_TEST(test_reads_128_and_256_byte_sectors_and_the_last_one);
     RUN_TEST(test_invalid_atr_is_reported_by_the_domain);
     RUN_TEST(test_file_truncated_after_open_reports_io_error);

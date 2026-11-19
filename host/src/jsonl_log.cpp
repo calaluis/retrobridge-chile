@@ -72,6 +72,7 @@ void JsonlLog::end()
 
 void JsonlLog::onDatagram(bool outbound, rb::core::Span<const uint8_t> datagram)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     begin("datagram");
     std::fprintf(file_, ",\"dir\":\"%s\",\"type\":\"%s\",\"len\":%u,\"hex\":\"", outbound ? "out" : "in",
                  datagram.empty() ? "EMPTY" : messageName(datagram[0]), static_cast<unsigned>(datagram.size()));
@@ -84,6 +85,7 @@ void JsonlLog::onDatagram(bool outbound, rb::core::Span<const uint8_t> datagram)
 
 void JsonlLog::step(StepOutcome outcome)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     begin("step");
     std::fprintf(file_, ",\"outcome\":\"%s\"", outcomeName(outcome));
     end();
@@ -91,6 +93,7 @@ void JsonlLog::step(StepOutcome outcome)
 
 void JsonlLog::event(const char* name, const char* detail)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     begin("event");
     std::fprintf(file_, ",\"name\":\"%s\",\"detail\":\"", name);
     // The detail may carry a file name of the images folder (Issue #38): escape
@@ -112,6 +115,7 @@ void JsonlLog::event(const char* name, const char* detail)
 
 void JsonlLog::summary(const rb::netsio::NetSioStats& s)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     begin("summary");
     std::fprintf(file_,
                  ",\"datagramsIn\":%u,\"datagramsOut\":%u,\"malformed\":%u,\"ignoredMessages\":%u,"

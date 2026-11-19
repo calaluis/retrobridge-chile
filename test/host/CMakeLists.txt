@@ -207,3 +207,18 @@ target_include_directories(test_menu_tnfs PRIVATE ${rb_root}/host/src)
 target_compile_definitions(test_menu_tnfs PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
 target_link_libraries(test_menu_tnfs PRIVATE rb_net_tnfs Threads::Threads)
 set_tests_properties(test_menu_tnfs PROPERTIES FIXTURES_REQUIRED menu_images)
+
+# What main.cpp wires for TNFS: request trace, UDP link, shared JSONL log (menu-tnfs T013).
+rb_add_host_test(test_tnfs_link menu/test_tnfs_link.cpp ${rb_root}/host/src/tnfs_link.cpp
+                 ${rb_root}/host/src/udp_tnfs_port.cpp ${rb_root}/host/src/udp_datagram_port.cpp
+                 ${rb_root}/host/src/jsonl_log.cpp ${rb_root}/host/src/tnfs_loader.cpp
+                 ${rb_root}/host/src/tnfs_folder.cpp ${rb_root}/host/src/sha256.cpp
+                 ${rb_root}/host/src/menu_controller.cpp ${rb_root}/host/src/menu_catalog.cpp
+                 ${rb_root}/host/src/menu_image.cpp ${rb_root}/host/src/menu_sources.cpp)
+target_include_directories(test_tnfs_link PRIVATE ${rb_root}/host/src)
+target_compile_definitions(test_tnfs_link PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
+target_link_libraries(test_tnfs_link PRIVATE rb_net_tnfs rb_netsio Threads::Threads)
+if(WIN32)
+    target_link_libraries(test_tnfs_link PRIVATE ws2_32)
+endif()
+set_tests_properties(test_tnfs_link PROPERTIES FIXTURES_REQUIRED menu_images)

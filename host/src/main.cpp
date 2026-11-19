@@ -12,8 +12,10 @@
 // #40, ADR-017) serves the RetroBridge menu as D1 after every cold reset and
 // drives D2..D8: the main screen shows the sources and the drives, source 1 is
 // the folder, an image chosen there is mounted in the drive the user picks, and
-// A boots D1. --sources lists sources 2..8 (one per line, shown only: opening
-// them needs a TNFS client that does not exist yet).
+// A boots D1. --sources lists sources 2..8, one TNFS server name per line
+// (menu-tnfs, ADR-017 amendment 2): pressing 2..8 lists that server read-only
+// over UDP 16384, and an image chosen there is brought whole into memory by the
+// loader thread. The log records every TNFS request, with the flags of OPEN.
 //
 // --peer netsiohub accepts the hub's trailing byte (decision D2); the default is
 // strict FEP-003. --seconds 0 runs until the process is stopped.
@@ -21,6 +23,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 
 #include "file_identity.hpp"
 #include "host_clock.hpp"
@@ -42,7 +45,10 @@
 #include "rb/sio/sio_session.hpp"
 #include "rb/storage/image_path.hpp"
 #include "rb/storage/stdio_image_repository.hpp"
+#include "tnfs_link.hpp"
+#include "tnfs_loader.hpp"
 #include "udp_datagram_port.hpp"
+#include "udp_tnfs_port.hpp"
 
 namespace {
 
@@ -203,13 +209,15 @@ private:
 
 // Registers with the hub and runs the session until --seconds or a dead hub.
 // afterStep runs after every step, outside any transaction.
-// onStop runs once, before the summary, while the log is still open.
+// onStop runs once, before the summary, while the log is still open; also when
+// the hub does not answer.
 template <typename AfterStep, typename OnStop>
 int serve(const Options& options, rb::host::HostClock& clock, rb::host::JsonlLog& log, std::FILE* logFile,
           rb::netsio::NetSioSioTransport& transport, rb::sio::SioSession& session, AfterStep afterStep, OnStop onStop)
 {
     if (!transport.connect().ok()) {
         log.event("connect", "failed: no PING_RESPONSE");
+        onStop();  // also here: --images stops the TNFS loader before the log closes
         log.summary(transport.stats());
         std::fclose(logFile);
         std::fprintf(stderr, "retrobridge_host: no answer from 127.0.0.1:%u\n", options.port);
@@ -387,11 +395,27 @@ int runMenu(const Options& options)
     rb::app::DriveBay bay{rb::host::MenuController::kDrives};
     rb::app::InlineDriveMailbox mailbox;
     LogMenuEvents events{log};
-    rb::host::MenuController controller{catalog, sources, repository, mailbox, &events};
+    // TNFS: one link per configured source, and the loader thread. It is
+    // stopped in onStop, before the log is closed (it writes to it).
+    rb::host::SystemNameResolver resolver;
+    std::optional<rb::host::UdpTnfsLink> links[rb::host::TnfsLoader::kMaxSource + 1];
+    rb::host::TnfsLink* linkOf[rb::host::TnfsLoader::kMaxSource + 1] = {};
+    for (unsigned n = 2; n <= rb::host::TnfsLoader::kMaxSource; ++n) {
+        if (sources.name(n) != nullptr) {
+            links[n].emplace(sources.name(n), n, resolver, events);
+            linkOf[n] = &*links[n];
+        }
+    }
+    rb::host::HostTnfsClock tnfsClock{clock};
+    rb::host::HeapImageMemory imageMemory;
+    std::optional<rb::host::TnfsLoader> loader;
+    loader.emplace(linkOf, repository.memory(), tnfsClock, imageMemory);
+    rb::host::MenuController controller{catalog, sources, repository, mailbox, &events, &*loader};
     ResetWatch watch{log, controller};
 
     rb::host::UdpDatagramPort port;
     if (!port.open(static_cast<uint16_t>(options.port)).ok()) {
+        loader.reset();  // its thread is joined before the log closes
         std::fclose(logFile);
         std::fprintf(stderr, "retrobridge_host: cannot open UDP socket to 127.0.0.1:%u\n", options.port);
         return 1;
@@ -427,7 +451,8 @@ int runMenu(const Options& options)
     controller.onColdReset();
     controller.service();
     return serve(options, clock, log, logFile, netsio, session, [&controller] { controller.service(); },
-                 [&transport, &log] {
+                 [&transport, &log, &loader] {
+                     loader.reset();  // joins the loader thread while the log is still open
                      const rb::host::MenuTransportStats& m = transport.stats();
                      char stats[128];
                      std::snprintf(stats, sizeof stats,

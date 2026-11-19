@@ -151,6 +151,10 @@ class Menu6502:
                 self.a &= imm; self.flags(self.a); pc += 2
             elif op == 0x2D:
                 self.a &= self.read(ab); self.flags(self.a); pc += 3
+            elif op == 0x09:
+                self.a |= imm; self.flags(self.a); pc += 2
+            elif op == 0x0D:
+                self.a |= self.read(ab); self.flags(self.a); pc += 3
             elif op == 0x49:
                 self.a ^= imm; self.flags(self.a); pc += 2
             elif op == 0xAA:
@@ -361,7 +365,7 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(len(cpu.siov_calls), 1)
         call = cpu.siov_calls[0]
         self.assertEqual((call["device"], call["unit"], call["command"]), (0x5A, 1, 0x4B))
-        self.assertEqual((call["dstats"], call["aux1"], call["aux2"]), (0x40, 0xFF, 1))
+        self.assertEqual((call["dstats"], call["aux1"], call["aux2"]), (0x40, 0xFF, 1 << 5 | make_menu.NO_ROW))
         self.assertEqual((call["buffer"], call["length"]), (self.labels["reply"], 962))
         self.assertEqual(call["timeout"], make_menu.MENU_TIMEOUT_S)
         self.assertEqual(cpu.word(make_menu.SDLSTL), self.labels["dl_main"])
@@ -372,8 +376,9 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(cpu.run_until_idle(), "waiting")
         # Shift+A goes out as A: the program sends CH AND $3F (menu-tnfs, M41-3).
         self.assertEqual([c["aux1"] for c in cpu.siov_calls], [0xFF, KEY_1, KEY_ESC, KEY_A])
-        # One sequence number per key, so the host can tell a new key from SIOV's retry.
-        self.assertEqual([c["aux2"] for c in cpu.siov_calls], [1, 2, 3, 4])
+        # One sequence number per key in bits 7-5, so the host can tell a new key from SIOV's
+        # retry; bits 4-0 hold NO_ROW, as there is no local cursor.
+        self.assertEqual([c["aux2"] for c in cpu.siov_calls], [n << 5 | make_menu.NO_ROW for n in (1, 2, 3, 4)])
 
     def test_shift_and_control_are_removed_before_sending(self):
         # A, Shift+A, Control+A, Control+Shift+S, and L (code $00, so AND gives zero).
@@ -390,7 +395,7 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(cpu.run_until_idle(), "waiting")
         calls = cpu.siov_calls
         self.assertEqual([c["aux1"] for c in calls], [0xFF, KEY_1, 0xFE, 0xFE])
-        self.assertEqual([c["aux2"] for c in calls], [1, 2, 3, 4])
+        self.assertEqual([c["aux2"] >> 5 for c in calls], [1, 2, 3, 4])
         # The wait loop counts 15 frames between the answer "wait" and the poll, and RTCLOK
         # really moved that much (one more for the instructions around the loop).
         for before, after in ((calls[1], calls[2]), (calls[2], calls[3])):
@@ -408,7 +413,7 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(cpu.run_until_idle(), "waiting")
         calls = cpu.siov_calls
         self.assertEqual([c["aux1"] for c in calls], [0xFF, KEY_1, 0x3E])
-        self.assertEqual([c["aux2"] for c in calls], [1, 2, 3])
+        self.assertEqual([c["aux2"] >> 5 for c in calls], [1, 2, 3])
         ticks = (calls[2]["rtclok"] - calls[1]["rtclok"]) & 0xFF
         self.assertLess(ticks, 15)  # sent at once, without waiting the rest
         self.assertEqual(cpu.mem[make_menu.CH], 0xFF)
@@ -559,6 +564,16 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(sent, [])
         self.assertEqual(marked_rows(cpu.screen(), 5), [2])
         self.assertEqual(cpu.screen()[make_menu.CURSOR_AT + 3], 2)
+
+    def test_every_key_carries_the_row_the_bar_shows(self):
+        # A key the 6502 does not take sends the marked row in AUX2 bits 4-0, so the host
+        # keeps the bar where the Atari shows it (ADR-017, enmienda 4, punto 2).
+        cpu = Menu6502(self.block, [0x8F, 0x8F, KEY_A, 0x8F, KEY_ESC], lambda dcb: cursor_reply(5, 0, 0))
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        calls = cpu.siov_calls
+        self.assertEqual([c["aux1"] for c in calls], [0xFF, KEY_A, KEY_ESC])
+        self.assertEqual([c["aux2"] & make_menu.ROW_MASK for c in calls], [make_menu.NO_ROW, 2, 1])
+        self.assertEqual([c["aux2"] >> 5 for c in calls], [1, 2, 3])
 
     def test_return_and_fire_send_the_marked_row(self):
         # Each answer draws row 1 again, so the second RETURN (with Shift) sends row 1.

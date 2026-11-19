@@ -55,6 +55,7 @@ void MenuSioTransport::serveMenu(const CommandBytes& command)
     }
     const uint64_t ackEnd = clock_.nowMicros();
     const uint8_t key = command.bytes[2];
+    // AUX2: the sequence number in bits 7-5, the row of the local bar in bits 4-0.
     const uint8_t sequence = command.bytes[3];
     // SIOV retries a command whose reply did not arrive with the same AUX1 and
     // AUX2. Acting on it again would apply the key twice (a second mount, or a
@@ -63,7 +64,7 @@ void MenuSioTransport::serveMenu(const CommandBytes& command)
     if (key != kMenuNoKey && haveLast_ && key == lastKey_ && sequence == lastSequence_) {
         ++stats_.menuRetries;
     } else {
-        const MenuReply reply = controller_.key(key);
+        const MenuReply reply = controller_.key(key, static_cast<uint8_t>(sequence & kMenuRowMask));
         response_[0] = rb::sio::code::kComplete;
         for (std::size_t i = 0; i < MenuReply::kSize; ++i) {
             response_[1 + i] = reply.bytes[i];

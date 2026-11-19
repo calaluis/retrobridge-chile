@@ -736,6 +736,24 @@ void test_an_edge_move_starts_from_the_row_the_atari_shows()
     assert_marked(top, row(0), "A G000.ATR");
 }
 
+// A key the host does not use, after moves done on the Atari: the bar stays on the row
+// the Atari shows (the row travels in AUX2), and the next move starts from there.
+void test_a_key_the_host_does_not_use_keeps_the_row_the_atari_shows()
+{
+    Rig rig;
+    addImages(rig, "/OMS_ATR", "G%03d.ATR", 205, -1);
+    rig.start();
+    openOms(rig);
+    repeat(rig, kDown, 3);
+    const unsigned before = rig.hostCalls;
+    const MenuReply stray = rig.settle(kEquals);
+    TEST_ASSERT_EQUAL_UINT(before + 1, rig.hostCalls);
+    assert_marked(stray, row(3), "D G003.ATR");
+    assert_marked(rig.settle(kDown), row(4), "E G004.ATR");
+    assert_marked(rig.settle(kEquals), row(4), "E G004.ATR");
+    TEST_ASSERT_EQUAL_UINT(before + 2, rig.hostCalls);
+}
+
 // The confirm code itself: row n of the screen shown; a row off the screen does nothing.
 void test_a_confirmed_row_is_chosen_as_its_letter_and_off_rows_do_nothing()
 {
@@ -799,6 +817,7 @@ int main()
     RUN_TEST(test_moves_inside_a_page_do_not_reach_the_host);
     RUN_TEST(test_a_move_toward_a_missing_page_keeps_the_row_without_sio);
     RUN_TEST(test_an_edge_move_starts_from_the_row_the_atari_shows);
+    RUN_TEST(test_a_key_the_host_does_not_use_keeps_the_row_the_atari_shows);
     RUN_TEST(test_a_confirmed_row_is_chosen_as_its_letter_and_off_rows_do_nothing);
     RUN_TEST(test_a_source_loading_from_the_main_screen_keeps_its_mark);
     return UNITY_END();

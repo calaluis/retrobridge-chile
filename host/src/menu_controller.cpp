@@ -255,7 +255,7 @@ void MenuController::service()
     }
 }
 
-MenuReply MenuController::key(uint8_t code)
+MenuReply MenuController::key(uint8_t code, uint8_t row)
 {
     if (job_ != Job::None) {
         return onLoading(code);
@@ -263,6 +263,11 @@ MenuReply MenuController::key(uint8_t code)
     // $FF (redraw) and $FE (poll) are not keys: compared before the mask.
     if (code == kMenuNoKey || code == kMenuPollKey) {
         return render(kMenuActionShow);
+    }
+    // The bar may have moved on the Atari since the host drew it: start from the row it
+    // shows. A row not on the screen changes nothing.
+    if (row != kMenuNoRow) {
+        (void)selectRow(row);
     }
     // RETURN or fire on a row the 6502 marked by itself (N007): the cursor goes there
     // first, then it is RETURN on the marked row. A row not on the screen does nothing.

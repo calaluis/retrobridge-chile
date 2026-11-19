@@ -5,7 +5,7 @@
   reemplazadas; 1, 2 y 5 siguen vigentes. Enmendada el 2026-11-18 por la spec `menu-tnfs` (PR #44): ver
   «Enmienda 2», que reemplaza el punto 4 de la enmienda 1. Enmendada el 2026-11-19 por la spec
   `menu-navegacion`: ver «Enmienda 3», que amplía el punto 3 de la enmienda 2, y «Enmienda 4», que cambia
-  sus consecuencias tras la demo.
+  sus consecuencias tras la demo. «Enmienda 5» cierra el límite conocido del punto 2 de la enmienda 4.
 - Contexto: con `--image`, `retrobridge_host` sirve una sola ATR por ejecución. La Issue #38 pide elegir la imagen
   D1 desde el Atari, con el teclado, sin relanzar el host ni montar discos desde Altirra.
 
@@ -151,7 +151,7 @@ título debe ser inmutable: la fuente y la ruta van en otro lugar.
    enmienda 3.
 2. **El host y la fila del Atari.** `$C0` + fila fija la fila de la pantalla mostrada y equivale a RETURN; una
    fila que no existe no hace nada. Arriba en una lista parte de la fila 0 y abajo de la última, que es desde donde
-   las envía el 6502. Límite conocido: una tecla que el host no usa redibuja la barra en la fila que el host dibujó
+   las envía el 6502. Límite conocido, cerrado por la enmienda 5: una tecla que el host no usa redibujaba la barra en la fila que el host dibujó
    la última vez.
 3. **Título fijo y línea de ruta (M42-6).** El título de la lista es el de la principal, `RETROBRIDGE CHILE`, y no
    cambia. La fuente y la carpeta (`FUENTE n: <ruta>`, recortada por la izquierda con `..`) van en una línea de 40
@@ -161,3 +161,17 @@ Consecuencias, en lugar de las de la enmienda 3: el programa 6502 ocupa 13 secto
 vive en `$09B0`-`$0D6F`, sin cruzar 4 KB. En la lista, las entradas empiezan en 60, el pie en 860 y el mensaje en
 900. Moverse dentro de una página no usa SIO; RETURN, el botón rojo y cada cambio de página son una transacción,
 dentro de los 250 ms de `key()`.
+
+## Enmienda 5 (2026-11-19, rama `fix/menu-fila-en-daux2`): la fila viaja en AUX2
+
+Contexto: el límite conocido del punto 2 de la enmienda 4. El usuario mueve la barra en el Atari y pulsa una
+tecla que el host no usa: la barra vuelve a la fila que el host dibujó la última vez.
+
+1. **AUX2 lleva la secuencia y la fila.** Los bits 7-5 son el número de secuencia, que cambia con cada envío. Los
+   bits 4-0 son la fila que marca la barra local, o `$1F` (`kMenuNoRow`) si la pantalla mostrada no tiene cursor
+   local. Los reintentos de SIOV repiten el byte entero, así que el host los sigue reconociendo.
+2. **El host parte de esa fila.** Antes de procesar una tecla (no `$FF` ni `$FE`), el host pone el cursor de la
+   pantalla mostrada en esa fila. Una fila que no existe no cambia nada. Con `kMenuNoRow`, el host conserva la suya.
+
+Consecuencias: el programa 6502 ocupa 14 sectores desde `$0700`. La pantalla vive en `$09C2`-`$0D81`, sin cruzar
+4 KB. Una tecla que el host no usa deja la barra donde la muestra el Atari.

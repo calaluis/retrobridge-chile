@@ -97,7 +97,9 @@ public:
     void service();
     // false if the listing block could not be reserved (main does not start then).
     bool ready() const noexcept { return folder_.ready(); }
-    MenuReply key(uint8_t code);
+    // `row`: the row the Atari's local bar shows (AUX2 bits 4-0), or kMenuNoRow. A key
+    // first puts the cursor there, so a key the host does not use keeps the bar in place.
+    MenuReply key(uint8_t code, uint8_t row = static_cast<uint8_t>(kMenuNoRow));
 
     // Name shown for drive 1..8 (for D1, the assigned image), or nullptr: the
     // catalog name of a local image, the display name of a TNFS one.

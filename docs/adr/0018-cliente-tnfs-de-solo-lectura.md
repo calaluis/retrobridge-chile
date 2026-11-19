@@ -1,9 +1,9 @@
 # ADR-018 — Cliente TNFS de solo lectura y carga en memoria
 
-- Estado: Propuesta (2026-11-18), Issue #41, spec y plan `menu-tnfs` (`02-DOCS/wiki/sdd/specs/menu-tnfs.md`,
+- Estado: Propuesta (2026-11-18), spec y plan `menu-tnfs` (`02-DOCS/wiki/sdd/specs/menu-tnfs.md`,
   `02-DOCS/wiki/sdd/plans/menu-tnfs.md`). Decisiones M41-1 a M41-21 en `02-DOCS/wiki/sdd/decisions.md`.
 - Contexto: [ADR-017](0017-menu-de-arranque.md), enmienda 1, dejó las fuentes 2 a 8 en `PENDIENTE`: abrirlas
-  necesitaba un cliente TNFS propio. La Issue #41 pide navegar esas fuentes desde el Atari y montar sus imágenes.
+  necesitaba un cliente TNFS propio. La spec `menu-tnfs` pide navegar esas fuentes desde el Atari y montar sus imágenes.
 
 ## Contexto
 

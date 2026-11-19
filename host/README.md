@@ -63,12 +63,12 @@ los datos no coinciden).
 
    Sale con 0 solo si cada READ se respondió con COMPLETE, un checksum SIO válido y el CRC32 del manifiesto.
 
-## Elegir imágenes desde el Atari: menú de RetroBridge (Issues #38 y #40)
+## Elegir imágenes desde el Atari: menú de RetroBridge (Issues #38 y #40, spec `menu-tnfs`)
 
 Con `--images <carpeta>`, en lugar de `--image`, RetroBridge sirve su propio menú como D1 tras cada reinicio en
 frío y atiende las unidades D1 a D8. La pantalla principal muestra las fuentes (1 = la carpeta, rotulada `SD`;
 2 a 8 = las del archivo `--sources`) y el estado de D1 a D8 y C:. Los avisos y errores aparecen en la última
-línea, debajo del pie de teclas. El protocolo está en ADR-017.
+línea, debajo del pie de teclas. El protocolo está en ADR-017; el cliente TNFS, en ADR-018.
 
 | Tecla | Pantalla | Qué hace |
 |-------|----------|----------|
@@ -76,15 +76,21 @@ línea, debajo del pie de teclas. El protocolo está en ADR-017.
 | `A`..`T` | lista | elige una imagen; después `1`..`8` elige la unidad, Esc vuelve a la lista |
 | `A` | principal | arranca la imagen asignada a D1 |
 | `U` | principal | pide una unidad (`1`..`8`) y la desmonta; Esc cancela |
-| `2`..`8` | principal | pendiente: muestra `PENDIENTE: FALTA EL CLIENTE TNFS` (o `FUENTE n SIN CONFIGURAR`) |
+| `2`..`8` | principal | abre la raíz del servidor TNFS de esa fuente, de solo lectura (`FUENTE n SIN CONFIGURAR` si no hay) |
+| `A`..`T` | carpeta TNFS | entra en una carpeta (`/`) o elige una `.ATR`; después `1`..`8` elige la unidad |
+| Esc | carpeta TNFS | vuelve a la carpeta anterior; en la raíz, a la principal; durante «CARGANDO nn%», cancela |
 | `E` | principal | pendiente: muestra `PENDIENTE: E NECESITA ENTRADA DE TEXTO` |
 
 Una imagen elegida para D1 se valida y queda asignada; D1 sigue sirviendo el menú hasta pulsar `A`. Una imagen
 elegida para D2..D8 se monta enseguida. Una ATR inválida se rechaza al elegirla, con el motivo en pantalla, y la
 unidad conserva lo que tenía. Shift+F5 vuelve al menú y conserva las unidades; F5 conserva la imagen de D1.
 
-Pendiente (no implementado): abrir un servidor TNFS (falta un cliente TNFS propio y un servidor de prueba),
-editar un servidor con `E` (falta la entrada de texto en el Atari y escribir `--sources`), casete (sin soporte) y
+Una `.ATR` de un servidor TNFS se trae entera a la memoria del PC (`CARGANDO nn%`) y después se valida y se
+monta como una local. Si el servidor no contesta o el nombre no se resuelve, aparece `ERROR: SERVIDOR NO
+RESPONDE` o `ERROR: SERVIDOR NO ENCONTRADO` y las unidades no cambian. Cada línea de `--sources` es un nombre o una
+IPv4; el puerto es el 16384. Al cerrar, el host termina cada sesión TNFS con UMOUNT.
+
+Pendiente (no implementado): editar un servidor con `E` (falta la entrada de texto en el Atari y escribir `--sources`), casete (sin soporte) y
 escritura en disco (unidades de solo lectura).
 
 1. Generar las imágenes de demostración (dos arrancables con mensajes distintos y una inválida):
@@ -112,7 +118,9 @@ escritura en disco (unidades de solo lectura).
 
 El log registra el catálogo (`menu_entry`), las fuentes (`menu_source`), cada elección (`menu_select`), cada cambio
 aplicado a una unidad (`menu_mount`), cada desmontaje (`menu_unmount`), cada arranque (`menu_boot`), las teclas
-pendientes (`menu_pending`) y cada vuelta al menú (`menu_return`). `--log` no puede nombrar ninguna imagen de la
+pendientes (`menu_pending`), cada vuelta al menú (`menu_return`), cada carpeta TNFS abierta (`menu_open`), cada
+imagen traída con su SHA-256 (`menu_fetch`), cada error TNFS con su causa (`menu_tnfs`) y cada orden enviada al
+servidor, con los indicadores de cada OPEN (`tnfs_request`). `--log` no puede nombrar ninguna imagen de la
 carpeta ni el archivo de fuentes. Una carpeta sin `.atr` o un archivo de fuentes inválido termina con código 2.
 
 El programa 6502 del menú se genera con `python -I tools/make_menu.py --out host/src/menu_program.inc`; las

@@ -2,7 +2,7 @@
 
 - Estado: Propuesta (2026-11-17), Issue #38 (continuación de #32). Spec `menu-arranque` aprobada el 2026-11-17.
   Enmendada el 2026-11-17 por la Issue #40 (spec `menu-principal`): ver «Enmienda 1». Las decisiones 3 y 4 quedan
-  reemplazadas; 1, 2 y 5 siguen vigentes. Enmendada el 2026-11-18 por la Issue #41 (spec `menu-tnfs`): ver
+  reemplazadas; 1, 2 y 5 siguen vigentes. Enmendada el 2026-11-18 por la spec `menu-tnfs` (PR #44): ver
   «Enmienda 2», que reemplaza el punto 4 de la enmienda 1.
 - Contexto: con `--image`, `retrobridge_host` sirve una sola ATR por ejecución. La Issue #38 pide elegir la imagen
   D1 desde el Atari, con el teclado, sin relanzar el host ni montar discos desde Altirra.
@@ -78,9 +78,9 @@ Consecuencias: el programa 6502 ocupa 10 sectores desde `$0700`; la pantalla viv
 frío deja la vista en la pantalla principal. En las dos pantallas, la línea de mensajes (avisos, errores y «host no
 responde») va debajo del pie de teclas, como última línea (pedido en la revisión de la Issue #40).
 
-## Enmienda 2 (2026-11-18, Issue #41): acción 2, sondeo y fuentes TNFS
+## Enmienda 2 (2026-11-18, spec `menu-tnfs`, PR #44): acción 2, sondeo y fuentes TNFS
 
-Contexto: la Issue #41 abre las fuentes 2 a 8 con un cliente TNFS propio
+Contexto: la spec `menu-tnfs` abre las fuentes 2 a 8 con un cliente TNFS propio
 ([ADR-018](0018-cliente-tnfs-de-solo-lectura.md)). Traer un listado o una imagen tarda más de lo que un `SIOV`
 espera, así que el Atari necesita una forma de esperar sin perder teclas.
 

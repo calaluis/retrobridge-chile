@@ -23,7 +23,7 @@ Alcance: [Issue #40](https://github.com/calaluis/retrobridge-chile/issues/40).
 | M40-4 | 2026-11-17 | TNFS (fuentes 2 a 8) y `E` quedan pendientes y lo dicen en pantalla. `--sources` admite hasta 7 nombres, `U` desmonta y C: muestra «SIN CINTA». | T2, T3 | Decisión del usuario (Q1 TNFS pendiente; Q2 a Q4 aceptadas). ADR-017, enmienda 1, punto 4. |
 | M40-5 | 2026-11-18 | La línea de mensajes va debajo del pie de teclas, en la pantalla principal y en la lista. | T1 | Pedido del usuario en la revisión humana; la lista se alineó por coherencia (Claude). ADR-017, enmienda 1, consecuencias. |
 
-## Fuentes TNFS de solo lectura (menu-tnfs, Issue #41)
+## Fuentes TNFS de solo lectura (spec `menu-tnfs`, PR #44; prefijo M41 por historia)
 
 Plan: `wiki/sdd/plans/menu-tnfs.md`. M41-1 a M41-7 vienen del plan; M41-8 en adelante son las decisiones tomadas al implementar. ADR: [ADR-018](../../../docs/adr/0018-cliente-tnfs-de-solo-lectura.md) y [ADR-017, enmienda 2](../../../docs/adr/0017-menu-de-arranque.md).
 

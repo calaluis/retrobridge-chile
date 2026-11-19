@@ -4,7 +4,8 @@
   Enmendada el 2026-11-17 por la Issue #40 (spec `menu-principal`): ver «Enmienda 1». Las decisiones 3 y 4 quedan
   reemplazadas; 1, 2 y 5 siguen vigentes. Enmendada el 2026-11-18 por la spec `menu-tnfs` (PR #44): ver
   «Enmienda 2», que reemplaza el punto 4 de la enmienda 1. Enmendada el 2026-11-19 por la spec
-  `menu-navegacion`: ver «Enmienda 3», que amplía el punto 3 de la enmienda 2.
+  `menu-navegacion`: ver «Enmienda 3», que amplía el punto 3 de la enmienda 2, y «Enmienda 4», que cambia
+  sus consecuencias tras la demo.
 - Contexto: con `--image`, `retrobridge_host` sirve una sola ATR por ejecución. La Issue #38 pide elegir la imagen
   D1 desde el Atari, con el teclado, sin relanzar el host ni montar discos desde Altirra.
 
@@ -133,3 +134,29 @@ Consecuencias: el programa 6502 ocupa 12 sectores desde `$0700` (eran 11). La pa
 sin cruzar 4 KB. El pie de la lista pasa a `A-T ELEGIR`, `RET OK`, `<> PAG`, `ESC VOLVER`, en 40 columnas con sus
 marcos gráficos. Cada movimiento es una transacción SIO más, dentro de los 250 ms de `key()`. El registro
 `menu_entry` numera las imágenes locales desde 1 en lugar de A-T.
+
+## Enmienda 4 (2026-11-19, spec `menu-navegacion`, tras la demo): cursor local y línea de ruta
+
+Contexto: en la demo en Altirra el responsable pidió dos cambios. Mover el cursor no debe procesar, salvo RETURN o
+el botón rojo. Cada movimiento era una transacción SIO con la pantalla entera (962 bytes, unos 0,6 s). Además, el
+título debe ser inmutable: la fuente y la ruta van en otro lugar.
+
+1. **Cursor local en el 6502 (M42-5).** El host escribe un bloque de 5 bytes al final de la pantalla, en
+   `kMenuCursor` (955), fuera de todo layout: base de la fila 0, filas, fila marcada y si hay más páginas. Con la
+   acción 0 y filas > 0, arriba y abajo mueven la barra en el Atari, sin SIO. RETURN y el botón rojo envían
+   `$C0` + fila (rango de Control+Shift, lejos de las teclas tras la máscara, de `$40`-`$44`, `$FE` y `$FF`). En el
+   borde de la página, e izquierda y derecha, el 6502 pregunta al host solo si la lista tiene más páginas; si no,
+   no hace nada. Con 0 filas (carga en curso, lista vacía) o sin respuesta del host, todo va al host, como en la
+   enmienda 3.
+2. **El host y la fila del Atari.** `$C0` + fila fija la fila de la pantalla mostrada y equivale a RETURN; una
+   fila que no existe no hace nada. Arriba en una lista parte de la fila 0 y abajo de la última, que es desde donde
+   las envía el 6502. Límite conocido: una tecla que el host no usa redibuja la barra en la fila que el host dibujó
+   la última vez.
+3. **Título fijo y línea de ruta (M42-6).** El título de la lista es el de la principal, `RETROBRIDGE CHILE`, y no
+   cambia. La fuente y la carpeta (`FUENTE n: <ruta>`, recortada por la izquierda con `..`) van en una línea de 40
+   columnas donde estaban las 8 líneas en blanco bajo el título. La pantalla mide lo mismo.
+
+Consecuencias, en lugar de las de la enmienda 3: el programa 6502 ocupa 13 sectores desde `$0700`. La pantalla
+vive en `$099A`-`$0D59`, sin cruzar 4 KB. En la lista, las entradas empiezan en 60, el pie en 860 y el mensaje en
+900. Moverse dentro de una página no usa SIO; RETURN, el botón rojo y cada cambio de página son una transacción,
+dentro de los 250 ms de `key()`.

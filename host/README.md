@@ -72,7 +72,11 @@ línea, debajo del pie de teclas. El protocolo está en ADR-017; el cliente TNFS
 
 Todo se puede hacer con el cursor: las flechas (Control + `-` `=` `+` `*`) o el joystick del puerto 1 lo
 mueven, y RETURN o el botón rojo confirman lo marcado. La fila marcada sale en vídeo inverso. Las letras y los
-dígitos siguen valiendo.
+dígitos siguen valiendo. El cursor se mueve en el Atari, sin hablar con el host: solo RETURN, el botón rojo y
+cada cambio de página van al host.
+
+En la lista, el título es siempre `RETROBRIDGE CHILE`. Debajo, una línea muestra la fuente y la carpeta, por
+ejemplo `FUENTE 2: /ATARI_CHILE/OMS_ATR`; una ruta larga se recorta por la izquierda con `..`.
 
 | Tecla | Pantalla | Qué hace |
 |-------|----------|----------|

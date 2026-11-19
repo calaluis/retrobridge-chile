@@ -165,6 +165,12 @@ private:
     // changes the cursor and returns kNoEntry.
     static EntryIndex listKey(Cursor& cursor, std::size_t count, uint8_t key) noexcept;
     static void markRow(uint8_t* screen, const Cursor& cursor, std::size_t count) noexcept;
+    // Up and down move `line` (0..7) on the main screen; left and right are taken and do
+    // nothing there. false for any other key.
+    static bool moveLine(uint8_t& line, uint8_t key) noexcept;
+    // The digit a key means while a drive is chosen: its own, or the drive under the
+    // cursor for RETURN and fire; 0 for none.
+    int driveDigit(uint8_t key, int digit) const noexcept;
     void pushPosition() noexcept;
     Cursor popPosition() noexcept;
 
@@ -180,6 +186,8 @@ private:
 
     View view_ = View::Main;
     EntryIndex chosen_ = kNoEntry;         // catalog entry (or folder entry) waiting for a drive
+    uint8_t sourceLine_ = 0;               // main screen: the source marked (0: source 1)
+    uint8_t driveLine_ = 0;                // drive choice (Pick, FolderPick, Unmount): 0 is D1 (M42-4)
     Cursor listCursor_;                    // the local list
     Cursor folderCursor_;                  // the TNFS folder on screen
     Cursor stack_[kStackDepth];            // folderCursor_ of each folder entered (Esc restores it)

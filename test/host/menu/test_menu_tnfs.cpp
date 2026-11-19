@@ -89,10 +89,10 @@ void test_the_poll_code_never_chooses_and_3e_chooses_s()
     const MenuReply polled = rig.press(kPoll);
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, polled.action());
     assert_line(polled, kListMessage, " PULSA LA LETRA DE LA IMAGEN");
-    assert_line(rig.press(KS), kListMessage, " UNIDAD 1-8 (ESC VUELVE): S.ATR");
+    assert_line(rig.press(KS), kMainMessage, " UNIDAD PARA: S.ATR");  // menu-navegacion M42-4
     assert_line(rig.press(KESC), kListMessage, " PULSA LA LETRA DE LA IMAGEN");
     // Shift and Control are still ignored: $7E is S.
-    assert_line(rig.press(KS | 0x40), kListMessage, " UNIDAD 1-8 (ESC VUELVE): S.ATR");
+    assert_line(rig.press(KS | 0x40), kMainMessage, " UNIDAD PARA: S.ATR");
 }
 
 void test_e_is_still_pending_and_source_1_is_unchanged()
@@ -120,7 +120,7 @@ void test_an_atr_chosen_for_d1_is_assigned_with_its_display_name_and_boots()
     rig.start();
     rig.walk({K2, KA, KA});  // APORTES_JUAN_LARRAIN/, 0- PRUEBA/
     const MenuReply pick = rig.press(KA);
-    assert_line(pick, kListMessage, " UNIDAD 1-8 (ESC VUELVE): ATARI LOGO.ATR");
+    assert_line(pick, kMainMessage, " UNIDAD PARA: ATARI LOGO.ATR");  // menu-navegacion M42-4
     const MenuReply assigned = rig.settle(K1);
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutMain, assigned.layout());
     assert_line(assigned, driveLine(1), "D1 ATARI LOGO.ATR");

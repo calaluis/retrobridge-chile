@@ -35,6 +35,15 @@ constexpr uint8_t kKeyReturn = 0x0C;
 constexpr std::size_t kPageRows = TnfsFolder::kPageRows;
 
 bool isNavigation(uint8_t code) noexcept { return code >= kMenuNavUp && code <= kMenuNavFire; }
+bool isConfirm(uint8_t key) noexcept { return key == kKeyReturn || key == kMenuNavFire; }
+
+// Marks one 40-column line of the screen in inverse video, edge to edge.
+void invert(uint8_t* screen, unsigned offset) noexcept
+{
+    for (unsigned i = 0; i < kMenuLineWidth; ++i) {
+        screen[offset + i] = static_cast<uint8_t>(screen[offset + i] | 0x80);
+    }
+}
 
 constexpr std::size_t kNameColumns = 30;   // list entries: " A  " + 30
 constexpr std::size_t kLabelColumns = 32;  // sources and drives: "D1 " + 32 (the reference's 35 columns)
@@ -255,8 +264,8 @@ MenuReply MenuController::key(uint8_t code)
             if (boot()) {
                 return render(kMenuActionBoot);
             }
-        } else {
-            onMain(digit, key);
+        } else if (!moveLine(sourceLine_, key)) {
+            onMain(isConfirm(key) ? sourceLine_ + 1 : digit, key);  // RETURN and fire: the marked source
         }
         break;
     case View::List:
@@ -267,23 +276,25 @@ MenuReply MenuController::key(uint8_t code)
             view_ = View::List;
             chosen_ = kNoEntry;
             message_[0] = '\0';
-        } else if (digit != 0) {
-            onPick(digit);
+        } else if (!moveLine(driveLine_, key) && driveDigit(key, digit) != 0) {
+            onPick(driveDigit(key, digit));
         }
         break;
     case View::Unmount:
         if (key == kKeyEsc) {
             view_ = View::Main;
             message_[0] = '\0';
-        } else if (digit != 0) {
-            onUnmount(digit);
+        } else if (!moveLine(driveLine_, key) && driveDigit(key, digit) != 0) {
+            onUnmount(driveDigit(key, digit));
         }
         break;
     case View::Folder:
         onFolder(key);
         break;
     case View::FolderPick:
-        onFolderPick(key, digit);
+        if (!moveLine(driveLine_, key)) {
+            onFolderPick(key, driveDigit(key, digit));
+        }
         break;
     }
     if (job_ != Job::None) {
@@ -292,9 +303,38 @@ MenuReply MenuController::key(uint8_t code)
     return render(kMenuActionShow);
 }
 
+bool MenuController::moveLine(uint8_t& line, uint8_t key) noexcept
+{
+    switch (key) {
+    case kMenuNavUp:
+        if (line > 0) {
+            --line;
+        }
+        return true;
+    case kMenuNavDown:
+        if (line + 1u < kDrives) {
+            ++line;
+        }
+        return true;
+    case kMenuNavLeft:
+    case kMenuNavRight:
+        return true;  // no page on the main screen
+    default:
+        return false;
+    }
+}
+
+int MenuController::driveDigit(uint8_t key, int digit) const noexcept
+{
+    return isConfirm(key) ? driveLine_ + 1 : digit;
+}
+
 void MenuController::onMain(int digit, uint8_t key)
 {
     char detail[96];
+    if (digit >= 1) {
+        sourceLine_ = static_cast<uint8_t>(digit - 1);  // the cursor follows the digit
+    }
     if (digit == 1) {
         view_ = View::List;
         listCursor_ = Cursor{};
@@ -321,6 +361,7 @@ void MenuController::onMain(int digit, uint8_t key)
         event("menu_pending", "edit server: needs text input on the Atari and a writable source list");
     } else if (key == kKeyU) {
         view_ = View::Unmount;
+        driveLine_ = 0;
         say(" DESMONTAR: PULSA 1-8, ESC CANCELA");
     }
 }
@@ -338,7 +379,8 @@ void MenuController::onList(uint8_t key)
     }
     chosen_ = entry;
     view_ = View::Pick;
-    say(" UNIDAD 1-8 (ESC VUELVE): %s", catalog_.name(entry));
+    driveLine_ = 0;
+    say(" UNIDAD PARA: %s", catalog_.name(entry));
 }
 
 MenuController::EntryIndex MenuController::listKey(Cursor& cursor, std::size_t count, uint8_t key) noexcept
@@ -396,10 +438,7 @@ void MenuController::markRow(uint8_t* screen, const Cursor& cursor, std::size_t 
     if (count == 0) {
         return;
     }
-    uint8_t* line = screen + kListEntries + cursor.row * kMenuLineWidth;
-    for (unsigned i = 0; i < kMenuLineWidth; ++i) {
-        line[i] = static_cast<uint8_t>(line[i] | 0x80);  // inverse video, edge to edge
-    }
+    invert(screen, static_cast<unsigned>(kListEntries + cursor.row * kMenuLineWidth));
 }
 
 void MenuController::pushPosition() noexcept
@@ -564,7 +603,7 @@ MenuReply MenuController::render(uint8_t action) const noexcept
     reply.bytes[0] = action;
     uint8_t* screen = reply.bytes.data() + 2;
     char text[kMenuLineWidth + 64];
-    if (view_ == View::Folder || view_ == View::FolderPick) {
+    if (view_ == View::Folder) {  // FolderPick chooses the drive on the main screen (M42-4)
         reply.bytes[1] = kMenuLayoutList;
         std::memcpy(screen, kMenuListTemplate, kMenuScreenSize);
         renderFolder(screen, text, sizeof text);
@@ -608,6 +647,11 @@ MenuReply MenuController::render(uint8_t action) const noexcept
         put(screen, kMainDrives + (n - 1) * kMenuLineWidth, kMenuLineWidth, text, true);
     }
     put(screen, kMainTape, kMenuLineWidth, "C: SIN CINTA", true);
+    if (view_ == View::Main) {
+        invert(screen, kMainSources + sourceLine_ * kMenuLineWidth);
+    } else {  // Pick, FolderPick, Unmount: the drive under the cursor
+        invert(screen, kMainDrives + driveLine_ * kMenuLineWidth);
+    }
     if (job_ != Job::None) {
         std::snprintf(text, sizeof text, " CARGANDO %u%%", static_cast<unsigned>(percent_));
         put(screen, kMainMessage, kMenuLineWidth, text, true);
@@ -674,7 +718,8 @@ void MenuController::onFolder(uint8_t key)
     }
     chosen_ = entry;
     view_ = View::FolderPick;
-    say(" UNIDAD 1-8 (ESC VUELVE): %s", chosen.display);
+    driveLine_ = 0;
+    say(" UNIDAD PARA: %s", chosen.display);
 }
 
 void MenuController::onFolderPick(uint8_t key, int digit)

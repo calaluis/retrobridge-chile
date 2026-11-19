@@ -51,6 +51,30 @@ bool sameScreen(const MenuReply& a, const MenuReply& b)
     return std::memcmp(a.screen(), b.screen(), rb::host::kMenuScreenSize) == 0;
 }
 
+// True if the 40 bytes at offset are all in inverse video; false if none is.
+bool marked(const MenuReply& reply, unsigned offset)
+{
+    unsigned inverse = 0;
+    for (unsigned i = 0; i < 40; ++i) {
+        inverse += (reply.screen()[offset + i] & 0x80) != 0 ? 1u : 0u;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(inverse == 0 || inverse == 40, "a line half in inverse video");
+    return inverse == 40;
+}
+
+// The one marked line among the 8 at `first`, 1-based; 0 if none.
+unsigned markedOf(const MenuReply& reply, unsigned first)
+{
+    unsigned found = 0;
+    for (unsigned n = 1; n <= 8; ++n) {
+        if (marked(reply, first + (n - 1) * 40)) {
+            TEST_ASSERT_EQUAL_UINT_MESSAGE(0, found, "two marked lines");
+            found = n;
+        }
+    }
+    return found;
+}
+
 }  // namespace
 
 void setUp() {}
@@ -121,7 +145,7 @@ void test_c_on_page_3_chooses_entry_43()
     openOms(rig);
     repeat(rig, kRight, 2);
     const MenuReply pick = rig.settle(KC);
-    assert_line(pick, kListMessage, " UNIDAD 1-8 (ESC VUELVE): G042.ATR");
+    assert_line(pick, kMainMessage, " UNIDAD PARA: G042.ATR");
     // Esc keeps the page; the cursor is on the row chosen.
     const MenuReply back = rig.settle(KESC);
     assert_marked(back, row(2), "C G042.ATR");
@@ -138,7 +162,7 @@ void test_return_on_a_marked_image_then_2_mounts_d2_as_the_letter_does()
     repeat(rig, kRight, 2);
     repeat(rig, kDown, 2);
     const MenuReply pick = rig.settle(kReturn);
-    assert_line(pick, kListMessage, " UNIDAD 1-8 (ESC VUELVE): G042.ATR");
+    assert_line(pick, kMainMessage, " UNIDAD PARA: G042.ATR");
     rig.settle(K2);
     TEST_ASSERT_EQUAL_STRING("G042.ATR", rig.controller->driveName(2));
     TEST_ASSERT_NOT_EQUAL(0, std::strlen(rig.mounted(2)));
@@ -205,7 +229,7 @@ void test_entries_128_129_and_999_are_marked_chosen_and_mounted()
     assert_marked(e129, row(8), "I M128.ATR");
     assert_line(e129, row(7), "H M127.ATR");
     const MenuReply pick129 = rig.settle(kReturn);
-    assert_line(pick129, kListMessage, " UNIDAD 1-8 (ESC VUELVE): M128.ATR");
+    assert_line(pick129, kMainMessage, " UNIDAD PARA: M128.ATR");
     rig.settle(KESC);
     const MenuReply last = repeat(rig, kRight, 43);  // page 50: indices 980..998
     assert_line(last, kListMessage, " PAGINA 50 DE 50 (999)");
@@ -249,7 +273,7 @@ void test_the_local_list_pages_and_mounts_an_entry_beyond_128()
     assert_line(page11, row(3), "");
     assert_line(page11, kListMessage, " PAGINA 11 DE 11 (203)");
     const MenuReply pick = rig.settle(kReturn);
-    assert_line(pick, kMainMessage, " UNIDAD 1-8 (ESC VUELVE): DEMO-DOS.ATR");
+    assert_line(pick, kMainMessage, " UNIDAD PARA: DEMO-DOS.ATR");
     rig.settle(K2);
     TEST_ASSERT_EQUAL_STRING("demo-dos.atr", rig.controller->driveName(2));
     TEST_ASSERT_EQUAL_STRING("demo-dos.atr", rig.mounted(2));
@@ -323,7 +347,7 @@ void test_the_position_stack_keeps_32_levels()
     assert_marked(top, row(2), "C N/");
 }
 
-// Opening a source again starts on row 1 of page 1; moves on the main screen do nothing (N004).
+// Opening a source again starts on row 1 of page 1; left and right do nothing on the main screen.
 void test_reopening_a_source_starts_on_row_1_and_the_main_screen_ignores_moves()
 {
     Rig rig;
@@ -334,10 +358,10 @@ void test_reopening_a_source_starts_on_row_1_and_the_main_screen_ignores_moves()
     rig.settle(KESC);
     const MenuReply main = rig.settle(KESC);
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutMain, main.layout());
-    for (uint8_t code : {kUp, kDown, kLeft, kRight, kFire}) {
+    for (uint8_t code : {kLeft, kRight}) {
         TEST_ASSERT_TRUE(sameScreen(main, rig.settle(code)));
     }
-    const MenuReply again = rig.settle(K2);
+    const MenuReply again = rig.settle(kFire);  // the cursor is on source 2
     assert_marked(again, row(0), "A APORTES_JUAN_LARRAIN/");
     const MenuReply oms = rig.settle(KC);
     assert_marked(oms, row(0), "A G000.ATR");
@@ -436,6 +460,143 @@ void test_a_cancelled_or_failed_entry_keeps_the_position_and_the_history()
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutMain, main.layout());
 }
 
+// --- N004: the main screen and the drive choice (AC1, AC6, M42-4) ---------------------
+
+// AC1: down twice and fire open source 3, exactly as '3' does; the cursor stays on it.
+void test_down_twice_and_fire_open_source_3_as_3_does()
+{
+    Rig byDigit;
+    byDigit.start();
+    const MenuReply three = byDigit.settle(K3);
+    Rig byCursor;
+    byCursor.start();
+    const MenuReply first = byCursor.settle(kRedraw);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutMain, first.layout());
+    TEST_ASSERT_EQUAL_UINT(1, markedOf(first, rb::host::kMainSources));
+    TEST_ASSERT_EQUAL_UINT(0, markedOf(first, rb::host::kMainDrives));
+    TEST_ASSERT_EQUAL_UINT(2, markedOf(byCursor.settle(kDown), rb::host::kMainSources));
+    TEST_ASSERT_EQUAL_UINT(3, markedOf(byCursor.settle(kDown), rb::host::kMainSources));
+    const MenuReply fired = byCursor.settle(kFire);
+    TEST_ASSERT_TRUE(sameScreen(three, fired));
+    TEST_ASSERT_EQUAL_UINT(3, markedOf(fired, rb::host::kMainSources));
+}
+
+// Empty sources are on the path; RETURN on one says so as its digit does. The cursor
+// stops at sources 1 and 8; left and right change nothing.
+void test_the_main_cursor_covers_the_8_sources_and_return_on_an_empty_one()
+{
+    Rig byDigit;
+    byDigit.start();
+    const MenuReply five = byDigit.settle(K5);
+    Rig rig;
+    rig.start();
+    const MenuReply top = rig.settle(kRedraw);
+    TEST_ASSERT_TRUE(sameScreen(top, rig.settle(kUp)));
+    TEST_ASSERT_TRUE(sameScreen(top, rig.settle(kLeft)));
+    TEST_ASSERT_TRUE(sameScreen(top, rig.settle(kRight)));
+    const MenuReply bottom = repeat(rig, kDown, 10);
+    TEST_ASSERT_EQUAL_UINT(8, markedOf(bottom, rb::host::kMainSources));
+    const MenuReply at5 = repeat(rig, kUp, 3);
+    TEST_ASSERT_EQUAL_UINT(5, markedOf(at5, rb::host::kMainSources));
+    const MenuReply pressed = rig.settle(kReturn);
+    assert_line(pressed, kMainMessage, " FUENTE 5 SIN CONFIGURAR");
+    TEST_ASSERT_TRUE(sameScreen(five, pressed));
+    // Esc back from a source leaves the cursor on it.
+    rig.settle(K2);
+    TEST_ASSERT_EQUAL_UINT(2, markedOf(rig.settle(KESC), rb::host::kMainSources));
+}
+
+// AC6: RETURN on an image, then D2 with the cursor and RETURN, mounts D2 as the letter and '2'.
+void test_d2_chosen_with_the_cursor_mounts_as_the_letter_and_2()
+{
+    Rig rig;
+    addImages(rig, "/OMS_ATR", "G%03d.ATR", 205, 42);
+    rig.start();
+    openOms(rig);
+    repeat(rig, kRight, 2);
+    repeat(rig, kDown, 2);
+    const MenuReply pick = rig.settle(kReturn);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutMain, pick.layout());
+    assert_line(pick, kMainMessage, " UNIDAD PARA: G042.ATR");
+    TEST_ASSERT_EQUAL_UINT(1, markedOf(pick, rb::host::kMainDrives));
+    TEST_ASSERT_EQUAL_UINT(0, markedOf(pick, rb::host::kMainSources));
+    TEST_ASSERT_TRUE(sameScreen(pick, rig.settle(kUp)));  // D1: no further
+    // Esc from the drive choice goes back to the folder, page and row kept.
+    const MenuReply back = rig.settle(KESC);
+    assert_title(back, " FUENTE 2: /OMS_ATR");
+    assert_marked(back, row(2), "C G042.ATR");
+    assert_line(back, kListMessage, " PAGINA 3 DE 11 (205)");
+    rig.settle(kReturn);
+    const MenuReply d2 = rig.settle(kDown);
+    TEST_ASSERT_EQUAL_UINT(2, markedOf(d2, rb::host::kMainDrives));
+    const MenuReply mounted = rig.settle(kReturn);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutMain, mounted.layout());  // as with '2': the main screen
+    assert_line(mounted, kMainMessage, " D2: G042.ATR");
+    TEST_ASSERT_EQUAL_STRING("G042.ATR", rig.controller->driveName(2));
+    TEST_ASSERT_NOT_EQUAL(0, std::strlen(rig.mounted(2)));
+    TEST_ASSERT_EQUAL_UINT(2, markedOf(mounted, rb::host::kMainSources));  // source 2, where it came from
+}
+
+// The local list too: fire on the drive marked by the cursor.
+void test_a_local_image_goes_to_the_drive_under_the_cursor()
+{
+    Rig rig;
+    rig.start();
+    rig.settle(K1);
+    const MenuReply pick = rig.settle(kReturn);  // demo-dos.atr
+    assert_line(pick, kMainMessage, " UNIDAD PARA: DEMO-DOS.ATR");
+    TEST_ASSERT_EQUAL_UINT(1, markedOf(pick, rb::host::kMainDrives));
+    repeat(rig, kDown, 2);
+    rig.settle(kFire);
+    TEST_ASSERT_EQUAL_STRING("demo-dos.atr", rig.mounted(3));
+    // Esc from the drive choice goes back to the list on the same row.
+    rig.settle(K1);
+    rig.settle(kDown);
+    const MenuReply again = rig.settle(kReturn);
+    TEST_ASSERT_EQUAL_UINT(1, markedOf(again, rb::host::kMainDrives));  // a new choice starts on D1, not D3
+    assert_marked(rig.settle(KESC), row(1), " B  DEMO-UNO.ATR");
+}
+
+// U: the cursor chooses the drive to empty.
+void test_unmount_with_the_cursor()
+{
+    Rig rig;
+    rig.start();
+    rig.walk({K1, KA, K2});  // demo-dos.atr on D2
+    TEST_ASSERT_EQUAL_STRING("demo-dos.atr", rig.mounted(2));
+    const MenuReply unmount = rig.settle(KU);
+    assert_line(unmount, kMainMessage, " DESMONTAR: PULSA 1-8, ESC CANCELA");
+    TEST_ASSERT_EQUAL_UINT(1, markedOf(unmount, rb::host::kMainDrives));
+    // Esc cancels: nothing emptied, the cursor back on the sources.
+    rig.settle(kDown);
+    const MenuReply cancelled = rig.settle(KESC);
+    TEST_ASSERT_EQUAL_STRING("demo-dos.atr", rig.mounted(2));
+    TEST_ASSERT_EQUAL_UINT(0, markedOf(cancelled, rb::host::kMainDrives));
+    TEST_ASSERT_EQUAL_UINT(1, markedOf(cancelled, rb::host::kMainSources));
+    rig.settle(KU);
+    rig.settle(kDown);
+    const MenuReply done = rig.settle(kReturn);
+    TEST_ASSERT_EQUAL_STRING("", rig.mounted(2));
+    TEST_ASSERT_EQUAL_UINT(0, markedOf(done, rb::host::kMainDrives));
+    TEST_ASSERT_NOT_EQUAL(0, markedOf(done, rb::host::kMainSources));
+}
+
+// A source that is loading keeps its mark on the main screen; no drive is marked.
+void test_a_source_loading_from_the_main_screen_keeps_its_mark()
+{
+    Rig rig;
+    rig.start();
+    rig.settle(kDown);
+    rig.gated.gate(tnfs::cmd::kStat);
+    const MenuReply loading = rig.press(kFire);
+    assert_loading(loading, kMainMessage, "0");
+    TEST_ASSERT_EQUAL_UINT(2, markedOf(loading, rb::host::kMainSources));
+    TEST_ASSERT_EQUAL_UINT(0, markedOf(loading, rb::host::kMainDrives));
+    rig.gated.awaitHeld();
+    rig.press(KESC);
+    rig.gated.open();
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -455,5 +616,11 @@ int main()
     RUN_TEST(test_a_full_local_list_shows_999_of_the_total);
     RUN_TEST(test_esc_to_a_parent_that_shrank_keeps_the_cursor_in_range);
     RUN_TEST(test_a_cancelled_or_failed_entry_keeps_the_position_and_the_history);
+    RUN_TEST(test_down_twice_and_fire_open_source_3_as_3_does);
+    RUN_TEST(test_the_main_cursor_covers_the_8_sources_and_return_on_an_empty_one);
+    RUN_TEST(test_d2_chosen_with_the_cursor_mounts_as_the_letter_and_2);
+    RUN_TEST(test_a_local_image_goes_to_the_drive_under_the_cursor);
+    RUN_TEST(test_unmount_with_the_cursor);
+    RUN_TEST(test_a_source_loading_from_the_main_screen_keeps_its_mark);
     return UNITY_END();
 }

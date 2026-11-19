@@ -275,7 +275,11 @@ void test_main_screen_shows_sources_drives_tape_and_the_reference_frame()
     const MenuReply reply = rig.press(rb::host::kMenuNoKey);
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, reply.action());
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutMain, reply.layout());
-    assert_line(reply, sourceLine(1), textLine("1  SD"));
+    std::array<uint8_t, 40> first = textLine("1  SD");  // the cursor (menu-navegacion N004)
+    for (uint8_t& b : first) {
+        b = static_cast<uint8_t>(b | 0x80);
+    }
+    assert_line(reply, sourceLine(1), first);
     assert_line(reply, sourceLine(2), textLine("2  tnfs.example.cl"));  // case kept, as in the reference
     assert_line(reply, sourceLine(3), textLine("3  localhost"));
     assert_line(reply, sourceLine(4), textLine("4"));
@@ -346,7 +350,7 @@ void test_image_mounted_on_d2_appears_on_d2_and_is_served_there()
     MenuRig rig;
     const MenuReply pick = rig.keys({K1, KB});
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutMain, pick.layout());  // the drives are visible
-    assert_line(pick, rb::host::kMainMessage, line(" UNIDAD 1-8 (ESC VUELVE): demo-uno.atr"));
+    assert_line(pick, rb::host::kMainMessage, line(" UNIDAD PARA: demo-uno.atr"));  // menu-navegacion M42-4
     TEST_ASSERT_TRUE(rig.mailbox.idle());
     const MenuReply mounted = rig.keys({K2});
     assert_line(mounted, driveLine(2), line("D2 DEMO-UNO.ATR"));

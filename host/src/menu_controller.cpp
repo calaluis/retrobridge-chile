@@ -684,7 +684,7 @@ MenuReply MenuController::render(uint8_t action) const noexcept
     if (view_ == View::List) {
         reply.bytes[1] = kMenuLayoutList;
         std::memcpy(screen, kMenuListTemplate, kMenuScreenSize);
-        put(screen, kListTitle, kMenuTitleWidth, " FUENTE 1: SD", true);
+        put(screen, kListPath, kMenuLineWidth, " FUENTE 1: SD", true);  // the title stays fixed (N008)
         const std::size_t first = listCursor_.page * kPageRows;  // only the visible rows are drawn
         for (std::size_t i = 0; i < kPageRows && first + i < catalog_.count(); ++i) {
             std::snprintf(text, sizeof text, " %c  %.*s", static_cast<char>('A' + i), static_cast<int>(kNameColumns),
@@ -745,11 +745,12 @@ MenuReply MenuController::render(uint8_t action) const noexcept
 
 void MenuController::renderFolder(uint8_t* screen, char* text, std::size_t size) const noexcept
 {
-    // " FUENTE n: " and the folder, cut on the left so the current one shows.
+    // The path line under the fixed title (N008): " FUENTE n: " and the folder, cut on the
+    // left so the current one shows.
     const int prefix = std::snprintf(text, size, " FUENTE %u: ", source_);
-    const std::size_t room = kMenuTitleWidth > static_cast<unsigned>(prefix) ? kMenuTitleWidth - prefix : 0;
+    const std::size_t room = kMenuLineWidth > static_cast<unsigned>(prefix) ? kMenuLineWidth - prefix : 0;
     tnfsTitle(path_, pathLength_, room, text + prefix);
-    put(screen, kListTitle, kMenuTitleWidth, text, true);
+    put(screen, kListPath, kMenuLineWidth, text, true);
     const std::size_t first = folderCursor_.page * kPageRows;  // only the visible rows are drawn
     for (std::size_t i = 0; i < kPageRows && first + i < folder_.count(); ++i) {
         std::snprintf(text, size, "%c %s", static_cast<char>('A' + i), folder_.entry(first + i).display);

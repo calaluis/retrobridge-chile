@@ -160,7 +160,7 @@ void test_a_load_longer_than_seven_seconds_shows_its_progress_and_mounts_on_d2()
     rig.gated.gate(tnfs::cmd::kRead);
     const MenuReply first = rig.press(K2);
     assert_loading(first, kListMessage, "0");
-    assert_title(first, " FUENTE 2: .. PRUEBA");
+    assert_title(first, " FUENTE 2: ..RTES_JUAN_LARRAIN/0- PRUEBA");  // 40 columns, cut on the left (N008)
     rig.gated.awaitHeld();
     unsigned last = 0;
     bool rose = false;

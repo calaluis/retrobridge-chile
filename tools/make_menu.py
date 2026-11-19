@@ -85,8 +85,9 @@ MAIN_MESSAGE = MAIN_FOOTER + 2 * LINE_WIDTH        # below the footer (asked in 
 MAIN_END = MAIN_MESSAGE + LINE_WIDTH
 
 # List of a source (layout 1).
-LIST_TITLE = 0
-LIST_ENTRIES = LIST_TITLE + TITLE_WIDTH            # 20 lines
+LIST_TITLE = 0                                     # fixed: the title of the main screen (N008)
+LIST_PATH = LIST_TITLE + TITLE_WIDTH               # source and folder, filled by the host (N008)
+LIST_ENTRIES = LIST_PATH + LINE_WIDTH              # 20 lines
 LIST_MAX_ENTRIES = 20
 LIST_FOOTER = LIST_ENTRIES + LIST_MAX_ENTRIES * LINE_WIDTH  # 1 line
 LIST_MESSAGE = LIST_FOOTER + LINE_WIDTH            # below the footer, as on the main screen
@@ -158,6 +159,7 @@ def main_template() -> bytes:
 
 def list_template() -> bytes:
     screen = bytearray(SCREEN_SIZE)
+    screen[LIST_TITLE:LIST_TITLE + TITLE_WIDTH] = screen_codes(MAIN_TITLE_TEXT, TITLE_WIDTH)
     screen[LIST_FOOTER:LIST_MESSAGE] = list_footer()
     return bytes(screen)
 
@@ -409,10 +411,12 @@ def menu_program():
         b"\x42", ("abs", "main_footer"), b"\x02",
         b"\x42", ("abs", "main_message"),
         b"\x41", ("abs", "dl_main"),
-        # List of a source: 8 blank, title (mode 7), 8 blank, 20 entries, footer, message.
+        # List of a source: 8 blank, title (mode 7), path line where the 8 blank lines were
+        # (N008), 20 entries, footer, message.
         ("label", "dl_list"),
         b"\x70\x47", ("abs", "list_title"),
-        b"\x70\x42", ("abs", "list_entries"), bytes([0x02] * (LIST_MAX_ENTRIES - 1)),
+        b"\x42", ("abs", "list_path"),
+        b"\x42", ("abs", "list_entries"), bytes([0x02] * (LIST_MAX_ENTRIES - 1)),
         b"\x42", ("abs", "list_footer"),
         b"\x42", ("abs", "list_message"),
         b"\x41", ("abs", "dl_list"),
@@ -430,7 +434,7 @@ def menu_program():
     screen_labels = {
         "main_title": MAIN_TITLE, "main_sources": MAIN_SOURCES, "main_subtitle": MAIN_SUBTITLE,
         "main_status": MAIN_STATUS, "main_message": MAIN_MESSAGE, "main_footer": MAIN_FOOTER,
-        "list_title": LIST_TITLE, "list_entries": LIST_ENTRIES, "list_footer": LIST_FOOTER,
+        "list_title": LIST_TITLE, "list_path": LIST_PATH, "list_entries": LIST_ENTRIES, "list_footer": LIST_FOOTER,
         "list_message": LIST_MESSAGE,
         "cur_base": CURSOR_AT, "cur_base_hi": CURSOR_AT + 1, "cur_count": CURSOR_AT + 2,
         "cur_row": CURSOR_AT + 3, "cur_paged": CURSOR_AT + 4,
@@ -486,7 +490,7 @@ def render_include(block: bytes, labels: dict) -> str:
         "kMenuLayoutMain": LAYOUT_MAIN, "kMenuLayoutList": LAYOUT_LIST,
         "kMainTitle": MAIN_TITLE, "kMainSources": MAIN_SOURCES, "kMainDrives": MAIN_DRIVES,
         "kMainTape": MAIN_TAPE, "kMainFooter": MAIN_FOOTER, "kMainMessage": MAIN_MESSAGE,
-        "kListTitle": LIST_TITLE, "kListEntries": LIST_ENTRIES, "kListMaxEntries": LIST_MAX_ENTRIES,
+        "kListTitle": LIST_TITLE, "kListPath": LIST_PATH, "kListEntries": LIST_ENTRIES, "kListMaxEntries": LIST_MAX_ENTRIES,
         "kListFooter": LIST_FOOTER, "kListMessage": LIST_MESSAGE,
         "kMenuCursor": CURSOR_AT, "kMenuConfirmRow": CONFIRM_ROW,
     }

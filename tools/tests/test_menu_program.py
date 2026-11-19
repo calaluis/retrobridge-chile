@@ -295,8 +295,10 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(self.at("dl_main", len(expected)), expected)
 
     def test_list_display_list_has_title_twenty_entries_footer_and_message(self):
+        # N008: the path line takes the 8 blank lines under the title; same height as before.
         expected = (b"\x70\x47" + self.lms("list_title")
-                    + b"\x70\x42" + self.lms("list_entries") + b"\x02" * 19
+                    + b"\x42" + self.lms("list_path")
+                    + b"\x42" + self.lms("list_entries") + b"\x02" * 19
                     + b"\x42" + self.lms("list_footer")
                     + b"\x42" + self.lms("list_message")
                     + b"\x41" + self.lms("dl_list"))
@@ -304,6 +306,8 @@ class MenuProgramTest(unittest.TestCase):
         # 20 entries are contiguous: the LMS line plus 19 more; the message goes under the footer.
         self.assertEqual(self.labels["list_footer"] - self.labels["list_entries"], 20 * 40)
         self.assertEqual(self.labels["list_message"] - self.labels["list_footer"], 40)
+        self.assertEqual(self.labels["list_path"] - self.labels["list_title"], 20)
+        self.assertEqual(self.labels["list_entries"] - self.labels["list_path"], 40)
 
     def test_screen_layout_matches_the_reference_offsets(self):
         self.assertEqual(self.labels["main_sources"] - self.labels["main_title"], 20)
@@ -334,6 +338,12 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual((len(row1), len(row2)), (40, 40))
         foot = make_menu.MAIN_FOOTER
         self.assertEqual(screen[foot:foot + 80], row1 + row2)
+
+    def test_list_template_has_the_fixed_title_of_the_main_screen(self):
+        template = make_menu.list_template()
+        title = template[make_menu.LIST_TITLE:make_menu.LIST_TITLE + 20]
+        self.assertEqual(title, make_menu.screen_codes(make_menu.MAIN_TITLE_TEXT, 20))
+        self.assertEqual(template[make_menu.LIST_PATH:make_menu.LIST_PATH + 40], bytes(40))  # the host fills it
 
     def test_list_template_footer_is_forty_columns(self):
         footer = make_menu.list_template()[make_menu.LIST_FOOTER:make_menu.LIST_MESSAGE]

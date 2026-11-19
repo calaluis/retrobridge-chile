@@ -171,10 +171,13 @@ void assert_marked(const MenuReply& reply, unsigned offset, const char* text)
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.data(), reply.screen() + offset, 40);
 }
 
+// The source and folder of a list, on the path line (N008); the title above it never changes.
 void assert_title(const MenuReply& reply, const char* text)
 {
+    const std::array<uint8_t, 40> title = line(" RETROBRIDGE CHILE");
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(title.data(), reply.screen() + rb::host::kListTitle, rb::host::kMenuTitleWidth);
     const std::array<uint8_t, 40> expected = line(text);
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.data(), reply.screen() + rb::host::kListTitle, rb::host::kMenuTitleWidth);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.data(), reply.screen() + rb::host::kListPath, 40);
 }
 
 [[maybe_unused]] unsigned driveLine(unsigned n) { return rb::host::kMainDrives + (n - 1) * 40; }

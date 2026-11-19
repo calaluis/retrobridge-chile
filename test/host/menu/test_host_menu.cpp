@@ -327,7 +327,8 @@ void test_source_1_lists_the_folder_and_esc_goes_back()
     MenuRig rig;
     const MenuReply list = rig.keys({K1});
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutList, list.layout());
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(line(" FUENTE 1: SD").data(), list.screen() + rb::host::kListTitle, 20);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(line(" RETROBRIDGE CHILE").data(), list.screen() + rb::host::kListTitle, 20);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(line(" FUENTE 1: SD").data(), list.screen() + rb::host::kListPath, 40);  // N008
     std::array<uint8_t, 40> marked = line(" A  DEMO-DOS.ATR");  // the cursor (menu-navegacion)
     for (uint8_t& b : marked) {
         b = static_cast<uint8_t>(b | 0x80);

@@ -294,7 +294,7 @@ struct Rig {
     // What the 6502 does with a code before it sends it (tools/make_menu.py, N007): on a
     // shown screen with a local cursor, up and down move the bar there; RETURN and fire send
     // kMenuConfirmRow + row; at an edge, and for left and right, the host is asked only when
-    // the list has more pages. false: done on the Atari, nothing sent.
+    // there is a page that way. false: done on the Atari, nothing sent.
     bool atari(uint8_t& code)
     {
         uint8_t* block = shown.bytes.data() + 2 + rb::host::kMenuCursor;
@@ -341,7 +341,9 @@ struct Rig {
             }
             return true;
         }
-        return edge && block[4] != 0;
+        // Only toward a page that exists: up and left need one before, down and right one after.
+        const bool before = code == rb::host::kMenuNavUp || code == rb::host::kMenuNavLeft;
+        return edge && (block[4] & (before ? rb::host::kMenuPageBefore : rb::host::kMenuPageAfter)) != 0;
     }
 
     // One code from the Atari: done there when the 6502 does it by itself (shown, no host

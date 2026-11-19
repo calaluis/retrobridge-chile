@@ -456,16 +456,27 @@ std::size_t MenuController::pageRows(const Cursor& cursor, std::size_t count) no
     return count == 0 ? 0 : std::min(kPageRows, count - cursor.page * kPageRows);
 }
 
-bool MenuController::paged(std::size_t count) noexcept { return count > kPageRows; }
+uint8_t MenuController::pages(const Cursor& cursor, std::size_t count) noexcept
+{
+    const std::size_t total = (count + kPageRows - 1) / kPageRows;
+    uint8_t ways = 0;
+    if (cursor.page > 0) {
+        ways = static_cast<uint8_t>(ways | kMenuPageBefore);
+    }
+    if (cursor.page + 1u < total) {
+        ways = static_cast<uint8_t>(ways | kMenuPageAfter);
+    }
+    return ways;
+}
 
-void MenuController::cursorBlock(uint8_t* screen, unsigned base, std::size_t rows, unsigned row, bool paged) noexcept
+void MenuController::cursorBlock(uint8_t* screen, unsigned base, std::size_t rows, unsigned row, uint8_t pages) noexcept
 {
     uint8_t* block = screen + kMenuCursor;
     block[0] = static_cast<uint8_t>(base & 0xFF);
     block[1] = static_cast<uint8_t>(base >> 8);
     block[2] = static_cast<uint8_t>(rows);
     block[3] = static_cast<uint8_t>(rows == 0 ? 0 : row);
-    block[4] = paged && rows != 0 ? 1 : 0;
+    block[4] = rows != 0 ? pages : 0;
 }
 
 bool MenuController::selectRow(unsigned row) noexcept
@@ -677,7 +688,7 @@ MenuReply MenuController::render(uint8_t action) const noexcept
         renderFolder(screen, text, sizeof text);
         if (action == kMenuActionShow && job_ == Job::None) {
             cursorBlock(screen, kListEntries, pageRows(folderCursor_, folder_.count()), folderCursor_.row,
-                        paged(folder_.count()));
+                        pages(folderCursor_, folder_.count()));
         }
         return reply;
     }
@@ -694,7 +705,7 @@ MenuReply MenuController::render(uint8_t action) const noexcept
         markRow(screen, listCursor_, catalog_.count());
         if (action == kMenuActionShow) {
             cursorBlock(screen, kListEntries, pageRows(listCursor_, catalog_.count()), listCursor_.row,
-                        paged(catalog_.count()));
+                        pages(listCursor_, catalog_.count()));
         }
         // The total: the names kept, or every .atr seen once the catalog is full.
         const std::size_t total = catalog_.count() < MenuCatalog::kMaxEntries ? catalog_.count() : catalog_.atrSeen();
@@ -726,10 +737,10 @@ MenuReply MenuController::render(uint8_t action) const noexcept
     const bool local = action == kMenuActionShow && job_ == Job::None;  // the 6502 moves the bar (N007)
     if (view_ == View::Main) {
         invert(screen, kMainSources + sourceLine_ * kMenuLineWidth);
-        cursorBlock(screen, kMainSources, local ? kDrives : 0, sourceLine_, false);
+        cursorBlock(screen, kMainSources, local ? kDrives : 0, sourceLine_, 0);
     } else {  // Pick, FolderPick, Unmount: the drive under the cursor
         invert(screen, kMainDrives + driveLine_ * kMenuLineWidth);
-        cursorBlock(screen, kMainDrives, local ? kDrives : 0, driveLine_, false);
+        cursorBlock(screen, kMainDrives, local ? kDrives : 0, driveLine_, 0);
     }
     if (job_ != Job::None) {
         std::snprintf(text, sizeof text, " CARGANDO %u%%", static_cast<unsigned>(percent_));

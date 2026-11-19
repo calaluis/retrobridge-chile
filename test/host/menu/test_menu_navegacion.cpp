@@ -628,8 +628,9 @@ void test_every_shown_screen_carries_its_cursor_block()
     rig.start();
     assert_block(rig.settle(kRedraw), rb::host::kMainSources, 8, 0, 0);
     const MenuReply oms = openOms(rig);
-    assert_block(oms, rb::host::kListEntries, 20, 0, 1);
-    assert_block(repeat(rig, kRight, 10), rb::host::kListEntries, 5, 0, 1);  // page 11: 5 rows
+    assert_block(oms, rb::host::kListEntries, 20, 0, rb::host::kMenuPageAfter);  // page 1: only after
+    assert_block(rig.settle(kRight), rb::host::kListEntries, 20, 0, rb::host::kMenuPageBefore | rb::host::kMenuPageAfter);
+    assert_block(repeat(rig, kRight, 9), rb::host::kListEntries, 5, 0, rb::host::kMenuPageBefore);  // page 11: 5 rows
     const MenuReply pick = rig.settle(kReturn);                               // G200.ATR
     assert_block(pick, rb::host::kMainDrives, 8, 0, 0);
     rig.settle(KESC);
@@ -676,6 +677,34 @@ void test_moves_inside_a_page_do_not_reach_the_host()
     TEST_ASSERT_EQUAL_UINT(before + 1, rig.hostCalls);
     rig.settle(kReturn);
     TEST_ASSERT_EQUAL_STRING("G042.ATR", rig.controller->driveName(4));
+}
+
+// Toward a page that does not exist (left on the first, right on the last, down at the
+// bottom of the last): the bar keeps its row and nothing reaches the host.
+void test_a_move_toward_a_missing_page_keeps_the_row_without_sio()
+{
+    Rig rig;
+    addImages(rig, "/OMS_ATR", "G%03d.ATR", 25, -1);  // two pages: 20 and 5
+    rig.start();
+    openOms(rig);
+    repeat(rig, kDown, 3);
+    const unsigned before = rig.hostCalls;
+    const MenuReply left = rig.settle(kLeft);
+    assert_marked(left, row(3), "D G003.ATR");
+    assert_line(left, kListMessage, " PAGINA 1 DE 2 (25)");
+    assert_marked(rig.settle(kUp), row(2), "C G002.ATR");  // a move inside the page still works
+    TEST_ASSERT_EQUAL_UINT(before, rig.hostCalls);
+    const MenuReply last = rig.settle(kRight);
+    TEST_ASSERT_EQUAL_UINT(before + 1, rig.hostCalls);
+    assert_line(last, kListMessage, " PAGINA 2 DE 2 (25)");
+    repeat(rig, kDown, 3);
+    const MenuReply right = rig.settle(kRight);
+    assert_marked(right, row(3), "D G023.ATR");
+    assert_marked(rig.settle(kDown), row(4), "E G024.ATR");
+    assert_marked(rig.settle(kDown), row(4), "E G024.ATR");  // the bottom of the last page
+    TEST_ASSERT_EQUAL_UINT(before + 1, rig.hostCalls);
+    // RETURN takes the row the bar shows.
+    assert_line(rig.settle(kReturn), kMainMessage, " UNIDAD PARA: G024.ATR");
 }
 
 // The edges: the host takes the row the bar was on, not the one it drew last.
@@ -768,6 +797,7 @@ int main()
     RUN_TEST(test_unmount_with_the_cursor);
     RUN_TEST(test_every_shown_screen_carries_its_cursor_block);
     RUN_TEST(test_moves_inside_a_page_do_not_reach_the_host);
+    RUN_TEST(test_a_move_toward_a_missing_page_keeps_the_row_without_sio);
     RUN_TEST(test_an_edge_move_starts_from_the_row_the_atari_shows);
     RUN_TEST(test_a_confirmed_row_is_chosen_as_its_letter_and_off_rows_do_nothing);
     RUN_TEST(test_a_source_loading_from_the_main_screen_keeps_its_mark);

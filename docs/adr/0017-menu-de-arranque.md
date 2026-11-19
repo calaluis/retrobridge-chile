@@ -142,11 +142,12 @@ el botón rojo. Cada movimiento era una transacción SIO con la pantalla entera 
 título debe ser inmutable: la fuente y la ruta van en otro lugar.
 
 1. **Cursor local en el 6502 (M42-5).** El host escribe un bloque de 5 bytes al final de la pantalla, en
-   `kMenuCursor` (955), fuera de todo layout: base de la fila 0, filas, fila marcada y si hay más páginas. Con la
+   `kMenuCursor` (955), fuera de todo layout: base de la fila 0, filas, fila marcada y qué páginas hay (bit 0: una anterior; bit 1: una siguiente). Con la
    acción 0 y filas > 0, arriba y abajo mueven la barra en el Atari, sin SIO. RETURN y el botón rojo envían
    `$C0` + fila (rango de Control+Shift, lejos de las teclas tras la máscara, de `$40`-`$44`, `$FE` y `$FF`). En el
-   borde de la página, e izquierda y derecha, el 6502 pregunta al host solo si la lista tiene más páginas; si no,
-   no hace nada. Con 0 filas (carga en curso, lista vacía) o sin respuesta del host, todo va al host, como en la
+   borde de la página, e izquierda y derecha, el 6502 pregunta al host solo si hay una página en esa dirección
+   (arriba e izquierda: la anterior; abajo y derecha: la siguiente); si no, la barra queda en su fila y no se
+   envía nada. Con 0 filas (carga en curso, lista vacía) o sin respuesta del host, todo va al host, como en la
    enmienda 3.
 2. **El host y la fila del Atari.** `$C0` + fila fija la fila de la pantalla mostrada y equivale a RETURN; una
    fila que no existe no hace nada. Arriba en una lista parte de la fila 0 y abajo de la última, que es desde donde
@@ -157,6 +158,6 @@ título debe ser inmutable: la fuente y la ruta van en otro lugar.
    columnas donde estaban las 8 líneas en blanco bajo el título. La pantalla mide lo mismo.
 
 Consecuencias, en lugar de las de la enmienda 3: el programa 6502 ocupa 13 sectores desde `$0700`. La pantalla
-vive en `$099A`-`$0D59`, sin cruzar 4 KB. En la lista, las entradas empiezan en 60, el pie en 860 y el mensaje en
+vive en `$09B0`-`$0D6F`, sin cruzar 4 KB. En la lista, las entradas empiezan en 60, el pie en 860 y el mensaje en
 900. Moverse dentro de una página no usa SIO; RETURN, el botón rojo y cada cambio de página son una transacción,
 dentro de los 250 ms de `key()`.

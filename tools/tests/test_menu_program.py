@@ -149,6 +149,8 @@ class Menu6502:
                 self.mem[ab] = self.y; pc += 3
             elif op == 0x29:
                 self.a &= imm; self.flags(self.a); pc += 2
+            elif op == 0x2D:
+                self.a &= self.read(ab); self.flags(self.a); pc += 3
             elif op == 0x49:
                 self.a ^= imm; self.flags(self.a); pc += 2
             elif op == 0xAA:
@@ -553,7 +555,7 @@ class MenuProgramTest(unittest.TestCase):
         return cpu, [c["aux1"] for c in cpu.siov_calls[1:]]
 
     def test_up_and_down_move_the_bar_without_asking_the_host(self):
-        cpu, sent = self.local_run([0x8F, 0x8F, 0x8F, 0x8E], cursor_reply(5, 0, 1))
+        cpu, sent = self.local_run([0x8F, 0x8F, 0x8F, 0x8E], cursor_reply(5, 0, make_menu.PAGE_BEFORE | make_menu.PAGE_AFTER))
         self.assertEqual(sent, [])
         self.assertEqual(marked_rows(cpu.screen(), 5), [2])
         self.assertEqual(cpu.screen()[make_menu.CURSOR_AT + 3], 2)
@@ -566,13 +568,32 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(marked_rows(cpu.screen(), 20), [19])
 
     def test_the_edges_ask_the_host_only_when_there_are_more_pages(self):
-        _, sent = self.local_run([0x8E, 0x86, 0x87], cursor_reply(5, 0, 1))
+        both = make_menu.PAGE_BEFORE | make_menu.PAGE_AFTER
+        _, sent = self.local_run([0x8E, 0x86, 0x87], cursor_reply(5, 0, both))
         self.assertEqual(sent, [make_menu.NAV_UP, make_menu.NAV_LEFT, make_menu.NAV_RIGHT])
-        _, sent = self.local_run([0x8F], cursor_reply(5, 4, 1))
+        _, sent = self.local_run([0x8F], cursor_reply(5, 4, both))
         self.assertEqual(sent, [make_menu.NAV_DOWN])
         cpu, sent = self.local_run([0x8E, 0x86, 0x87, 0x8F, 0x8F, 0x8F, 0x8F, 0x8F], cursor_reply(3, 0, 0))
         self.assertEqual(sent, [])
         self.assertEqual(marked_rows(cpu.screen(), 3), [2])
+
+    def test_a_move_toward_a_missing_page_keeps_the_row_and_sends_nothing(self):
+        # First of two pages (only a page after): row 3, then left and up from row 0 stay here.
+        cpu, sent = self.local_run([0x8F, 0x8F, 0x8F, 0x86], cursor_reply(20, 0, make_menu.PAGE_AFTER))
+        self.assertEqual(sent, [])
+        self.assertEqual(marked_rows(cpu.screen(), 20), [3])
+        _, sent = self.local_run([0x8E], cursor_reply(20, 0, make_menu.PAGE_AFTER))
+        self.assertEqual(sent, [])
+        _, sent = self.local_run([0x87], cursor_reply(20, 3, make_menu.PAGE_AFTER))
+        self.assertEqual(sent, [make_menu.NAV_RIGHT])
+        # Last of two pages (only a page before): right and down from the bottom stay here.
+        cpu, sent = self.local_run([0x8F, 0x8F, 0x8F, 0x87], cursor_reply(5, 0, make_menu.PAGE_BEFORE))
+        self.assertEqual(sent, [])
+        self.assertEqual(marked_rows(cpu.screen(), 5), [3])
+        _, sent = self.local_run([0x8F], cursor_reply(5, 4, make_menu.PAGE_BEFORE))
+        self.assertEqual(sent, [])
+        _, sent = self.local_run([0x86, 0x8E], cursor_reply(5, 0, make_menu.PAGE_BEFORE))
+        self.assertEqual(sent, [make_menu.NAV_LEFT, make_menu.NAV_UP])
 
     def test_the_main_screen_cursor_runs_from_its_own_base(self):
         base = make_menu.MAIN_SOURCES

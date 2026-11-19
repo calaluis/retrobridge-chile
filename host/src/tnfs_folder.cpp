@@ -212,12 +212,20 @@ void pageLine(std::size_t kept, std::size_t total, std::size_t page, char (&out)
     }
     const auto n = static_cast<unsigned long long>(page + 1);
     const auto m = static_cast<unsigned long long>((kept + TnfsFolder::kPageRows - 1) / TnfsFolder::kPageRows);
+    // Formatted with room for any size_t, then cut to the notice: GCC's -Wformat-truncation
+    // cannot see that the numbers are small, and the line never needs more than 40 columns.
+    char line[96];
     if (kept == total) {
-        std::snprintf(out, sizeof out, "PAGINA %llu DE %llu (%llu)", n, m, static_cast<unsigned long long>(total));
+        std::snprintf(line, sizeof line, "PAGINA %llu DE %llu (%llu)", n, m, static_cast<unsigned long long>(total));
     } else {
-        std::snprintf(out, sizeof out, "PAGINA %llu DE %llu (%llu DE %llu)", n, m,
+        std::snprintf(line, sizeof line, "PAGINA %llu DE %llu (%llu DE %llu)", n, m,
                       static_cast<unsigned long long>(kept), static_cast<unsigned long long>(total));
     }
+    std::size_t i = 0;
+    for (; i + 1 < sizeof out && line[i] != '\0'; ++i) {
+        out[i] = line[i];
+    }
+    out[i] = '\0';
 }
 
 }  // namespace rb::host

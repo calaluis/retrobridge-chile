@@ -11,7 +11,8 @@
   versiones futuras de la GPL.
 - `THIRD_PARTY_NOTICES.md`, **separado** de `LICENSE`, enumera las dependencias, sus licencias y las
   obligaciones de atribución.
-- El aviso de copyright aparece en `README.md`. El titular de los derechos queda **pendiente de confirmación**.
+- El aviso de copyright en [`README.md`](../../README.md#license) identifica a **Luis Rodrigo Carrasco Lagos**
+  como titular de los derechos de autor del código propio.
 
 ## Justificación
 
@@ -41,7 +42,5 @@ una obra GPL-3.0:
 
 ## Pendiente
 
-- Confirmar el nombre de la persona natural o jurídica titular de los derechos y reemplazar la línea de
-  copyright de `README.md`.
 - Decidir si se agregan cabeceras SPDX (`SPDX-License-Identifier: GPL-3.0-only`) a los archivos fuente. Eso
   modifica código y queda fuera de este ajuste documental.

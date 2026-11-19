@@ -183,6 +183,15 @@ TnfsLoader::~TnfsLoader()
     }
     wake_.notify_all();
     thread_.join();
+    // End every session the loader opened (review of PR #44) with one UMOUNT
+    // each, without waiting: a silent server cannot hold the shutdown. Nothing
+    // goes out for a client that never mounted. The thread is gone, so this
+    // thread owns the clients now.
+    for (auto& client : clients_) {
+        if (client.has_value()) {
+            client->umountWithoutWaiting();
+        }
+    }
     if (doneHasSlot_) {
         (void)store_.release(doneStatus_.slot);
     }

@@ -726,6 +726,49 @@ static void test_await_returns_at_the_end_of_a_job_or_after_its_time(void)
     loader.await(job, 5000000);  // no longer current: at once
 }
 
+// Review of PR #44: closing the loader ends each session it opened, and only those.
+static void test_closing_the_loader_unmounts_each_open_session(void)
+{
+    Rig rig;
+    rig.server.addFile("/Logo.atr", image(100));
+    {
+        TnfsLoader loader(rig.links, rig.store, rig.clock, rig.memory, &rig.hooks);
+        TnfsFolder folder;
+        const uint32_t job = list(loader, "/");
+        TEST_ASSERT_TRUE(awaitResult(loader, job, folder).kind == Kind::Folder);
+        TEST_ASSERT_EQUAL_size_t(1, countCommand(rig.server, tnfs::cmd::kMount));
+        TEST_ASSERT_EQUAL_size_t(0, countCommand(rig.server, tnfs::cmd::kUmount));
+    }
+    TEST_ASSERT_EQUAL_size_t(1, countCommand(rig.server, tnfs::cmd::kUmount));
+}
+
+static void test_closing_an_unused_loader_sends_nothing(void)
+{
+    Rig rig;
+    { TnfsLoader loader(rig.links, rig.store, rig.clock, rig.memory, &rig.hooks); }
+    TEST_ASSERT_EQUAL_size_t(0, rig.server.log().size());
+}
+
+// Review of PR #44, round 1: a server that went silent must not hold the
+// shutdown. One UMOUNT goes out and nobody waits for its answer.
+static void test_closing_does_not_wait_for_a_silent_server(void)
+{
+    Rig rig;
+    rig.server.addFile("/Logo.atr", image(100));
+    std::optional<TnfsLoader> loader;
+    loader.emplace(rig.links, rig.store, rig.clock, rig.memory, &rig.hooks);
+    TnfsFolder folder;
+    const uint32_t job = list(*loader, "/");
+    TEST_ASSERT_TRUE(awaitResult(*loader, job, folder).kind == Kind::Folder);
+    rig.server.silence(tnfs::cmd::kUmount);
+    rig.server.silence(tnfs::cmd::kUmount);
+    rig.server.silence(tnfs::cmd::kUmount);
+    const uint64_t before = fakeClock.nowMicros();
+    loader.reset();
+    TEST_ASSERT_EQUAL_size_t(1, countCommand(rig.server, tnfs::cmd::kUmount));
+    TEST_ASSERT_TRUE(fakeClock.nowMicros() - before < 100000);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -755,5 +798,8 @@ int main(void)
     RUN_TEST(test_a_listing_restarted_by_a_reconnection_counts_each_entry_once);
     RUN_TEST(test_recycled_slots_are_freed_on_the_loader_thread_and_a_held_one_waits);
     RUN_TEST(test_await_returns_at_the_end_of_a_job_or_after_its_time);
+    RUN_TEST(test_closing_the_loader_unmounts_each_open_session);
+    RUN_TEST(test_closing_an_unused_loader_sends_nothing);
+    RUN_TEST(test_closing_does_not_wait_for_a_silent_server);
     return UNITY_END();
 }

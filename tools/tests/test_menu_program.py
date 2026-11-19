@@ -2,7 +2,8 @@
 
 The program is run by a small interpreter of the instructions it uses. SIOV and
 COLDSV are trapped: SIOV calls a Python function that plays the host, COLDSV
-ends the run. Keys are fed through CH as the OS keyboard handler does. The
+ends the run. RTCLOK advances once every STEPS_PER_FRAME instructions, as the
+vertical blank does once per frame, so a wait in frames can be measured. Keys are fed through CH as the OS keyboard handler does. The
 display lists are checked byte for byte against the reference of Issue #40
 (the Display List Lab mock-up), with the program's own addresses.
 """
@@ -19,6 +20,7 @@ import make_menu  # noqa: E402
 
 REPO = TOOLS.parent
 ORG = make_menu.MENU_ORG
+STEPS_PER_FRAME = 20
 
 
 class Halt(Exception):
@@ -28,10 +30,11 @@ class Halt(Exception):
 class Menu6502:
     """Interprets the menu program. Any opcode it does not know fails the test."""
 
-    def __init__(self, block: bytes, keys, siov):
+    def __init__(self, block: bytes, keys, siov, labels=None):
         self.mem = bytearray(0x10000)
         self.mem[ORG:ORG + len(block)] = block
-        self.labels = make_menu.menu_program()[1]
+        # Another program loaded at the same address (the sector probe) passes its own labels.
+        self.labels = make_menu.menu_program()[1] if labels is None else labels
         # Leftovers in the DCB, so a store the program forgets is seen by the tests.
         self.mem[make_menu.DDEVIC:make_menu.DAUX2 + 1] = bytes([0xAA]) * (make_menu.DAUX2 + 1 - make_menu.DDEVIC)
         self.mem[make_menu.CH] = 0x3F  # a key pressed during boot, to be forgotten
@@ -39,15 +42,24 @@ class Menu6502:
         self.siov = siov
         self.siov_calls = []
         self.a = self.x = self.y = 0
-        self.z = self.n = False
+        self.z = self.n = self.c = False
         self.idle_key_reads = 0
+        self.pc = 0
+        # A key that arrives during the wait of action 2: (n, code) puts `code` in CH on the
+        # n-th read of CH inside the wait loop.
+        self.wait_key = None
+        self.wait_ch_reads = 0
+        self.ticks_waited = 0  # frames counted by the wait loop (visits of its "tick" label)
 
     def word(self, at):
         return self.mem[at] | (self.mem[at + 1] << 8)
 
     def read(self, at):
-        if at == make_menu.RTCLOK_LOW:
-            self.mem[at] = (self.mem[at] + 1) & 0xFF
+        if at == make_menu.CH and self.pc == self.labels.get("wait_ch"):
+            self.wait_ch_reads += 1
+            if self.wait_key is not None and self.wait_ch_reads == self.wait_key[0]:
+                self.mem[at] = self.wait_key[1]
+            return self.mem[at]
         if at == make_menu.CH and self.mem[at] == 0xFF:
             if self.keys:
                 self.mem[at] = self.keys.pop(0)
@@ -61,9 +73,18 @@ class Menu6502:
         self.z = value == 0
         self.n = value >= 0x80
 
+    def compare(self, register, value):
+        self.c = register >= value
+        self.flags((register - value) & 0xFF)
+
     def run(self, pc=None, max_steps=200000):
         pc = ORG + 6 if pc is None else pc
-        for _ in range(max_steps):
+        for step in range(max_steps):
+            if step % STEPS_PER_FRAME == STEPS_PER_FRAME - 1:
+                self.mem[make_menu.RTCLOK_LOW] = (self.mem[make_menu.RTCLOK_LOW] + 1) & 0xFF
+            self.pc = pc
+            if pc == self.labels.get("tick"):
+                self.ticks_waited += 1
             op = self.mem[pc]
             imm, zp, ab = self.mem[pc + 1], self.mem[pc + 1], self.word(pc + 1)
             if op == 0xA9:
@@ -74,6 +95,10 @@ class Menu6502:
                 self.a = self.read(zp); self.flags(self.a); pc += 2
             elif op == 0xAD:
                 self.a = self.read(ab); self.flags(self.a); pc += 3
+            elif op == 0xAC:
+                self.y = self.read(ab); self.flags(self.y); pc += 3
+            elif op == 0xC0:
+                self.compare(self.y, imm); pc += 2
             elif op == 0xBD:
                 self.a = self.read(ab + self.x); self.flags(self.a); pc += 3
             elif op == 0x8D:
@@ -85,9 +110,31 @@ class Menu6502:
             elif op == 0x8E:
                 self.mem[ab] = self.x; pc += 3
             elif op == 0xC5:
-                self.flags((self.a - self.read(zp)) & 0xFF); pc += 2
+                self.compare(self.a, self.read(zp)); pc += 2
             elif op == 0xC9:
-                self.flags((self.a - imm) & 0xFF); pc += 2
+                self.compare(self.a, imm); pc += 2
+            elif op == 0xE0:
+                self.compare(self.x, imm); pc += 2
+            elif op == 0x69:
+                total = self.a + imm + (1 if self.c else 0)
+                self.c = total > 0xFF
+                self.a = total & 0xFF; self.flags(self.a); pc += 2
+            elif op == 0x4A:
+                self.c = bool(self.a & 1)
+                self.a >>= 1; self.flags(self.a); pc += 1
+            elif op == 0x0A:
+                self.c = bool(self.a & 0x80)
+                self.a = (self.a << 1) & 0xFF; self.flags(self.a); pc += 1
+            elif op == 0x8A:
+                self.a = self.x; self.flags(self.a); pc += 1
+            elif op == 0xA8:
+                self.y = self.a; self.flags(self.y); pc += 1
+            elif op == 0xE8:
+                self.x = (self.x + 1) & 0xFF; self.flags(self.x); pc += 1
+            elif op == 0x99:
+                self.mem[ab + self.y] = self.a; pc += 3
+            elif op == 0x8C:
+                self.mem[ab] = self.y; pc += 3
             elif op == 0x29:
                 self.a &= imm; self.flags(self.a); pc += 2
             elif op == 0xAA:
@@ -96,13 +143,16 @@ class Menu6502:
                 self.x = (self.x - 1) & 0xFF; self.flags(self.x); pc += 1
             elif op == 0x98:
                 self.a = self.y; self.flags(self.a); pc += 1
-            elif op in (0xF0, 0xD0, 0x30, 0x10):
+            elif op in (0xF0, 0xD0, 0x30, 0x10, 0x90, 0xB0):
                 offset = imm - 256 if imm > 127 else imm
-                taken = {0xF0: self.z, 0xD0: not self.z, 0x30: self.n, 0x10: not self.n}[op]
+                taken = {0xF0: self.z, 0xD0: not self.z, 0x30: self.n, 0x10: not self.n,
+                         0x90: not self.c, 0xB0: self.c}[op]
                 pc += 2 + (offset if taken else 0)
             elif op == 0x4C:
                 if ab == make_menu.COLDSV:
                     return "coldstart"
+                if ab == pc:
+                    return "halt"  # JMP to itself: the program stopped there
                 pc = ab
             elif op == 0x20 and ab == make_menu.SIOV:
                 self.siov_call(); pc += 3
@@ -117,6 +167,8 @@ class Menu6502:
             ("dstats", make_menu.DSTATS), ("timeout", make_menu.DTIMLO), ("aux1", make_menu.DAUX1),
             ("aux2", make_menu.DAUX2))}
         dcb["buffer"] = self.word(make_menu.DBUFLO)
+        dcb["rtclok"] = m[make_menu.RTCLOK_LOW]
+        dcb["ticks_waited"] = self.ticks_waited
         dcb["length"] = self.word(make_menu.DBYTLO)
         self.siov_calls.append(dcb)
         reply = self.siov(dcb)
@@ -244,9 +296,64 @@ class MenuProgramTest(unittest.TestCase):
     def test_each_key_is_sent_as_its_keyboard_code(self):
         cpu = Menu6502(self.block, [KEY_1, KEY_ESC, KEY_A | 0x40], lambda dcb: host_reply(0, 0))
         self.assertEqual(cpu.run_until_idle(), "waiting")
-        self.assertEqual([c["aux1"] for c in cpu.siov_calls], [0xFF, KEY_1, KEY_ESC, KEY_A | 0x40])
+        # Shift+A goes out as A: the program sends CH AND $3F (menu-tnfs, M41-3).
+        self.assertEqual([c["aux1"] for c in cpu.siov_calls], [0xFF, KEY_1, KEY_ESC, KEY_A])
         # One sequence number per key, so the host can tell a new key from SIOV's retry.
         self.assertEqual([c["aux2"] for c in cpu.siov_calls], [1, 2, 3, 4])
+
+    def test_shift_and_control_are_removed_before_sending(self):
+        # A, Shift+A, Control+A, Control+Shift+S, and L (code $00, so AND gives zero).
+        keys = [KEY_A, KEY_A | 0x40, KEY_A | 0x80, 0xFE, 0x00]
+        cpu = Menu6502(self.block, keys, lambda dcb: host_reply(0, 0))
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        self.assertEqual([c["aux1"] for c in cpu.siov_calls], [0xFF, 0x3F, 0x3F, 0x3F, 0x3E, 0x00])
+        self.assertNotIn(0xFE, [c["aux1"] for c in cpu.siov_calls[1:]])
+        self.assertEqual(cpu.mem[make_menu.CH], 0xFF)  # each key was consumed
+
+    def test_wait_action_polls_with_fe_and_a_new_sequence_number(self):
+        replies = [host_reply(0, 1), host_reply(2, 1), host_reply(2, 1), host_reply(0, 1)]
+        cpu = Menu6502(self.block, [KEY_1], lambda dcb: replies.pop(0))
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        calls = cpu.siov_calls
+        self.assertEqual([c["aux1"] for c in calls], [0xFF, KEY_1, 0xFE, 0xFE])
+        self.assertEqual([c["aux2"] for c in calls], [1, 2, 3, 4])
+        # The wait loop counts 15 frames between the answer "wait" and the poll, and RTCLOK
+        # really moved that much (one more for the instructions around the loop).
+        for before, after in ((calls[1], calls[2]), (calls[2], calls[3])):
+            self.assertEqual(after["ticks_waited"] - before["ticks_waited"], 15)
+            ticks = (after["rtclok"] - before["rtclok"]) & 0xFF
+            self.assertTrue(15 <= ticks <= 17, ticks)
+        self.assertEqual(cpu.word(make_menu.SDLSTL), self.labels["dl_list"])
+        self.assertEqual(replies, [])
+
+    def test_a_key_during_the_wait_is_sent_normalized_instead_of_the_poll(self):
+        replies = [host_reply(0, 1), host_reply(2, 1), host_reply(0, 1)]
+        cpu = Menu6502(self.block, [], lambda dcb: replies.pop(0))
+        cpu.wait_key = (5, 0xFE)  # Control+Shift+S during the wait: S, never the poll
+        cpu.keys = [KEY_1]
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        calls = cpu.siov_calls
+        self.assertEqual([c["aux1"] for c in calls], [0xFF, KEY_1, 0x3E])
+        self.assertEqual([c["aux2"] for c in calls], [1, 2, 3])
+        ticks = (calls[2]["rtclok"] - calls[1]["rtclok"]) & 0xFF
+        self.assertLess(ticks, 15)  # sent at once, without waiting the rest
+        self.assertEqual(cpu.mem[make_menu.CH], 0xFF)
+
+    def test_boot_after_a_wait_still_cold_starts(self):
+        replies = [host_reply(0, 1), host_reply(2, 1), host_reply(1, 0)]
+        cpu = Menu6502(self.block, [KEY_A], lambda dcb: replies.pop(0))
+        self.assertEqual(cpu.run_until_idle(), "coldstart")
+        self.assertEqual([c["aux1"] for c in cpu.siov_calls], [0xFF, KEY_A, 0xFE])
+
+    def test_an_unknown_action_still_cold_starts(self):
+        # Only action 2 waits; any other non-zero action boots, as before menu-tnfs.
+        for action in (3, 0xFF):
+            replies = [host_reply(0, 0), host_reply(action, 0)]
+            cpu = Menu6502(self.block, [KEY_A], lambda dcb: replies.pop(0))
+            self.assertEqual(cpu.run_until_idle(), "coldstart", action)
+
+    def test_reply_size_does_not_change(self):
+        self.assertEqual(make_menu.REPLY_SIZE, 962)
 
     def test_layout_byte_selects_the_display_list(self):
         replies = [host_reply(0, 0), host_reply(0, 1), host_reply(0, 0)]

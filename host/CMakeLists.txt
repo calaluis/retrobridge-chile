@@ -16,6 +16,8 @@ add_subdirectory(${rb_root}/components/rb_application rb_application)
 add_subdirectory(${rb_root}/components/rb_sio rb_sio)
 add_subdirectory(${rb_root}/components/rb_file_storage rb_file_storage)
 add_subdirectory(${rb_root}/components/rb_netsio rb_netsio)
+add_subdirectory(${rb_root}/components/rb_net_tnfs rb_net_tnfs)
+find_package(Threads REQUIRED)
 
 add_executable(retrobridge_host
     src/main.cpp
@@ -26,8 +28,13 @@ add_executable(retrobridge_host
     src/menu_image.cpp
     src/menu_controller.cpp
     src/menu_sio_transport.cpp
-    src/menu_sources.cpp)
-target_link_libraries(retrobridge_host PRIVATE rb_sio rb_file_storage rb_netsio)
+    src/menu_sources.cpp
+    src/tnfs_folder.cpp
+    src/tnfs_loader.cpp
+    src/tnfs_link.cpp
+    src/udp_tnfs_port.cpp
+    src/sha256.cpp)
+target_link_libraries(retrobridge_host PRIVATE rb_sio rb_file_storage rb_netsio rb_net_tnfs Threads::Threads)
 rb_apply_build_flags(retrobridge_host)
 if(WIN32)
     target_link_libraries(retrobridge_host PRIVATE ws2_32)

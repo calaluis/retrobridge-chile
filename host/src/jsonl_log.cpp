@@ -7,6 +7,40 @@ namespace rb::host {
 
 using rb::sio::StepOutcome;
 
+// Length (2 to 4) of the well-formed UTF-8 sequence that starts at `p`, or 0:
+// no overlong forms, no surrogates, nothing above U+10FFFF (RFC 3629, table 3-7
+// of The Unicode Standard). Reads at most up to the first byte that fails, so
+// it never passes the string's NUL.
+std::size_t utf8SequenceLength(const unsigned char* p) noexcept
+{
+    const unsigned char c = p[0];
+    std::size_t length = 0;
+    unsigned char low = 0x80;
+    unsigned char high = 0xBF;
+    if (c >= 0xC2 && c <= 0xDF) {
+        length = 2;
+    } else if (c >= 0xE0 && c <= 0xEF) {
+        length = 3;
+        low = c == 0xE0 ? 0xA0 : 0x80;
+        high = c == 0xED ? 0x9F : 0xBF;
+    } else if (c >= 0xF0 && c <= 0xF4) {
+        length = 4;
+        low = c == 0xF0 ? 0x90 : 0x80;
+        high = c == 0xF4 ? 0x8F : 0xBF;
+    } else {
+        return 0;
+    }
+    if (p[1] < low || p[1] > high) {
+        return 0;
+    }
+    for (std::size_t i = 2; i < length; ++i) {
+        if (p[i] < 0x80 || p[i] > 0xBF) {
+            return 0;
+        }
+    }
+    return length;
+}
+
 const char* messageName(uint8_t id) noexcept
 {
     // Names from FEP-003 (docs/fuentes.md); only those a disk drive meets.
@@ -72,6 +106,7 @@ void JsonlLog::end()
 
 void JsonlLog::onDatagram(bool outbound, rb::core::Span<const uint8_t> datagram)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     begin("datagram");
     std::fprintf(file_, ",\"dir\":\"%s\",\"type\":\"%s\",\"len\":%u,\"hex\":\"", outbound ? "out" : "in",
                  datagram.empty() ? "EMPTY" : messageName(datagram[0]), static_cast<unsigned>(datagram.size()));
@@ -84,6 +119,7 @@ void JsonlLog::onDatagram(bool outbound, rb::core::Span<const uint8_t> datagram)
 
 void JsonlLog::step(StepOutcome outcome)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     begin("step");
     std::fprintf(file_, ",\"outcome\":\"%s\"", outcomeName(outcome));
     end();
@@ -91,16 +127,23 @@ void JsonlLog::step(StepOutcome outcome)
 
 void JsonlLog::event(const char* name, const char* detail)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     begin("event");
     std::fprintf(file_, ",\"name\":\"%s\",\"detail\":\"", name);
-    // The detail may carry a file name of the images folder (Issue #38): escape
-    // what JSON does not allow raw in a string.
+    // The detail may carry a file name of the images folder (Issue #38) or a
+    // TNFS path (UTF-8, review of PR #44): escape what JSON does not allow raw
+    // in a string. A well-formed UTF-8 sequence goes out as it is; any other
+    // byte >= 0x80 (an ANSI path) as Latin-1, so the line stays UTF-8.
     for (const char* p = detail; *p != '\0'; ++p) {
         const unsigned char c = static_cast<unsigned char>(*p);
-        if (c == '"' || c == '\\') {
+        const std::size_t length = utf8SequenceLength(reinterpret_cast<const unsigned char*>(p));
+        if (length > 1) {
+            std::fwrite(p, 1, length, file_);
+            p += length - 1;
+        } else if (c == '"' || c == '\\') {
             std::fputc('\\', file_);
             std::fputc(c, file_);
-        } else if (c < 0x20 || c >= 0x80) {  // bytes >= 0x80 (ANSI paths) as Latin-1, so the line stays UTF-8
+        } else if (c < 0x20 || c >= 0x80) {
             std::fprintf(file_, "\\u%04X", c);
         } else {
             std::fputc(c, file_);
@@ -112,6 +155,7 @@ void JsonlLog::event(const char* name, const char* detail)
 
 void JsonlLog::summary(const rb::netsio::NetSioStats& s)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     begin("summary");
     std::fprintf(file_,
                  ",\"datagramsIn\":%u,\"datagramsOut\":%u,\"malformed\":%u,\"ignoredMessages\":%u,"

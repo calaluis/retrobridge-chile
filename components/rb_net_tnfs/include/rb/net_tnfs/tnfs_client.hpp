@@ -137,6 +137,10 @@ public:
 
     // Sends UMOUNT if mounted and forgets the session, whatever the answer.
     void umount() noexcept;
+    // For shutdown (review of PR #44): sends UMOUNT once if mounted, without
+    // waiting for the answer or retrying, and forgets the session. A silent
+    // server cannot hold the caller.
+    void umountWithoutWaiting() noexcept;
 
 private:
     enum class Exchange : uint8_t { Reply, NoResponse, Malformed, Cancelled };

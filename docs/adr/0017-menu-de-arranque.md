@@ -2,7 +2,8 @@
 
 - Estado: Propuesta (2026-11-17), Issue #38 (continuación de #32). Spec `menu-arranque` aprobada el 2026-11-17.
   Enmendada el 2026-11-17 por la Issue #40 (spec `menu-principal`): ver «Enmienda 1». Las decisiones 3 y 4 quedan
-  reemplazadas; 1, 2 y 5 siguen vigentes.
+  reemplazadas; 1, 2 y 5 siguen vigentes. Enmendada el 2026-11-18 por la spec `menu-tnfs` (PR #44): ver
+  «Enmienda 2», que reemplaza el punto 4 de la enmienda 1.
 - Contexto: con `--image`, `retrobridge_host` sirve una sola ATR por ejecución. La Issue #38 pide elegir la imagen
   D1 desde el Atari, con el teclado, sin relanzar el host ni montar discos desde Altirra.
 
@@ -76,3 +77,26 @@ Consecuencias: el programa 6502 ocupa 10 sectores desde `$0700`; la pantalla viv
 4 KB) y las dos display lists comparten la página `$07` (solo cambia el byte bajo de `SDLSTL`). Un reinicio en
 frío deja la vista en la pantalla principal. En las dos pantallas, la línea de mensajes (avisos, errores y «host no
 responde») va debajo del pie de teclas, como última línea (pedido en la revisión de la Issue #40).
+
+## Enmienda 2 (2026-11-18, spec `menu-tnfs`, PR #44): acción 2, sondeo y fuentes TNFS
+
+Contexto: la spec `menu-tnfs` abre las fuentes 2 a 8 con un cliente TNFS propio
+([ADR-018](0018-cliente-tnfs-de-solo-lectura.md)). Traer un listado o una imagen tarda más de lo que un `SIOV`
+espera, así que el Atari necesita una forma de esperar sin perder teclas.
+
+1. **Acción 2 «esperar» (M41-1, M41-16).** La respuesta de 962 bytes admite una tercera acción: 2 muestra la
+   pantalla y vuelve a preguntar al cabo de unos 15 tics. Solo la acción 2 espera; la acción 1 y cualquier otra
+   distinta de 0 arrancan con `COLDSV`, como antes.
+2. **Sondeo con `$FE` (M41-3).** Durante la espera, el 6502 envía `$FE` en AUX1 con un AUX2 nuevo, así que M40-2
+   sigue igual. Si el usuario pulsa una tecla durante la espera, se envía esa tecla en lugar del sondeo.
+3. **Teclas normalizadas (M41-3).** El 6502 aplica `AND #$3F` a cada tecla antes de enviarla: las teclas reales
+   van de `$00` a `$3F`, fuera del sondeo (`$FE`) y del redibujo (`$FF`). El host compara `$FE` y `$FF` antes de
+   aplicar la máscara.
+4. **Fuentes 2 a 8 (reemplaza el punto 4 de la enmienda 1).** Con un cargador TNFS, una fuente abre su carpeta
+   raíz, se navega por carpetas y una imagen elegida se carga en memoria y se monta (D1 asignada, D2 a D8 por el
+   buzón). Esc cancela una carga. Sin cargador, las fuentes 2 a 8 siguen mostrando `PENDIENTE`. `E` sigue
+   pendiente.
+
+Consecuencias: el programa 6502 ocupa 11 sectores desde `$0700`; la pantalla vive en `$0879`-`$0C38` (sin cruzar
+4 KB) y un relleno mantiene las dos display lists en una página. El diseño de la carpeta TNFS (título, filas y
+«CARGANDO nn%») está en M41-21.

@@ -6,6 +6,7 @@
 #include <optional>
 
 #include "host_image_repository.hpp"
+#include "memory_image_store.hpp"
 #include "rb/app/image_location.hpp"
 #include "rb/domain/disk_image.hpp"
 #include "rb/domain/drive_number.hpp"
@@ -78,6 +79,40 @@ const char* reason(ErrorCode error) noexcept
 
 DriveNumber drive(unsigned number) { return DriveNumber::from(static_cast<uint8_t>(number)).value(); }
 
+const char* loaderText(LoaderError error) noexcept
+{
+    switch (error) {
+    case LoaderError::NoEncontrado:
+        return " ERROR: SERVIDOR NO ENCONTRADO";
+    case LoaderError::NoSePudoAbrir:
+        return " ERROR: NO SE PUDO ABRIR";
+    case LoaderError::NoResponde:
+        break;
+    }
+    return " ERROR: SERVIDOR NO RESPONDE";
+}
+
+const char* loaderName(LoaderError error) noexcept
+{
+    switch (error) {
+    case LoaderError::NoEncontrado:
+        return "not found";
+    case LoaderError::NoSePudoAbrir:
+        return "could not open";
+    case LoaderError::NoResponde:
+        break;
+    }
+    return "no answer";
+}
+
+// "*tnfs*<n>", the location of a slot of the MemoryImageStore.
+rb::app::ImageLocation tnfsLocation(std::size_t slot)
+{
+    char text[16];
+    std::snprintf(text, sizeof text, "%s%u", kTnfsLocationPrefix, static_cast<unsigned>(slot));
+    return rb::app::ImageLocation::from(text).value();
+}
+
 void put(uint8_t* screen, unsigned offset, unsigned width, const char* text, bool upper) noexcept
 {
     const Span<uint8_t> line{screen + offset, width};
@@ -107,18 +142,35 @@ void MenuController::say(const char* format, ...) noexcept
 
 const char* MenuController::driveName(unsigned number) const noexcept
 {
-    if (number < 1 || number > kDrives || shown_[number - 1] == kNone) {
+    if (number < 1 || number > kDrives) {
         return nullptr;
     }
-    return catalog_.name(static_cast<std::size_t>(shown_[number - 1]));
+    const Shown& shown = shown_[number - 1];
+    switch (shown.kind) {
+    case Shown::Kind::Local:
+        return catalog_.name(static_cast<std::size_t>(shown.entry));
+    case Shown::Kind::Tnfs:
+        return shown.name;
+    case Shown::Kind::None:
+        break;
+    }
+    return nullptr;
 }
 
 void MenuController::onColdReset() noexcept
 {
     coldResetPending_ = true;
+    cancelJob();
     view_ = View::Main;
     chosen_ = kNone;
     message_[0] = '\0';
+}
+
+void MenuController::recycle(const Shown& shown) noexcept
+{
+    if (shown.kind == Shown::Kind::Tnfs && loader_ != nullptr) {
+        loader_->recycle(shown.slot);
+    }
 }
 
 void MenuController::collect()
@@ -134,6 +186,7 @@ void MenuController::collect()
                       static_cast<unsigned>(*outcome->error));
         if (inFlight_ == InFlight::Mount || inFlight_ == InFlight::Unmount) {
             shown_[number - 1] = previous_;
+            recycle(incoming_);  // its source was closed with the reply (ADR-014)
             say(" ERROR: D%u NO CAMBIO", number);
         } else if (inFlight_ == InFlight::Boot) {
             say(" ERROR: D1 NO SE PUDO MONTAR");
@@ -141,6 +194,8 @@ void MenuController::collect()
     } else {
         if (inFlight_ == InFlight::Menu || inFlight_ == InFlight::Boot) {
             menuOnD1_ = inFlight_ == InFlight::Menu;
+        } else {
+            recycle(previous_);  // the displaced source was closed with the reply
         }
         const char* what = inFlight_ == InFlight::Menu    ? "menu"
                            : inFlight_ == InFlight::Boot  ? "image"
@@ -149,6 +204,8 @@ void MenuController::collect()
         std::snprintf(detail, sizeof detail, "D%u=%s", number, what);
     }
     inFlight_ = InFlight::None;
+    previous_ = Shown{};
+    incoming_ = Shown{};
     event("menu_mount", detail);
 }
 
@@ -177,10 +234,14 @@ void MenuController::service()
 
 MenuReply MenuController::key(uint8_t code)
 {
-    if (code == kMenuNoKey) {
+    if (job_ != Job::None) {
+        return onLoading(code);
+    }
+    // $FF (redraw) and $FE (poll) are not keys: compared before the mask.
+    if (code == kMenuNoKey || code == kMenuPollKey) {
         return render(kMenuActionShow);
     }
-    const uint8_t key = code & 0x3F;  // Shift and Control do not change the meaning
+    const uint8_t key = code & kMenuKeyMask;  // Shift and Control do not change the meaning
     const int digit = digitOf(key);
     switch (view_) {
     case View::Main:
@@ -212,6 +273,15 @@ MenuReply MenuController::key(uint8_t code)
             onUnmount(digit);
         }
         break;
+    case View::Folder:
+        onFolder(key);
+        break;
+    case View::FolderPick:
+        onFolderPick(key, digit);
+        break;
+    }
+    if (job_ != Job::None) {
+        return advance();  // the key started a TNFS job
     }
     return render(kMenuActionShow);
 }
@@ -226,6 +296,11 @@ void MenuController::onMain(int digit, uint8_t key)
         event("menu_open", detail);
     } else if (digit >= 2) {
         const char* name = sources_.name(static_cast<unsigned>(digit));
+        if (name != nullptr && loader_ != nullptr) {
+            message_[0] = '\0';
+            startJob(Job::Open, static_cast<unsigned>(digit), "/", 1);
+            return;
+        }
         if (name != nullptr) {
             say(" PENDIENTE: FALTA EL CLIENTE TNFS");
             std::snprintf(detail, sizeof detail, "source=%d name=%s: needs a TNFS client", digit, name);
@@ -302,7 +377,11 @@ void MenuController::assignD1(int8_t entry)
         say(" ERROR: %s", reason(*error));
         std::snprintf(detail, sizeof detail, "D1 name=%s refused: error %u", name, static_cast<unsigned>(*error));
     } else {
-        shown_[0] = entry;
+        Shown local;
+        local.kind = Shown::Kind::Local;
+        local.entry = entry;
+        recycle(shown_[0]);  // D1 is assigned, not mounted: nothing holds its slot
+        shown_[0] = local;
         say(" D1: %s (A ARRANCA)", name);
         std::snprintf(detail, sizeof detail, "D1 name=%s assigned", name);
     }
@@ -323,7 +402,10 @@ void MenuController::mountOn(unsigned number, int8_t entry)
                       static_cast<unsigned>(mounted.error()));
     } else {
         previous_ = shown_[number - 1];
-        shown_[number - 1] = entry;
+        incoming_ = Shown{};
+        incoming_.kind = Shown::Kind::Local;
+        incoming_.entry = entry;
+        shown_[number - 1] = incoming_;
         inFlight_ = InFlight::Mount;
         say(" D%u: %s", number, name);
         std::snprintf(detail, sizeof detail, "D%u name=%s accepted: %u sectors of %u bytes", number, name,
@@ -336,12 +418,13 @@ void MenuController::mountOn(unsigned number, int8_t entry)
 void MenuController::emptyDrive(unsigned number)
 {
     char detail[48];
-    if (shown_[number - 1] == kNone) {
+    if (shown_[number - 1].kind == Shown::Kind::None) {
         say(" D%u YA ESTA VACIA", number);
         return;
     }
     if (number == 1) {
-        shown_[0] = kNone;  // D1 serves the menu: there is nothing mounted to remove
+        recycle(shown_[0]);
+        shown_[0] = Shown{};  // D1 serves the menu: there is nothing mounted to remove
         say(" D1 DESMONTADA");
         event("menu_unmount", "D1 unassigned");
         return;
@@ -353,7 +436,8 @@ void MenuController::emptyDrive(unsigned number)
         std::snprintf(detail, sizeof detail, "D%u refused: error %u", number, static_cast<unsigned>(removed.error()));
     } else {
         previous_ = shown_[number - 1];
-        shown_[number - 1] = kNone;
+        incoming_ = Shown{};
+        shown_[number - 1] = Shown{};
         inFlight_ = InFlight::Unmount;
         say(" D%u DESMONTADA", number);
         std::snprintf(detail, sizeof detail, "D%u requested", number);
@@ -363,14 +447,17 @@ void MenuController::emptyDrive(unsigned number)
 
 bool MenuController::boot()
 {
-    if (shown_[0] == kNone) {
+    const Shown& d1 = shown_[0];
+    if (d1.kind == Shown::Kind::None) {
         say(" D1 SIN DISCO: ABRE LA FUENTE 1");
         return false;
     }
-    const char* name = catalog_.name(static_cast<std::size_t>(shown_[0]));
-    const auto location = rb::app::ImageLocation::from(name);
+    const char* name = driveName(1);
+    // Every catalog name was accepted by ImageLocation::from when it was listed.
+    const rb::app::ImageLocation location =
+        d1.kind == Shown::Kind::Tnfs ? tnfsLocation(d1.slot) : rb::app::ImageLocation::from(name).value();
     const rb::core::Result<rb::app::MountReport> mounted =
-        mailbox_.idle() ? mount_.execute(drive(1), location.value())
+        mailbox_.idle() ? mount_.execute(drive(1), location)
                         : rb::core::Result<rb::app::MountReport>{rb::core::Failure{ErrorCode::MailboxBusy}};
     char detail[MenuCatalog::kMaxName + 48];
     if (!mounted.ok()) {
@@ -392,6 +479,12 @@ MenuReply MenuController::render(uint8_t action) const noexcept
     reply.bytes[0] = action;
     uint8_t* screen = reply.bytes.data() + 2;
     char text[kMenuLineWidth + 64];
+    if (view_ == View::Folder || view_ == View::FolderPick) {
+        reply.bytes[1] = kMenuLayoutList;
+        std::memcpy(screen, kMenuListTemplate, kMenuScreenSize);
+        renderFolder(screen, text, sizeof text);
+        return reply;
+    }
     if (view_ == View::List) {
         reply.bytes[1] = kMenuLayoutList;
         std::memcpy(screen, kMenuListTemplate, kMenuScreenSize);
@@ -420,8 +513,245 @@ MenuReply MenuController::render(uint8_t action) const noexcept
         put(screen, kMainDrives + (n - 1) * kMenuLineWidth, kMenuLineWidth, text, true);
     }
     put(screen, kMainTape, kMenuLineWidth, "C: SIN CINTA", true);
-    put(screen, kMainMessage, kMenuLineWidth, message_.data(), true);
+    if (job_ != Job::None) {
+        std::snprintf(text, sizeof text, " CARGANDO %u%%", static_cast<unsigned>(percent_));
+        put(screen, kMainMessage, kMenuLineWidth, text, true);
+    } else {
+        put(screen, kMainMessage, kMenuLineWidth, message_.data(), true);
+    }
     return reply;
+}
+
+// ---------------------------------------------------------------------------
+// TNFS sources (menu-tnfs T012).
+
+void MenuController::renderFolder(uint8_t* screen, char* text, std::size_t size) const noexcept
+{
+    // " FUENTE n: " and the folder, cut on the left so the current one shows.
+    const int prefix = std::snprintf(text, size, " FUENTE %u: ", source_);
+    const std::size_t room = kMenuTitleWidth > static_cast<unsigned>(prefix) ? kMenuTitleWidth - prefix : 0;
+    tnfsTitle(path_, pathLength_, room, text + prefix);
+    put(screen, kListTitle, kMenuTitleWidth, text, true);
+    for (std::size_t i = 0; i < folder_.shown(); ++i) {
+        std::snprintf(text, size, "%c %s", static_cast<char>('A' + i), folder_.entry(i).display);
+        put(screen, static_cast<unsigned>(kListEntries + i * kMenuLineWidth), kMenuLineWidth, text, true);
+    }
+    if (job_ != Job::None) {
+        std::snprintf(text, size, " CARGANDO %u%%", static_cast<unsigned>(percent_));
+    } else if (message_[0] != '\0') {
+        std::snprintf(text, size, "%s", message_.data());
+    } else {
+        char notice[TnfsFolder::kNoticeSize];
+        folder_.notice(notice);
+        std::snprintf(text, size, " %s", notice[0] != '\0' ? notice : "PULSA LA LETRA DE LA IMAGEN");
+    }
+    put(screen, kListMessage, kMenuLineWidth, text, true);
+}
+
+void MenuController::onFolder(uint8_t key)
+{
+    if (key == kKeyEsc) {
+        message_[0] = '\0';
+        if (pathLength_ <= 1) {
+            view_ = View::Main;  // the root of the source: back to the main screen
+            return;
+        }
+        std::size_t parent = pathLength_ - 1;
+        while (parent > 0 && path_[parent] != '/') {
+            --parent;
+        }
+        startJob(Job::Up, source_, path_, parent == 0 ? 1 : parent);
+        return;
+    }
+    const int entry = letterOf(key);
+    if (entry < 0 || static_cast<std::size_t>(entry) >= folder_.shown()) {
+        return;  // not a letter of the list
+    }
+    const TnfsFolder::Entry& chosen = folder_.entry(static_cast<std::size_t>(entry));
+    if (chosen.isDir) {
+        message_[0] = '\0';
+        startJob(Job::Enter, source_, chosen.path.data(), chosen.path.size());
+        return;
+    }
+    chosen_ = static_cast<int8_t>(entry);
+    view_ = View::FolderPick;
+    say(" UNIDAD 1-8 (ESC VUELVE): %s", chosen.display);
+}
+
+void MenuController::onFolderPick(uint8_t key, int digit)
+{
+    if (key == kKeyEsc) {
+        view_ = View::Folder;
+        chosen_ = kNone;
+        message_[0] = '\0';
+        return;
+    }
+    if (digit == 0) {
+        return;
+    }
+    const TnfsFolder::Entry& chosen = folder_.entry(static_cast<std::size_t>(chosen_));
+    std::snprintf(jobName_, sizeof jobName_, "%s", chosen.display);
+    jobDrive_ = static_cast<unsigned>(digit);
+    chosen_ = kNone;
+    view_ = View::Folder;  // the view stays on the folder while the image comes
+    message_[0] = '\0';
+    startJob(Job::Fetch, source_, chosen.path.data(), chosen.path.size());
+}
+
+void MenuController::startJob(Job job, unsigned source, const char* path, std::size_t length)
+{
+    if (length > kTnfsMaxPath) {
+        length = kTnfsMaxPath + 1;  // the loader refuses it: NoSePudoAbrir
+    } else {
+        std::memcpy(jobPath_, path, length);
+    }
+    jobPath_[length > kTnfsMaxPath ? 0 : length] = '\0';
+    jobPathLength_ = length > kTnfsMaxPath ? 0 : length;
+    jobSource_ = source;
+    job_ = job;
+    percent_ = 0;
+    jobNumber_ = job == Job::Fetch ? loader_->startFetch(source, path, length) : loader_->startList(source, path, length);
+}
+
+void MenuController::cancelJob() noexcept
+{
+    if (job_ != Job::None) {
+        loader_->cancel(jobNumber_);  // a late result is dropped and its slot freed by the loader
+        job_ = Job::None;
+        jobNumber_ = 0;
+    }
+}
+
+MenuReply MenuController::onLoading(uint8_t code)
+{
+    if (code != kMenuNoKey && code != kMenuPollKey && (code & kMenuKeyMask) == kKeyEsc) {
+        cancelJob();
+        message_[0] = '\0';
+        event("menu_tnfs", "load cancelled with Esc");
+        return render(kMenuActionShow);
+    }
+    return advance();  // a poll, a redraw or any other key: only the progress
+}
+
+MenuReply MenuController::advance()
+{
+    loader_->await(jobNumber_, kLoadWaitMicros);
+    const LoaderStatus status = loader_->poll(jobNumber_, folder_);
+    switch (status.kind) {
+    case LoaderStatus::Kind::InProgress:
+        percent_ = status.percent;
+        return render(kMenuActionWait);
+    case LoaderStatus::Kind::Folder:
+        listed();
+        break;
+    case LoaderStatus::Kind::Image:
+        fetched(status);
+        break;
+    case LoaderStatus::Kind::Error:
+        failed(status);
+        break;
+    case LoaderStatus::Kind::Unknown:
+        job_ = Job::None;  // never happens: the job is ours until it ends
+        break;
+    }
+    return render(kMenuActionShow);
+}
+
+void MenuController::listed()
+{
+    job_ = Job::None;
+    source_ = jobSource_;
+    std::memcpy(path_, jobPath_, jobPathLength_ + 1);
+    pathLength_ = jobPathLength_;
+    view_ = View::Folder;
+    message_[0] = '\0';
+    char detail[kTnfsMaxPath + 64];
+    std::snprintf(detail, sizeof detail, "source=%u tnfs path=%s entries=%u shown=%u", source_, path_,
+                  static_cast<unsigned>(folder_.total()), static_cast<unsigned>(folder_.shown()));
+    event("menu_open", detail);
+}
+
+void MenuController::failed(const LoaderStatus& status)
+{
+    job_ = Job::None;
+    say("%s", loaderText(status.error));  // the view stays where it was; the cause goes to the log only
+    char detail[kTnfsMaxPath + LoaderStatus::kCauseSize + 48];
+    std::snprintf(detail, sizeof detail, "source=%u path=%s %s: %s", jobSource_, jobPath_, loaderName(status.error),
+                  status.cause);
+    event("menu_tnfs", detail);
+}
+
+void MenuController::fetched(const LoaderStatus& status)
+{
+    job_ = Job::None;
+    char sha[2 * 32 + 1];
+    for (std::size_t i = 0; i < status.sha256.size(); ++i) {
+        std::snprintf(sha + 2 * i, 3, "%02x", status.sha256[i]);
+    }
+    char detail[kTnfsMaxPath + 160];
+    std::snprintf(detail, sizeof detail, "source=%u path=%s bytes=%lu sha256=%s slot=%u", jobSource_, jobPath_,
+                  static_cast<unsigned long>(status.bytes), sha, static_cast<unsigned>(status.slot));
+    event("menu_fetch", detail);
+
+    Shown image;
+    image.kind = Shown::Kind::Tnfs;
+    image.slot = status.slot;
+    std::snprintf(image.name, sizeof image.name, "%s", jobName_);
+    place(jobDrive_, image);
+}
+
+// An image that came over TNFS: validated like a local one, then assigned to
+// D1 or mounted on D2..D8. Refused, its slot goes back to the loader.
+void MenuController::place(unsigned number, const Shown& image)
+{
+    const rb::app::ImageLocation location = tnfsLocation(image.slot);
+    std::optional<ErrorCode> error;
+    const char* verb = "assigned";
+    if (number == 1) {
+        const auto opened = repository_.open(location);
+        if (!opened.ok()) {
+            error = opened.error();
+        } else {
+            {
+                const auto disk = rb::domain::DiskImage::open(*opened.value());  // detaches when it goes
+                if (!disk.ok()) {
+                    error = disk.error();
+                }
+            }
+            repository_.close(opened.value());
+        }
+        if (!error) {
+            recycle(shown_[0]);
+            shown_[0] = image;
+            view_ = View::Main;
+            say(" D1: %s (A ARRANCA)", image.name);
+        }
+    } else {
+        const rb::core::Result<rb::app::MountReport> mounted =
+            mailbox_.idle() ? mount_.execute(drive(number), location)
+                            : rb::core::Result<rb::app::MountReport>{rb::core::Failure{ErrorCode::MailboxBusy}};
+        if (!mounted.ok()) {
+            error = mounted.error();
+        } else {
+            previous_ = shown_[number - 1];
+            incoming_ = image;
+            shown_[number - 1] = image;
+            inFlight_ = InFlight::Mount;
+            view_ = View::Main;
+            say(" D%u: %s", number, image.name);
+            verb = "accepted";
+        }
+    }
+    char detail[TnfsFolder::kDisplayWidth + 64];
+    if (error) {
+        recycle(image);
+        say(" ERROR: %s", reason(*error));  // the view stays on the folder
+        std::snprintf(detail, sizeof detail, "D%u name=%s refused: error %u", number, image.name,
+                      static_cast<unsigned>(*error));
+    } else {
+        std::snprintf(detail, sizeof detail, "D%u name=%s %s", number, image.name, verb);
+    }
+    event("menu_select", detail);
 }
 
 }  // namespace rb::host

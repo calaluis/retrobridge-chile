@@ -442,4 +442,16 @@ void TnfsClient::umount() noexcept
     (void)exchange(length.value(), cmd::kUmount, 0, false, reply, nullptr);  // forgotten whatever the answer
 }
 
+void TnfsClient::umountWithoutWaiting() noexcept
+{
+    if (!mounted_) {
+        return;
+    }
+    mounted_ = false;
+    auto length = encodeUmount(connection_, Span<uint8_t>(request_));
+    if (length.ok()) {
+        (void)port_.send(Span<const uint8_t>(request_.data(), length.value()));
+    }
+}
+
 }  // namespace rb::net_tnfs

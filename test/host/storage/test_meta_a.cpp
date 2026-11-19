@@ -43,7 +43,9 @@ struct ImageInfo {
 std::FILE* open_csv(const char* name)
 {
     std::array<char, 300> path{};
-    std::snprintf(path.data(), path.size(), "%s/%s", RB_TEST_IMAGES_DIR, name);
+    const int written = std::snprintf(path.data(), path.size(), "%s/%s", RB_TEST_IMAGES_DIR, name);
+    TEST_ASSERT_TRUE_MESSAGE(written > 0 && static_cast<std::size_t>(written) < path.size(),
+                             "RB_TEST_IMAGES_DIR too long for the test's path buffer");
     std::FILE* file = std::fopen(path.data(), "r");
     TEST_ASSERT_NOT_NULL_MESSAGE(file, path.data());
     std::array<char, 256> header{};

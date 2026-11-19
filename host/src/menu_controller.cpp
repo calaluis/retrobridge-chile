@@ -17,13 +17,13 @@ using rb::core::ErrorCode;
 using rb::core::Span;
 using rb::domain::DriveNumber;
 
-static_assert(kListMaxEntries == MenuCatalog::kMaxEntries, "the list shows the whole catalog");
+static_assert(kListMaxEntries == TnfsFolder::kPageRows, "a page of the local list as long as a TNFS one");
 
 namespace {
 
 // Atari keyboard codes (CH, Shift and Control bits cleared).
 constexpr uint8_t kDigitCodes[MenuController::kDrives] = {0x1F, 0x1E, 0x1A, 0x18, 0x1D, 0x1B, 0x33, 0x35};  // 1..8
-constexpr uint8_t kLetterCodes[MenuCatalog::kMaxEntries] = {
+constexpr uint8_t kLetterCodes[kListMaxEntries] = {
     0x3F, 0x15, 0x12, 0x3A, 0x2A, 0x38, 0x3D, 0x39, 0x0D, 0x01,  // A B C D E F G H I J
     0x05, 0x00, 0x25, 0x23, 0x08, 0x0A, 0x2F, 0x28, 0x3E, 0x2D,  // K L M N O P Q R S T
 };
@@ -31,6 +31,29 @@ constexpr uint8_t kKeyA = 0x3F;
 constexpr uint8_t kKeyE = 0x2A;
 constexpr uint8_t kKeyU = 0x0B;
 constexpr uint8_t kKeyEsc = 0x1C;
+constexpr uint8_t kKeyReturn = 0x0C;
+constexpr std::size_t kPageRows = TnfsFolder::kPageRows;
+
+bool isNavigation(uint8_t code) noexcept { return code >= kMenuNavUp && code <= kMenuNavFire; }
+// RETURN or fire on a row of the local cursor (N007): kMenuConfirmRow + row.
+bool isConfirmRow(uint8_t code) noexcept
+{
+    return code >= kMenuConfirmRow && code < kMenuConfirmRow + kListMaxEntries;
+}
+static_assert(kMenuConfirmRow > kMenuNavFire && kMenuConfirmRow + kListMaxEntries <= kMenuPollKey,
+              "confirm codes apart from keys, moves, poll and redraw");
+static_assert(kMenuCursor >= kListMessage + kMenuLineWidth && kMenuCursor >= kMainMessage + kMenuLineWidth &&
+                  kMenuCursor + 5 <= kMenuScreenSize,
+              "the cursor block past every layout");
+bool isConfirm(uint8_t key) noexcept { return key == kKeyReturn || key == kMenuNavFire; }
+
+// Marks one 40-column line of the screen in inverse video, edge to edge.
+void invert(uint8_t* screen, unsigned offset) noexcept
+{
+    for (unsigned i = 0; i < kMenuLineWidth; ++i) {
+        screen[offset + i] = static_cast<uint8_t>(screen[offset + i] | 0x80);
+    }
+}
 
 constexpr std::size_t kNameColumns = 30;   // list entries: " A  " + 30
 constexpr std::size_t kLabelColumns = 32;  // sources and drives: "D1 " + 32 (the reference's 35 columns)
@@ -47,7 +70,7 @@ int digitOf(uint8_t code) noexcept
 
 int letterOf(uint8_t code) noexcept
 {
-    for (unsigned i = 0; i < MenuCatalog::kMaxEntries; ++i) {
+    for (unsigned i = 0; i < kListMaxEntries; ++i) {
         if (kLetterCodes[i] == code) {
             return static_cast<int>(i);
         }
@@ -148,7 +171,7 @@ const char* MenuController::driveName(unsigned number) const noexcept
     const Shown& shown = shown_[number - 1];
     switch (shown.kind) {
     case Shown::Kind::Local:
-        return catalog_.name(static_cast<std::size_t>(shown.entry));
+        return catalog_.name(shown.entry);
     case Shown::Kind::Tnfs:
         return shown.name;
     case Shown::Kind::None:
@@ -162,7 +185,7 @@ void MenuController::onColdReset() noexcept
     coldResetPending_ = true;
     cancelJob();
     view_ = View::Main;
-    chosen_ = kNone;
+    chosen_ = kNoEntry;
     message_[0] = '\0';
 }
 
@@ -241,7 +264,17 @@ MenuReply MenuController::key(uint8_t code)
     if (code == kMenuNoKey || code == kMenuPollKey) {
         return render(kMenuActionShow);
     }
-    const uint8_t key = code & kMenuKeyMask;  // Shift and Control do not change the meaning
+    // RETURN or fire on a row the 6502 marked by itself (N007): the cursor goes there
+    // first, then it is RETURN on the marked row. A row not on the screen does nothing.
+    if (isConfirmRow(code)) {
+        if (!selectRow(static_cast<unsigned>(code - kMenuConfirmRow))) {
+            return render(kMenuActionShow);
+        }
+        code = kKeyReturn;
+    }
+    // $40-$44 (arrows, joystick, fire) are compared before the mask too: they are not keys
+    // of the keyboard matrix, and the mask would turn them into $00-$04 (plan §8, point 2).
+    const uint8_t key = isNavigation(code) ? code : code & kMenuKeyMask;  // Shift and Control do not change it
     const int digit = digitOf(key);
     switch (view_) {
     case View::Main:
@@ -249,8 +282,8 @@ MenuReply MenuController::key(uint8_t code)
             if (boot()) {
                 return render(kMenuActionBoot);
             }
-        } else {
-            onMain(digit, key);
+        } else if (!moveLine(sourceLine_, key)) {
+            onMain(isConfirm(key) ? sourceLine_ + 1 : digit, key);  // RETURN and fire: the marked source
         }
         break;
     case View::List:
@@ -259,25 +292,27 @@ MenuReply MenuController::key(uint8_t code)
     case View::Pick:
         if (key == kKeyEsc) {
             view_ = View::List;
-            chosen_ = kNone;
+            chosen_ = kNoEntry;
             message_[0] = '\0';
-        } else if (digit != 0) {
-            onPick(digit);
+        } else if (!moveLine(driveLine_, key) && driveDigit(key, digit) != 0) {
+            onPick(driveDigit(key, digit));
         }
         break;
     case View::Unmount:
         if (key == kKeyEsc) {
             view_ = View::Main;
             message_[0] = '\0';
-        } else if (digit != 0) {
-            onUnmount(digit);
+        } else if (!moveLine(driveLine_, key) && driveDigit(key, digit) != 0) {
+            onUnmount(driveDigit(key, digit));
         }
         break;
     case View::Folder:
         onFolder(key);
         break;
     case View::FolderPick:
-        onFolderPick(key, digit);
+        if (!moveLine(driveLine_, key)) {
+            onFolderPick(key, driveDigit(key, digit));
+        }
         break;
     }
     if (job_ != Job::None) {
@@ -286,11 +321,41 @@ MenuReply MenuController::key(uint8_t code)
     return render(kMenuActionShow);
 }
 
+bool MenuController::moveLine(uint8_t& line, uint8_t key) noexcept
+{
+    switch (key) {
+    case kMenuNavUp:
+        if (line > 0) {
+            --line;
+        }
+        return true;
+    case kMenuNavDown:
+        if (line + 1u < kDrives) {
+            ++line;
+        }
+        return true;
+    case kMenuNavLeft:
+    case kMenuNavRight:
+        return true;  // no page on the main screen
+    default:
+        return false;
+    }
+}
+
+int MenuController::driveDigit(uint8_t key, int digit) const noexcept
+{
+    return isConfirm(key) ? driveLine_ + 1 : digit;
+}
+
 void MenuController::onMain(int digit, uint8_t key)
 {
     char detail[96];
+    if (digit >= 1) {
+        sourceLine_ = static_cast<uint8_t>(digit - 1);  // the cursor follows the digit
+    }
     if (digit == 1) {
         view_ = View::List;
+        listCursor_ = Cursor{};
         message_[0] = '\0';
         std::snprintf(detail, sizeof detail, "source=1 local entries=%u", static_cast<unsigned>(catalog_.count()));
         event("menu_open", detail);
@@ -314,6 +379,7 @@ void MenuController::onMain(int digit, uint8_t key)
         event("menu_pending", "edit server: needs text input on the Atari and a writable source list");
     } else if (key == kKeyU) {
         view_ = View::Unmount;
+        driveLine_ = 0;
         say(" DESMONTAR: PULSA 1-8, ESC CANCELA");
     }
 }
@@ -325,19 +391,156 @@ void MenuController::onList(uint8_t key)
         message_[0] = '\0';
         return;
     }
-    const int entry = letterOf(key);
-    if (entry < 0 || static_cast<std::size_t>(entry) >= catalog_.count()) {
-        return;  // not a letter of the list
+    const EntryIndex entry = listKey(listCursor_, catalog_.count(), key);
+    if (entry == kNoEntry) {
+        return;  // a move, or not an entry of the list
     }
-    chosen_ = static_cast<int8_t>(entry);
+    chosen_ = entry;
     view_ = View::Pick;
-    say(" UNIDAD 1-8 (ESC VUELVE): %s", catalog_.name(static_cast<std::size_t>(entry)));
+    driveLine_ = 0;
+    say(" UNIDAD PARA: %s", catalog_.name(entry));
+}
+
+MenuController::EntryIndex MenuController::listKey(Cursor& cursor, std::size_t count, uint8_t key) noexcept
+{
+    if (count == 0) {
+        return kNoEntry;  // nothing marked: moves, RETURN and fire do nothing
+    }
+    const std::size_t pages = (count + kPageRows - 1) / kPageRows;
+    const std::size_t rows = pageRows(cursor, count);
+    switch (key) {
+    case kMenuNavUp:
+        // The 6502 moves inside the page by itself and sends up only from the top row, and
+        // down only from the bottom one (N007): the host's row may be older than the bar.
+        cursor.row = 0;
+        if (cursor.page > 0) {
+            --cursor.page;
+            cursor.row = static_cast<uint8_t>(kPageRows - 1);
+        }
+        return kNoEntry;
+    case kMenuNavDown:
+        cursor.row = static_cast<uint8_t>(rows - 1);
+        if (cursor.page + 1u < pages) {
+            ++cursor.page;
+            cursor.row = 0;
+        }
+        return kNoEntry;
+    case kMenuNavLeft:
+        if (cursor.page > 0) {
+            --cursor.page;
+            cursor.row = 0;
+        }
+        return kNoEntry;
+    case kMenuNavRight:
+        if (cursor.page + 1u < pages) {
+            ++cursor.page;
+            cursor.row = 0;
+        }
+        return kNoEntry;
+    case kMenuNavFire:
+    case kKeyReturn:
+        return static_cast<EntryIndex>(cursor.page * kPageRows + cursor.row);
+    default:
+        break;
+    }
+    const int letter = letterOf(key);
+    if (letter < 0 || static_cast<std::size_t>(letter) >= rows) {
+        return kNoEntry;  // not a letter of the visible page
+    }
+    cursor.row = static_cast<uint8_t>(letter);
+    return static_cast<EntryIndex>(cursor.page * kPageRows + cursor.row);
+}
+
+std::size_t MenuController::pageRows(const Cursor& cursor, std::size_t count) noexcept
+{
+    return count == 0 ? 0 : std::min(kPageRows, count - cursor.page * kPageRows);
+}
+
+uint8_t MenuController::pages(const Cursor& cursor, std::size_t count) noexcept
+{
+    const std::size_t total = (count + kPageRows - 1) / kPageRows;
+    uint8_t ways = 0;
+    if (cursor.page > 0) {
+        ways = static_cast<uint8_t>(ways | kMenuPageBefore);
+    }
+    if (cursor.page + 1u < total) {
+        ways = static_cast<uint8_t>(ways | kMenuPageAfter);
+    }
+    return ways;
+}
+
+void MenuController::cursorBlock(uint8_t* screen, unsigned base, std::size_t rows, unsigned row, uint8_t pages) noexcept
+{
+    uint8_t* block = screen + kMenuCursor;
+    block[0] = static_cast<uint8_t>(base & 0xFF);
+    block[1] = static_cast<uint8_t>(base >> 8);
+    block[2] = static_cast<uint8_t>(rows);
+    block[3] = static_cast<uint8_t>(rows == 0 ? 0 : row);
+    block[4] = rows != 0 ? pages : 0;
+}
+
+bool MenuController::selectRow(unsigned row) noexcept
+{
+    switch (view_) {
+    case View::Main:
+        if (row >= kDrives) {
+            return false;
+        }
+        sourceLine_ = static_cast<uint8_t>(row);
+        return true;
+    case View::Pick:
+    case View::Unmount:
+    case View::FolderPick:
+        if (row >= kDrives) {
+            return false;
+        }
+        driveLine_ = static_cast<uint8_t>(row);
+        return true;
+    case View::List:
+        if (row >= pageRows(listCursor_, catalog_.count())) {
+            return false;
+        }
+        listCursor_.row = static_cast<uint8_t>(row);
+        return true;
+    case View::Folder:
+        if (row >= pageRows(folderCursor_, folder_.count())) {
+            return false;
+        }
+        folderCursor_.row = static_cast<uint8_t>(row);
+        return true;
+    }
+    return false;
+}
+
+void MenuController::markRow(uint8_t* screen, const Cursor& cursor, std::size_t count) noexcept
+{
+    if (count == 0) {
+        return;
+    }
+    invert(screen, static_cast<unsigned>(kListEntries + cursor.row * kMenuLineWidth));
+}
+
+void MenuController::pushPosition() noexcept
+{
+    if (depth_ < kStackDepth) {
+        stack_[depth_] = folderCursor_;
+    }
+    ++depth_;
+}
+
+MenuController::Cursor MenuController::popPosition() noexcept
+{
+    if (depth_ == 0) {
+        return Cursor{};
+    }
+    --depth_;
+    return depth_ < kStackDepth ? stack_[depth_] : Cursor{};
 }
 
 void MenuController::onPick(int digit)
 {
-    const int8_t entry = chosen_;
-    chosen_ = kNone;
+    const EntryIndex entry = chosen_;
+    chosen_ = kNoEntry;
     view_ = View::Main;
     if (digit == 1) {
         assignD1(entry);
@@ -352,9 +555,9 @@ void MenuController::onUnmount(int digit)
     emptyDrive(static_cast<unsigned>(digit));
 }
 
-void MenuController::assignD1(int8_t entry)
+void MenuController::assignD1(EntryIndex entry)
 {
-    const char* name = catalog_.name(static_cast<std::size_t>(entry));
+    const char* name = catalog_.name(entry);
     // Every catalog name was accepted by ImageLocation::from when it was listed.
     const auto location = rb::app::ImageLocation::from(name);
     // D1 keeps serving the menu: validate now (open the file, read its header),
@@ -388,9 +591,9 @@ void MenuController::assignD1(int8_t entry)
     event("menu_select", detail);
 }
 
-void MenuController::mountOn(unsigned number, int8_t entry)
+void MenuController::mountOn(unsigned number, EntryIndex entry)
 {
-    const char* name = catalog_.name(static_cast<std::size_t>(entry));
+    const char* name = catalog_.name(entry);
     const auto location = rb::app::ImageLocation::from(name);
     const rb::core::Result<rb::app::MountReport> mounted =
         mailbox_.idle() ? mount_.execute(drive(number), location.value())
@@ -479,23 +682,41 @@ MenuReply MenuController::render(uint8_t action) const noexcept
     reply.bytes[0] = action;
     uint8_t* screen = reply.bytes.data() + 2;
     char text[kMenuLineWidth + 64];
-    if (view_ == View::Folder || view_ == View::FolderPick) {
+    if (view_ == View::Folder) {  // FolderPick chooses the drive on the main screen (M42-4)
         reply.bytes[1] = kMenuLayoutList;
         std::memcpy(screen, kMenuListTemplate, kMenuScreenSize);
         renderFolder(screen, text, sizeof text);
+        if (action == kMenuActionShow && job_ == Job::None) {
+            cursorBlock(screen, kListEntries, pageRows(folderCursor_, folder_.count()), folderCursor_.row,
+                        pages(folderCursor_, folder_.count()));
+        }
         return reply;
     }
     if (view_ == View::List) {
         reply.bytes[1] = kMenuLayoutList;
         std::memcpy(screen, kMenuListTemplate, kMenuScreenSize);
-        put(screen, kListTitle, kMenuTitleWidth, " FUENTE 1: SD", true);
-        for (std::size_t i = 0; i < catalog_.count(); ++i) {
+        put(screen, kListPath, kMenuLineWidth, " FUENTE 1: SD", true);  // the title stays fixed (N008)
+        const std::size_t first = listCursor_.page * kPageRows;  // only the visible rows are drawn
+        for (std::size_t i = 0; i < kPageRows && first + i < catalog_.count(); ++i) {
             std::snprintf(text, sizeof text, " %c  %.*s", static_cast<char>('A' + i), static_cast<int>(kNameColumns),
-                          catalog_.name(i));
+                          catalog_.name(first + i));
             put(screen, static_cast<unsigned>(kListEntries + i * kMenuLineWidth), kMenuLineWidth, text, true);
         }
-        put(screen, kListMessage, kMenuLineWidth, message_[0] != '\0' ? message_.data() : " PULSA LA LETRA DE LA IMAGEN",
-            true);
+        markRow(screen, listCursor_, catalog_.count());
+        if (action == kMenuActionShow) {
+            cursorBlock(screen, kListEntries, pageRows(listCursor_, catalog_.count()), listCursor_.row,
+                        pages(listCursor_, catalog_.count()));
+        }
+        // The total: the names kept, or every .atr seen once the catalog is full.
+        const std::size_t total = catalog_.count() < MenuCatalog::kMaxEntries ? catalog_.count() : catalog_.atrSeen();
+        char page[TnfsFolder::kNoticeSize];
+        pageLine(catalog_.count(), total, listCursor_.page, page);
+        if (message_[0] != '\0') {
+            std::snprintf(text, sizeof text, "%s", message_.data());
+        } else {
+            std::snprintf(text, sizeof text, " %s", page[0] != '\0' ? page : "PULSA LA LETRA DE LA IMAGEN");
+        }
+        put(screen, kListMessage, kMenuLineWidth, text, true);
         return reply;
     }
     reply.bytes[1] = kMenuLayoutMain;
@@ -513,6 +734,14 @@ MenuReply MenuController::render(uint8_t action) const noexcept
         put(screen, kMainDrives + (n - 1) * kMenuLineWidth, kMenuLineWidth, text, true);
     }
     put(screen, kMainTape, kMenuLineWidth, "C: SIN CINTA", true);
+    const bool local = action == kMenuActionShow && job_ == Job::None;  // the 6502 moves the bar (N007)
+    if (view_ == View::Main) {
+        invert(screen, kMainSources + sourceLine_ * kMenuLineWidth);
+        cursorBlock(screen, kMainSources, local ? kDrives : 0, sourceLine_, 0);
+    } else {  // Pick, FolderPick, Unmount: the drive under the cursor
+        invert(screen, kMainDrives + driveLine_ * kMenuLineWidth);
+        cursorBlock(screen, kMainDrives, local ? kDrives : 0, driveLine_, 0);
+    }
     if (job_ != Job::None) {
         std::snprintf(text, sizeof text, " CARGANDO %u%%", static_cast<unsigned>(percent_));
         put(screen, kMainMessage, kMenuLineWidth, text, true);
@@ -527,22 +756,25 @@ MenuReply MenuController::render(uint8_t action) const noexcept
 
 void MenuController::renderFolder(uint8_t* screen, char* text, std::size_t size) const noexcept
 {
-    // " FUENTE n: " and the folder, cut on the left so the current one shows.
+    // The path line under the fixed title (N008): " FUENTE n: " and the folder, cut on the
+    // left so the current one shows.
     const int prefix = std::snprintf(text, size, " FUENTE %u: ", source_);
-    const std::size_t room = kMenuTitleWidth > static_cast<unsigned>(prefix) ? kMenuTitleWidth - prefix : 0;
+    const std::size_t room = kMenuLineWidth > static_cast<unsigned>(prefix) ? kMenuLineWidth - prefix : 0;
     tnfsTitle(path_, pathLength_, room, text + prefix);
-    put(screen, kListTitle, kMenuTitleWidth, text, true);
-    for (std::size_t i = 0; i < folder_.shown(); ++i) {
-        std::snprintf(text, size, "%c %s", static_cast<char>('A' + i), folder_.entry(i).display);
+    put(screen, kListPath, kMenuLineWidth, text, true);
+    const std::size_t first = folderCursor_.page * kPageRows;  // only the visible rows are drawn
+    for (std::size_t i = 0; i < kPageRows && first + i < folder_.count(); ++i) {
+        std::snprintf(text, size, "%c %s", static_cast<char>('A' + i), folder_.entry(first + i).display);
         put(screen, static_cast<unsigned>(kListEntries + i * kMenuLineWidth), kMenuLineWidth, text, true);
     }
+    markRow(screen, folderCursor_, folder_.count());
     if (job_ != Job::None) {
         std::snprintf(text, size, " CARGANDO %u%%", static_cast<unsigned>(percent_));
     } else if (message_[0] != '\0') {
         std::snprintf(text, size, "%s", message_.data());
     } else {
         char notice[TnfsFolder::kNoticeSize];
-        folder_.notice(notice);
+        folder_.notice(folderCursor_.page, notice);
         std::snprintf(text, size, " %s", notice[0] != '\0' ? notice : "PULSA LA LETRA DE LA IMAGEN");
     }
     put(screen, kListMessage, kMenuLineWidth, text, true);
@@ -563,39 +795,44 @@ void MenuController::onFolder(uint8_t key)
         startJob(Job::Up, source_, path_, parent == 0 ? 1 : parent);
         return;
     }
-    const int entry = letterOf(key);
-    if (entry < 0 || static_cast<std::size_t>(entry) >= folder_.shown()) {
-        return;  // not a letter of the list
+    const EntryIndex entry = listKey(folderCursor_, folder_.count(), key);
+    if (entry == kNoEntry) {
+        return;  // a move, or not an entry of the list
     }
-    const TnfsFolder::Entry& chosen = folder_.entry(static_cast<std::size_t>(entry));
+    const TnfsFolder::Entry& chosen = folder_.entry(entry);
     if (chosen.isDir) {
         message_[0] = '\0';
-        startJob(Job::Enter, source_, chosen.path.data(), chosen.path.size());
+        char path[TnfsFolder::kMaxPath + 1];
+        const std::size_t length = folder_.path(entry, path);
+        startJob(Job::Enter, source_, path, length);  // listed() keeps this position for Esc
         return;
     }
-    chosen_ = static_cast<int8_t>(entry);
+    chosen_ = entry;
     view_ = View::FolderPick;
-    say(" UNIDAD 1-8 (ESC VUELVE): %s", chosen.display);
+    driveLine_ = 0;
+    say(" UNIDAD PARA: %s", chosen.display);
 }
 
 void MenuController::onFolderPick(uint8_t key, int digit)
 {
     if (key == kKeyEsc) {
         view_ = View::Folder;
-        chosen_ = kNone;
+        chosen_ = kNoEntry;
         message_[0] = '\0';
         return;
     }
     if (digit == 0) {
         return;
     }
-    const TnfsFolder::Entry& chosen = folder_.entry(static_cast<std::size_t>(chosen_));
+    const TnfsFolder::Entry& chosen = folder_.entry(chosen_);
+    char path[TnfsFolder::kMaxPath + 1];
+    const std::size_t length = folder_.path(chosen_, path);
     std::snprintf(jobName_, sizeof jobName_, "%s", chosen.display);
     jobDrive_ = static_cast<unsigned>(digit);
-    chosen_ = kNone;
+    chosen_ = kNoEntry;
     view_ = View::Folder;  // the view stays on the folder while the image comes
     message_[0] = '\0';
-    startJob(Job::Fetch, source_, chosen.path.data(), chosen.path.size());
+    startJob(Job::Fetch, source_, path, length);
 }
 
 void MenuController::startJob(Job job, unsigned source, const char* path, std::size_t length)
@@ -659,7 +896,26 @@ MenuReply MenuController::advance()
 
 void MenuController::listed()
 {
+    const Job done = job_;
     job_ = Job::None;
+    // The cursor: row 1 of page 1 in a folder opened or entered; Esc restores where
+    // the parent was left, within its new total if it changed on the server.
+    if (done == Job::Enter) {
+        pushPosition();
+        folderCursor_ = Cursor{};
+    } else if (done == Job::Up) {
+        folderCursor_ = popPosition();
+        const std::size_t count = folder_.count();
+        if (count == 0) {
+            folderCursor_ = Cursor{};
+        } else if (folderCursor_.page * kPageRows + folderCursor_.row >= count) {
+            folderCursor_.page = static_cast<uint16_t>((count - 1) / kPageRows);
+            folderCursor_.row = static_cast<uint8_t>((count - 1) % kPageRows);
+        }
+    } else {
+        depth_ = 0;
+        folderCursor_ = Cursor{};
+    }
     source_ = jobSource_;
     std::memcpy(path_, jobPath_, jobPathLength_ + 1);
     pathLength_ = jobPathLength_;
@@ -667,7 +923,8 @@ void MenuController::listed()
     message_[0] = '\0';
     char detail[kTnfsMaxPath + 64];
     std::snprintf(detail, sizeof detail, "source=%u tnfs path=%s entries=%u shown=%u", source_, path_,
-                  static_cast<unsigned>(folder_.total()), static_cast<unsigned>(folder_.shown()));
+                  static_cast<unsigned>(folder_.total()),
+                  static_cast<unsigned>(std::min(folder_.count(), TnfsFolder::kPageRows)));
     event("menu_open", detail);
 }
 

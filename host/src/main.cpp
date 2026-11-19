@@ -416,6 +416,13 @@ int runMenu(const Options& options)
     std::optional<rb::host::TnfsLoader> loader;
     loader.emplace(linkOf, repository.memory(), tnfsClock, imageMemory);
     rb::host::MenuController controller{catalog, sources, repository, mailbox, &events, &*loader};
+    if (!loader->ready() || !controller.ready()) {
+        loader.reset();  // its thread is joined before the log closes
+        std::fclose(logFile);
+        std::fprintf(stderr, "retrobridge_host: sin memoria para los listados TNFS (%u entradas)\n",
+                     static_cast<unsigned>(rb::host::TnfsFolder::kCapacity));
+        return 1;
+    }
     ResetWatch watch{log, controller};
 
     rb::host::UdpDatagramPort port;
@@ -440,9 +447,9 @@ int runMenu(const Options& options)
                   static_cast<unsigned>(sources.count()), static_cast<unsigned>(bay.driveCount()), peerName(options),
                   port.localPort(), options.port);
     log.event("start", detail);
-    for (std::size_t i = 0; i < catalog.count(); ++i) {
+    for (std::size_t i = 0; i < catalog.count(); ++i) {  // numbered from 1, as the list shows them
         char entry[rb::host::MenuCatalog::kMaxName + 16];
-        std::snprintf(entry, sizeof entry, "%c %s", static_cast<char>('A' + i), catalog.name(i));
+        std::snprintf(entry, sizeof entry, "%u %s", static_cast<unsigned>(i + 1), catalog.name(i));
         log.event("menu_entry", entry);
     }
     for (unsigned n = 2; n < 2 + sources.count(); ++n) {

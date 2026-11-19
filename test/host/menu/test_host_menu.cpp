@@ -157,7 +157,7 @@ void test_catalog_keeps_only_atr_names_in_case_insensitive_order()
     TEST_ASSERT_EQUAL_STRING("Z.Atr", catalog.name(2));
 }
 
-void test_catalog_keeps_the_first_twenty_whatever_the_listing_order()
+void test_catalog_keeps_25_names_whatever_the_listing_order()
 {
     MenuCatalog catalog;
     char name[16];
@@ -165,10 +165,10 @@ void test_catalog_keeps_the_first_twenty_whatever_the_listing_order()
         std::snprintf(name, sizeof name, "n%02d.atr", i);
         catalog.offer(name);
     }
-    TEST_ASSERT_EQUAL_UINT(20, catalog.count());
+    TEST_ASSERT_EQUAL_UINT(25, catalog.count());  // menu-navegacion N002: up to 999, no longer 20
     TEST_ASSERT_EQUAL_UINT(25, catalog.atrSeen());
     TEST_ASSERT_EQUAL_STRING("n00.atr", catalog.name(0));
-    TEST_ASSERT_EQUAL_STRING("n19.atr", catalog.name(19));
+    TEST_ASSERT_EQUAL_STRING("n24.atr", catalog.name(24));
 }
 
 void test_catalog_skips_names_the_repository_could_not_open()
@@ -275,7 +275,11 @@ void test_main_screen_shows_sources_drives_tape_and_the_reference_frame()
     const MenuReply reply = rig.press(rb::host::kMenuNoKey);
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, reply.action());
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutMain, reply.layout());
-    assert_line(reply, sourceLine(1), textLine("1  SD"));
+    std::array<uint8_t, 40> first = textLine("1  SD");  // the cursor (menu-navegacion N004)
+    for (uint8_t& b : first) {
+        b = static_cast<uint8_t>(b | 0x80);
+    }
+    assert_line(reply, sourceLine(1), first);
     assert_line(reply, sourceLine(2), textLine("2  tnfs.example.cl"));  // case kept, as in the reference
     assert_line(reply, sourceLine(3), textLine("3  localhost"));
     assert_line(reply, sourceLine(4), textLine("4"));
@@ -323,8 +327,13 @@ void test_source_1_lists_the_folder_and_esc_goes_back()
     MenuRig rig;
     const MenuReply list = rig.keys({K1});
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutList, list.layout());
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(line(" FUENTE 1: SD").data(), list.screen() + rb::host::kListTitle, 20);
-    assert_line(list, rb::host::kListEntries, line(" A  DEMO-DOS.ATR"));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(line(" RETROBRIDGE CHILE").data(), list.screen() + rb::host::kListTitle, 20);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(line(" FUENTE 1: SD").data(), list.screen() + rb::host::kListPath, 40);  // N008
+    std::array<uint8_t, 40> marked = line(" A  DEMO-DOS.ATR");  // the cursor (menu-navegacion)
+    for (uint8_t& b : marked) {
+        b = static_cast<uint8_t>(b | 0x80);
+    }
+    assert_line(list, rb::host::kListEntries, marked);
     assert_line(list, rb::host::kListEntries + 40, line(" B  DEMO-UNO.ATR"));
     assert_line(list, rb::host::kListEntries + 80, line(" C  ROTA.ATR"));
     assert_line(list, rb::host::kListEntries + 120, line(""));
@@ -342,7 +351,7 @@ void test_image_mounted_on_d2_appears_on_d2_and_is_served_there()
     MenuRig rig;
     const MenuReply pick = rig.keys({K1, KB});
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutMain, pick.layout());  // the drives are visible
-    assert_line(pick, rb::host::kMainMessage, line(" UNIDAD 1-8 (ESC VUELVE): demo-uno.atr"));
+    assert_line(pick, rb::host::kMainMessage, line(" UNIDAD PARA: demo-uno.atr"));  // menu-navegacion M42-4
     TEST_ASSERT_TRUE(rig.mailbox.idle());
     const MenuReply mounted = rig.keys({K2});
     assert_line(mounted, driveLine(2), line("D2 DEMO-UNO.ATR"));
@@ -634,7 +643,7 @@ int main()
 {
     UNITY_BEGIN();
     RUN_TEST(test_catalog_keeps_only_atr_names_in_case_insensitive_order);
-    RUN_TEST(test_catalog_keeps_the_first_twenty_whatever_the_listing_order);
+    RUN_TEST(test_catalog_keeps_25_names_whatever_the_listing_order);
     RUN_TEST(test_catalog_skips_names_the_repository_could_not_open);
     RUN_TEST(test_read_catalog_lists_the_demo_folder);
     RUN_TEST(test_read_catalog_fails_on_a_missing_folder);

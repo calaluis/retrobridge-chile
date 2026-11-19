@@ -18,6 +18,8 @@ using rb::net_tnfs::TnfsResult;
 
 static_assert(kTnfsMaxPath == rb::net_tnfs::kMaxPath, "the menu keeps paths the client can send");
 
+static_assert(TnfsFolder::kMaxPath == rb::net_tnfs::kMaxPath, "a kept entry can always be opened");
+
 namespace {
 
 void setError(LoaderStatus& status, LoaderError error, const char* format, ...)
@@ -253,7 +255,7 @@ LoaderStatus TnfsLoader::poll(uint32_t job, TnfsFolder& folder) noexcept
     // Done: hand the result over, once.
     status = doneStatus_;
     if (status.kind == LoaderStatus::Kind::Folder) {
-        folder.swap(doneFolder_);  // the caller's old listing is freed later by the loader thread
+        folder.swap(doneFolder_);  // blocks change hands: nothing allocated, no entry visited
     }
     doneHasSlot_ = false;  // an Image slot now belongs to the caller
     current_ = 0;
@@ -342,7 +344,6 @@ void TnfsLoader::run()
         bool haveJob = false;
         bool freeSlot = false;
         std::size_t slot = 0;
-        TnfsFolder trash;  // a discarded listing, freed on this thread
         bool stopping = false;
         {
             std::unique_lock<std::mutex> lock(mutex_);
@@ -351,7 +352,7 @@ void TnfsLoader::run()
                 freeSlot = doneHasSlot_;
                 slot = doneStatus_.slot;
                 doneHasSlot_ = false;
-                trash.swap(doneFolder_);
+                doneFolder_.clear();
                 discard_ = false;
             }
             stopping = stop_;
@@ -447,8 +448,10 @@ void TnfsLoader::list(const Job& job, TnfsClient& client, Outcome& out)
         }
         progress(job.number, percentOf(i + 1, lister.names.size()));
     }
-    TnfsFolder folder = TnfsFolder::build(job.path, std::move(entries));
-    out.folder.swap(folder);
+    if (!workFolder_.fill(job.path, std::move(entries))) {
+        setError(status, LoaderError::NoSePudoAbrir, "sin memoria para el listado de %s", job.path);
+        return;
+    }
     status.kind = LoaderStatus::Kind::Folder;
 }
 
@@ -496,7 +499,9 @@ void TnfsLoader::publish(uint32_t job, Outcome& out)
             freeSlot = out.hasSlot;  // cancelled or replaced: never published
         } else {
             doneStatus_ = out.status;
-            doneFolder_.swap(out.folder);  // the old listing goes into `out`, freed on this thread
+            if (out.status.kind == LoaderStatus::Kind::Folder) {
+                doneFolder_.swap(workFolder_);  // the old block comes back to be filled next time
+            }
             doneHasSlot_ = out.hasSlot;
             state_ = State::Done;
         }

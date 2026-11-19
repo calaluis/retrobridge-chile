@@ -11,8 +11,10 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <new>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -28,6 +30,31 @@
 #include "tnfs_folder.hpp"
 #include "tnfs_loader.hpp"
 #include "unity.h"
+
+// Allocations per thread (menu-navegacion N002): poll() runs on the menu thread and
+// must not allocate; the loader thread's allocations are not counted here.
+thread_local unsigned long t_allocations = 0;
+
+void* operator new(std::size_t size)
+{
+    ++t_allocations;
+    void* p = std::malloc(size == 0 ? 1 : size);
+    if (p == nullptr) {
+        std::abort();
+    }
+    return p;
+}
+void* operator new[](std::size_t size) { return ::operator new(size); }
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept
+{
+    ++t_allocations;
+    return std::malloc(size == 0 ? 1 : size);
+}
+void* operator new[](std::size_t size, const std::nothrow_t& tag) noexcept { return ::operator new(size, tag); }
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete[](void* p) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
 
 namespace tnfs = rb::net_tnfs;
 using rb::core::ErrorCode;
@@ -165,6 +192,13 @@ void awaitSlots(const MemoryImageStore& store, std::size_t count)
     TEST_ASSERT_EQUAL_size_t(count, slotsInUse(store));
 }
 
+std::string pathOf(const TnfsFolder& folder, std::size_t index)
+{
+    char out[TnfsFolder::kMaxPath + 1];
+    folder.path(index, out);
+    return out;
+}
+
 LoaderStatus awaitResult(TnfsLoader& loader, uint32_t job, TnfsFolder& folder)
 {
     for (int i = 0; i < 10000; ++i) {
@@ -240,7 +274,7 @@ static void test_lists_a_folder(void)
     TEST_ASSERT_TRUE(status.kind == Kind::Folder);
     TEST_ASSERT_EQUAL_size_t(2, folder.total());
     TEST_ASSERT_EQUAL_STRING("JUEGOS/", folder.entry(0).display);
-    TEST_ASSERT_EQUAL_STRING("/Juegos", folder.entry(0).path.c_str());
+    TEST_ASSERT_EQUAL_STRING("/Juegos", pathOf(folder, 0).c_str());
     TEST_ASSERT_EQUAL_STRING("LOGO.ATR", folder.entry(1).display);
     // Every entry but the dotted ones (".", ".." and ".oculto.atr") is asked with STAT.
     TEST_ASSERT_EQUAL_size_t(3, countCommand(rig.server, tnfs::cmd::kStat));
@@ -248,6 +282,42 @@ static void test_lists_a_folder(void)
     TEST_ASSERT_EQUAL_size_t(0, rig.server.openHandles());
     // Handed over once.
     TEST_ASSERT_TRUE(loader.poll(job, folder).kind == Kind::Unknown);
+}
+
+// menu-navegacion N002 (AC10, M42-3): the first 999 of 1200 and the total; poll() on
+// the menu thread exchanges the storage and allocates nothing.
+static void test_poll_hands_over_1200_entries_without_allocating(void)
+{
+    Rig rig;
+    char name[32];
+    for (int i = 0; i < 1200; ++i) {
+        std::snprintf(name, sizeof name, "/big/G%04d.ATR", i);
+        rig.server.addFile(name, image(16));
+    }
+    TnfsLoader loader(rig.links, rig.store, rig.clock, rig.memory, &rig.hooks);
+    TnfsFolder folder;
+    const uint32_t job = list(loader, "/big");
+    LoaderStatus status;
+    unsigned long allocated = 0;
+    for (int i = 0; i < 20000; ++i) {
+        const unsigned long before = t_allocations;
+        status = loader.poll(job, folder);
+        allocated += t_allocations - before;
+        if (status.kind != Kind::InProgress) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    TEST_ASSERT_TRUE(status.kind == Kind::Folder);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, allocated, "poll() allocated on the menu thread");
+    TEST_ASSERT_EQUAL_size_t(1200, folder.total());
+    TEST_ASSERT_EQUAL_size_t(999, folder.count());
+    TEST_ASSERT_EQUAL_STRING("G0998.ATR", folder.entry(998).display);
+    TEST_ASSERT_EQUAL_STRING("/big/G0998.ATR", pathOf(folder, 998).c_str());
+    // A second listing reuses the storage handed back: the loader still has room.
+    const uint32_t again = list(loader, "/big");
+    TEST_ASSERT_TRUE(awaitResult(loader, again, folder).kind == Kind::Folder);
+    TEST_ASSERT_EQUAL_size_t(999, folder.count());
 }
 
 static void test_fetches_a_whole_image_into_a_slot_with_its_sha256(void)
@@ -773,6 +843,7 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_lists_a_folder);
+    RUN_TEST(test_poll_hands_over_1200_entries_without_allocating);
     RUN_TEST(test_fetches_a_whole_image_into_a_slot_with_its_sha256);
     RUN_TEST(test_job_numbers_grow_and_unknown_numbers_say_so);
     RUN_TEST(test_list_percentage_is_0_during_readdir_then_follows_the_stats);

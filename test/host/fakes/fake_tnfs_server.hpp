@@ -135,6 +135,20 @@ public:
     bool exists(const std::string& path) const { return nodes_.find(normalise(path)) != nodes_.end(); }
 
     // --- Programming ------------------------------------------------------------
+    // Removes a file or an empty directory (menu-navegacion N003: a folder that changes
+    // on the server). Call it between jobs: the server is not thread-safe.
+    void remove(const std::string& path)
+    {
+        const std::string p = normalise(path);
+        auto node = nodes_.find(p);
+        RB_ASSERT(p.size() > 1 && node != nodes_.end());
+        const std::string children = p + "/";
+        for (const auto& candidate : nodes_) {
+            RB_ASSERT(candidate.first.compare(0, children.size(), children) != 0);  // empty directories only
+        }
+        nodes_.erase(node);
+    }
+
     void delay(uint8_t command, uint32_t ms) { delayUs_[command] = uint64_t{ms} * 1000u; }
     void silence(uint8_t command) { programme(command, {Kind::Silence, 0, {}}); }
     void reject(uint8_t command, uint8_t code) { programme(command, {Kind::Reject, code, {}}); }

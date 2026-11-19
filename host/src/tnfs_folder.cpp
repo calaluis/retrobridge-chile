@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
+#include <new>
 #include <utility>
 
 #include "menu_catalog.hpp"
@@ -108,9 +110,32 @@ void tnfsTitle(const char* path, std::size_t length, std::size_t width, char* ou
     out[written] = '\0';
 }
 
+TnfsFolder::TnfsFolder() noexcept : storage_(new (std::nothrow) Storage) {}
+
+TnfsFolder::~TnfsFolder() { delete storage_; }
+
+TnfsFolder::TnfsFolder(TnfsFolder&& other) noexcept : storage_(other.storage_) { other.storage_ = nullptr; }
+
 TnfsFolder TnfsFolder::build(const std::string& folder, std::vector<TnfsListing> listed)
 {
-    listed.erase(std::remove_if(listed.begin(), listed.end(), [](const TnfsListing& e) { return !kept(e); }),
+    TnfsFolder result;
+    result.fill(folder, std::move(listed));
+    return result;
+}
+
+bool TnfsFolder::fill(const std::string& folder, std::vector<TnfsListing> listed)
+{
+    if (storage_ == nullptr) {
+        return false;
+    }
+    clear();
+    if (folder.size() > kMaxPath) {
+        return true;  // nothing under it could be opened
+    }
+    const bool root = !folder.empty() && folder.back() == '/';
+    const std::size_t prefix = folder.size() + (root ? 0 : 1);
+    listed.erase(std::remove_if(listed.begin(), listed.end(),
+                                [prefix](const TnfsListing& e) { return !kept(e) || prefix + e.name.size() > kMaxPath; }),
                  listed.end());
     std::sort(listed.begin(), listed.end(), [](const TnfsListing& a, const TnfsListing& b) {
         if (a.isDir != b.isDir) {
@@ -119,13 +144,15 @@ TnfsFolder TnfsFolder::build(const std::string& folder, std::vector<TnfsListing>
         return compareNames(a.name.c_str(), b.name.c_str()) < 0;
     });
 
-    TnfsFolder result;
-    result.total_ = listed.size();
-    result.shown_ = std::min(listed.size(), kMaxShown);
-    const bool root = !folder.empty() && folder.back() == '/';
-    for (std::size_t i = 0; i < result.shown_; ++i) {
-        TnfsListing& source = listed[i];
-        Entry& entry = result.entries_[i];
+    Storage& s = *storage_;
+    std::memcpy(s.folder, folder.data(), folder.size());
+    s.folder[folder.size()] = '\0';
+    s.folderLength = folder.size();
+    s.total = listed.size();
+    s.count = std::min(listed.size(), kCapacity);
+    for (std::size_t i = 0; i < s.count; ++i) {
+        const TnfsListing& source = listed[i];
+        Entry& entry = s.entries[i];
         entry.isDir = source.isDir;
         if (source.isDir) {
             const std::size_t written =
@@ -135,38 +162,76 @@ TnfsFolder TnfsFolder::build(const std::string& folder, std::vector<TnfsListing>
         } else {
             tnfsDisplay(source.name.data(), source.name.size(), entry.display, kDisplayWidth);
         }
-        entry.path = root ? folder + source.name : folder + "/" + source.name;
+        std::memcpy(entry.name, source.name.data(), source.name.size());
+        entry.name[source.name.size()] = '\0';
+        entry.nameLength = static_cast<uint16_t>(source.name.size());
     }
-    return result;
+    return true;
 }
 
-void TnfsFolder::notice(char (&out)[kNoticeSize]) const noexcept
+void TnfsFolder::clear() noexcept
 {
-    if (total_ == 0) {
-        std::snprintf(out, sizeof out, "CARPETA VACIA");
-    } else if (total_ > kMaxShown) {
-        std::snprintf(out, sizeof out, "MOSTRANDO %llu DE %llu", static_cast<unsigned long long>(kMaxShown),
-                      static_cast<unsigned long long>(total_));
-    } else {
-        out[0] = '\0';
+    if (storage_ != nullptr) {
+        storage_->folderLength = 0;
+        storage_->folder[0] = '\0';
+        storage_->count = 0;
+        storage_->total = 0;
     }
+}
+
+std::size_t TnfsFolder::path(std::size_t index, char (&out)[kMaxPath + 1]) const noexcept
+{
+    const Storage& s = *storage_;
+    const Entry& entry = s.entries[index];
+    const bool root = s.folderLength > 0 && s.folder[s.folderLength - 1] == '/';
+    std::size_t length = s.folderLength;
+    std::memcpy(out, s.folder, length);
+    if (!root) {
+        out[length++] = '/';
+    }
+    std::memcpy(out + length, entry.name, entry.nameLength);  // fill() kept length <= kMaxPath
+    length += entry.nameLength;
+    out[length] = '\0';
+    return length;
+}
+
+void TnfsFolder::notice(std::size_t page, char (&out)[kNoticeSize]) const noexcept
+{
+    if (total() == 0) {
+        std::snprintf(out, sizeof out, "CARPETA VACIA");
+    } else {
+        pageLine(count(), total(), page, out);
+    }
+}
+
+void pageLine(std::size_t kept, std::size_t total, std::size_t page, char (&out)[TnfsFolder::kNoticeSize]) noexcept
+{
+    if (total <= TnfsFolder::kPageRows) {
+        out[0] = '\0';
+        return;
+    }
+    const auto n = static_cast<unsigned long long>(page + 1);
+    const auto m = static_cast<unsigned long long>((kept + TnfsFolder::kPageRows - 1) / TnfsFolder::kPageRows);
+    // Formatted with room for any size_t, then cut to the notice: GCC's -Wformat-truncation
+    // cannot see that the numbers are small, and the line never needs more than 40 columns.
+    char line[96];
+    if (kept == total) {
+        std::snprintf(line, sizeof line, "PAGINA %llu DE %llu (%llu)", n, m, static_cast<unsigned long long>(total));
+    } else {
+        std::snprintf(line, sizeof line, "PAGINA %llu DE %llu (%llu DE %llu)", n, m,
+                      static_cast<unsigned long long>(kept), static_cast<unsigned long long>(total));
+    }
+    std::size_t i = 0;
+    for (; i + 1 < sizeof out && line[i] != '\0'; ++i) {
+        out[i] = line[i];
+    }
+    out[i] = '\0';
 }
 
 }  // namespace rb::host
 
 namespace rb::host {
 
-void TnfsFolder::swap(TnfsFolder& other) noexcept
-{
-    for (std::size_t i = 0; i < kMaxShown; ++i) {
-        Entry& a = entries_[i];
-        Entry& b = other.entries_[i];
-        std::swap(a.isDir, b.isDir);
-        std::swap(a.display, b.display);
-        a.path.swap(b.path);
-    }
-    std::swap(shown_, other.shown_);
-    std::swap(total_, other.total_);
-}
+void TnfsFolder::swap(TnfsFolder& other) noexcept { std::swap(storage_, other.storage_); }
 
 }  // namespace rb::host

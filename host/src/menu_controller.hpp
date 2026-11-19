@@ -95,6 +95,8 @@ public:
     bool menuOnD1() const noexcept { return menuOnD1_; }
 
     void service();
+    // false if the listing block could not be reserved (main does not start then).
+    bool ready() const noexcept { return folder_.ready(); }
     MenuReply key(uint8_t code);
 
     // Name shown for drive 1..8 (for D1, the assigned image), or nullptr: the
@@ -106,7 +108,15 @@ public:
     static constexpr uint32_t kLoadWaitMicros = 200000;
 
 private:
-    static constexpr int8_t kNone = -1;
+    // A global entry of a list (local catalog or TNFS folder): 0..998 (M42-3).
+    using EntryIndex = uint16_t;
+    static constexpr EntryIndex kNoEntry = 0xFFFF;
+    // The marked row of a list and its page (menu-navegacion); no allocation.
+    struct Cursor {
+        uint8_t row = 0;
+        uint16_t page = 0;
+    };
+    static constexpr std::size_t kStackDepth = 32;  // folder levels remembered for Esc (M42-3)
     enum class View : uint8_t { Main, List, Pick, Unmount, Folder, FolderPick };
     enum class InFlight : uint8_t { None, Menu, Boot, Mount, Unmount };
     enum class Job : uint8_t { None, Open, Enter, Up, Fetch };
@@ -116,7 +126,7 @@ private:
     struct Shown {
         enum class Kind : uint8_t { None, Local, Tnfs };
         Kind kind = Kind::None;
-        int8_t entry = kNone;                          // Local
+        EntryIndex entry = kNoEntry;                   // Local
         std::size_t slot = 0;                          // Tnfs
         char name[TnfsFolder::kDisplayWidth + 1] = {};  // Tnfs: display name
     };
@@ -134,8 +144,8 @@ private:
     void onPick(int digit);
     void onUnmount(int digit);
     bool boot();
-    void assignD1(int8_t entry);
-    void mountOn(unsigned drive, int8_t entry);
+    void assignD1(EntryIndex entry);
+    void mountOn(unsigned drive, EntryIndex entry);
     void emptyDrive(unsigned drive);
 
     void onFolder(uint8_t code);
@@ -150,6 +160,30 @@ private:
     void place(unsigned drive, const Shown& image);
     void recycle(const Shown& shown) noexcept;
     void renderFolder(uint8_t* screen, char* text, std::size_t size) const noexcept;
+    // The entry a list key asks for: a letter of the visible page, or RETURN / fire on
+    // the marked row; kNoEntry for anything else or past the end. A move ($40-$43)
+    // changes the cursor and returns kNoEntry.
+    static EntryIndex listKey(Cursor& cursor, std::size_t count, uint8_t key) noexcept;
+    static void markRow(uint8_t* screen, const Cursor& cursor, std::size_t count) noexcept;
+    // Rows of the page the cursor is on (0 for an empty list), and which pages there are
+    // around it (kMenuPageBefore, kMenuPageAfter): what the 6502 needs to move the bar by
+    // itself and to stay put, without SIO, when a move has no page to go to (N007).
+    static std::size_t pageRows(const Cursor& cursor, std::size_t count) noexcept;
+    static uint8_t pages(const Cursor& cursor, std::size_t count) noexcept;
+    // The local cursor block at kMenuCursor: base of row 0, rows, marked row, pages.
+    // rows 0: the 6502 sends every move to the host, as before N007.
+    static void cursorBlock(uint8_t* screen, unsigned base, std::size_t rows, unsigned row, uint8_t pages) noexcept;
+    // RETURN or fire on row `row` of the local cursor (kMenuConfirmRow + row): the
+    // cursor of the shown screen goes there. false if the row is not on the screen.
+    bool selectRow(unsigned row) noexcept;
+    // Up and down move `line` (0..7) on the main screen; left and right are taken and do
+    // nothing there. false for any other key.
+    static bool moveLine(uint8_t& line, uint8_t key) noexcept;
+    // The digit a key means while a drive is chosen: its own, or the drive under the
+    // cursor for RETURN and fire; 0 for none.
+    int driveDigit(uint8_t key, int digit) const noexcept;
+    void pushPosition() noexcept;
+    Cursor popPosition() noexcept;
 
     const MenuCatalog& catalog_;
     const MenuSources& sources_;
@@ -162,7 +196,13 @@ private:
     MenuLoader* loader_;
 
     View view_ = View::Main;
-    int8_t chosen_ = kNone;                // catalog entry (or folder entry) waiting for a drive
+    EntryIndex chosen_ = kNoEntry;         // catalog entry (or folder entry) waiting for a drive
+    uint8_t sourceLine_ = 0;               // main screen: the source marked (0: source 1)
+    uint8_t driveLine_ = 0;                // drive choice (Pick, FolderPick, Unmount): 0 is D1 (M42-4)
+    Cursor listCursor_;                    // the local list
+    Cursor folderCursor_;                  // the TNFS folder on screen
+    Cursor stack_[kStackDepth];            // folderCursor_ of each folder entered (Esc restores it)
+    std::size_t depth_ = 0;                // levels entered; past kStackDepth, Esc restores row 1
     std::array<Shown, kDrives> shown_{};   // per drive (D1: assigned)
     InFlight inFlight_ = InFlight::None;
 

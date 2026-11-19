@@ -182,6 +182,10 @@ target_link_libraries(test_memory_image_store PRIVATE Threads::Threads)
 set_tests_properties(test_memory_image_store PROPERTIES FIXTURES_REQUIRED menu_images)
 
 # The listing of a TNFS folder: filter, order, 20 entries and display names (menu-tnfs T010).
+# The local list: up to 999 .atr names (menu-navegacion N002).
+rb_add_host_test(test_menu_catalog menu/test_menu_catalog.cpp ${rb_root}/host/src/menu_catalog.cpp)
+target_include_directories(test_menu_catalog PRIVATE ${rb_root}/host/src)
+
 rb_add_host_test(test_tnfs_folder menu/test_tnfs_folder.cpp ${rb_root}/host/src/tnfs_folder.cpp
                  ${rb_root}/host/src/menu_catalog.cpp)
 target_include_directories(test_tnfs_folder PRIVATE ${rb_root}/host/src)
@@ -207,6 +211,16 @@ target_include_directories(test_menu_tnfs PRIVATE ${rb_root}/host/src)
 target_compile_definitions(test_menu_tnfs PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
 target_link_libraries(test_menu_tnfs PRIVATE rb_net_tnfs Threads::Threads)
 set_tests_properties(test_menu_tnfs PROPERTIES FIXTURES_REQUIRED menu_images)
+
+# Cursor and pages in the lists (menu-navegacion N003), on the rig of test_menu_tnfs.
+rb_add_host_test(test_menu_navegacion menu/test_menu_navegacion.cpp ${rb_root}/host/src/menu_controller.cpp
+                 ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
+                 ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp
+                 ${rb_root}/host/src/tnfs_folder.cpp ${rb_root}/host/src/sha256.cpp)
+target_include_directories(test_menu_navegacion PRIVATE ${rb_root}/host/src)
+target_compile_definitions(test_menu_navegacion PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
+target_link_libraries(test_menu_navegacion PRIVATE rb_net_tnfs Threads::Threads)
+set_tests_properties(test_menu_navegacion PROPERTIES FIXTURES_REQUIRED menu_images)
 
 # What main.cpp wires for TNFS: request trace, UDP link, shared JSONL log (menu-tnfs T013).
 rb_add_host_test(test_tnfs_link menu/test_tnfs_link.cpp ${rb_root}/host/src/tnfs_link.cpp

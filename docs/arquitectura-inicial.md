@@ -50,7 +50,7 @@
 >   (`docs/diseno/h4-diagnostico-autonomo.md`).
 > - Aún **no** se han implementado los adaptadores UART/GPIO del SIO, y el SIO no se ha probado con un Atari.
 > Fecha: 2026-10-23. Reemplaza a la v0.1 del mismo día.
-> Repositorio: `calaluis/retrobridge-chile` (privado por ahora). Licencia: GPL-3.0-only (ADR-013).
+> Licencia de la edición pública: uso personal ([ADR-013](adr/0013-licencias-separadas.md)).
 > Las firmas de clases que aparecen aquí son **notación de diseño**, no implementación.
 
 ## Cambios respecto de v0.1
@@ -87,7 +87,7 @@ deja el punto de extensión (§5.3), pero no se implementa ningún adaptador de 
 
 ### 0.3 Licencias
 
-- `LICENSE`: texto oficial completo de la **GNU GPL versión 3** para **nuestro** código (`GPL-3.0-only`). El
+- `LICENSE`: licencia de uso personal del código propio. El
   titular del código propio figura en el aviso de copyright del [README](../README.md#license).
 - `THIRD_PARTY_NOTICES.md`, **separado**: avisos de dependencias (ESP-IDF, Apache-2.0; FatFs; Unity, MIT; y las
   que se agreguen). Cada nueva dependencia actualiza este archivo en el mismo PR.
@@ -713,7 +713,7 @@ retrobridge-chile/
 │   ├── hardware/                     # pinout confirmado, mediciones (Anexo A)
 │   ├── mediciones/sio-tiempos.md     # presupuesto vs. medición real (§9.3)
 │   └── fuentes.md
-├── LICENSE                           # GPL-3.0-only (código propio)
+├── LICENSE                           # licencia de uso personal
 ├── THIRD_PARTY_NOTICES.md            # avisos de dependencias, separado
 └── .github/workflows/                # build ESP-IDF fijado + host tests + check_layering
 ```
@@ -765,7 +765,7 @@ Cada ADR tendrá su archivo en `docs/adr/`. Resumen:
 | **010** | Pruebas de host con CMake + CTest + Unity, independientes de ESP-IDF. | Objetivo `linux` de ESP-IDF (en preview). | Más simple y estable. Las pruebas en el equipo reutilizan las suites de contrato. |
 | **011** | Memoria estática en la ruta SIO: búferes propiedad de `SioSession`, slots fijos en repositorios, sin `new`, `std::vector` ni `std::string` después de la inicialización. | Asignación por solicitud. | Determinismo y ausencia de fragmentación. Se verifica midiendo el heap (§9.2). |
 | **012** | Desarrollo independiente con trazabilidad de fuentes; **sin** afirmación de sala limpia. | Declarar sala limpia. | No podemos demostrarla dada la experiencia previa (§0.2). |
-| **013** | Código propio bajo GPL-3.0-only (`LICENSE`), con `THIRD_PARTY_NOTICES.md` (terceros) separado. | Licencia propietaria (versión inicial de este ADR); GPL-3.0 o posterior; un solo archivo. | Proyecto personal de afición y aprendizaje; dependencias compatibles con GPLv3; obligaciones de atribución claras. |
+| **013** | Código propio bajo licencia de uso personal (`LICENSE`), con `THIRD_PARTY_NOTICES.md` separado. | Licencia libre o aviso único. | Permite uso personal, reserva la explotación comercial y conserva las licencias de terceros. |
 | **014** | Contextos de almacenamiento y de unidad, cada uno dueño de sus recursos, con traspaso por `DriveMailbox`. El montaje lento ocurre fuera del contexto de la unidad, que lo aplica en O(1). | Montaje dentro de la sesión SIO; mutex sobre `DriveBay`. | No bloquea el bus (t2) aunque abrir una imagen tarde segundos (TNFS), y no hay carreras de datos. |
 | **015** | Adaptador de archivos portable sobre stdio y la VFS de ESP-IDF (`rb_file_storage`), con política de rutas, mapeo de errores y `IoError` con búfer sin especificar. | API nativa de FatFs; POSIX `pread`. | El mismo código se prueba en el host con archivos reales y corre en el ESP32 sobre FATFS. |
 

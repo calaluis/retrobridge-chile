@@ -1,18 +1,15 @@
 # retrobridge-chile
 Independent firmware for Atari retro systems, initially supporting Atari XL/XE, with future Atari 2600 support planned.
 
-## License
+## Licencia
 
-Copyright (C) 2026 Luis Rodrigo Carrasco Lagos (RUT [RUT omitido]).
+Copyright © 2026 @calaluis.
 
-RetroBridge Chile is free software: you can redistribute it and/or modify it under the terms of the
-GNU General Public License as published by the Free Software Foundation, **version 3 only**
-(SPDX: `GPL-3.0-only`). It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
-without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the full
-text in [LICENSE](LICENSE).
+El código fuente y el firmware propios de RetroBridge Chile se ofrecen bajo la [licencia de uso personal](LICENSE). Para autorizaciones comerciales, contacta a [@calaluis](https://github.com/calaluis).
 
-Third-party components keep their own licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-The repository is private for now; making it public is a separate, later decision.
+Los componentes de terceros conservan sus licencias, detalladas en [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Las contribuciones se realizan mediante [pull requests](CONTRIBUTING.md).
+
+Consulta la [guía de compilación](docs/toolchain.md) para construir el firmware y ejecutar las pruebas. Los informes del laboratorio documentan sus compilaciones históricas.
 
 - Architecture: [docs/arquitectura-inicial.md](docs/arquitectura-inicial.md) and [docs/adr/](docs/adr/)
 - Toolchain and build/test commands: [docs/toolchain.md](docs/toolchain.md)

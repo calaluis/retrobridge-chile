@@ -181,6 +181,11 @@ target_compile_definitions(test_memory_image_store PRIVATE RB_TEST_MENU_DIR="${r
 target_link_libraries(test_memory_image_store PRIVATE Threads::Threads)
 set_tests_properties(test_memory_image_store PROPERTIES FIXTURES_REQUIRED menu_images)
 
+# The listing of a TNFS folder: filter, order, 20 entries and display names (menu-tnfs T010).
+rb_add_host_test(test_tnfs_folder menu/test_tnfs_folder.cpp ${rb_root}/host/src/tnfs_folder.cpp
+                 ${rb_root}/host/src/menu_catalog.cpp)
+target_include_directories(test_tnfs_folder PRIVATE ${rb_root}/host/src)
+
 # SHA-256 of the images loaded over TNFS (menu-tnfs T004). RB_REF_ATR, when set,
 # points at the spec's reference ATR (not in the repository).
 rb_add_host_test(test_sha256 menu/test_sha256.cpp ${rb_root}/host/src/sha256.cpp)

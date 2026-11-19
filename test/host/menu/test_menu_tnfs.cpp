@@ -95,11 +95,38 @@ void test_the_poll_code_never_chooses_and_3e_chooses_s()
     assert_line(rig.press(KS | 0x40), kMainMessage, " UNIDAD PARA: S.ATR");
 }
 
-void test_e_is_still_pending_and_source_1_is_unchanged()
+// menu-editar-servidor: a saved server is used by the next opening, without a restart.
+void test_a_server_saved_with_e_is_the_one_the_next_opening_uses()
+{
+    constexpr const char* file = RB_TEST_MENU_DIR "/sources-tnfs-edit.txt";
+    std::FILE* out = std::fopen(file, "wb");
+    TEST_ASSERT_NOT_NULL(out);
+    std::fputs("pulgarcito\nno-such-host\nsin-enlace\n", out);
+    std::fclose(out);
+    Rig rig;
+    rig.start();
+    rig.controller->setSourcesFile(file);
+    assert_title(rig.settle(K2), " FUENTE 2: /");  // the first session, with the old name
+    rig.settle(KESC);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionEdit, rig.controller->key(KE, 1).action());
+    const char* name = "10.0.0.7";
+    for (uint8_t i = 0; i < rb::host::kMenuEditWidth; ++i) {
+        rig.controller->text(i, static_cast<uint8_t>(i < std::strlen(name) ? name[i] : ' '));
+    }
+    assert_line(rig.controller->key(rb::host::kMenuEditSave), kMainMessage, " FUENTE 2 GUARDADA");
+    // Opening source 2 again: the loader renamed its link first, then opened it.
+    assert_title(rig.settle(K2), " FUENTE 2: /");
+    TEST_ASSERT_EQUAL_INT(1, rig.link.renames.load());
+    TEST_ASSERT_EQUAL_STRING("10.0.0.7", rig.link.renamedTo);
+    TEST_ASSERT_EQUAL_INT(0, rig.unresolved.renames.load());
+    std::remove(file);
+}
+
+void test_e_on_source_1_says_it_is_local_and_source_1_is_unchanged()
 {
     Rig rig;
     rig.start();
-    assert_line(rig.press(KE), kMainMessage, " PENDIENTE: E NECESITA ENTRADA DE TEXTO");
+    assert_line(rig.press(KE), kMainMessage, " LA FUENTE 1 ES LOCAL");
     const MenuReply list = rig.press(K1);
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutList, list.layout());
     assert_title(list, " FUENTE 1: SD");
@@ -507,7 +534,8 @@ int main()
     RUN_TEST(test_a_letter_enters_a_folder_and_esc_climbs_back_to_the_main_screen);
     RUN_TEST(test_more_than_twenty_entries_show_page_1_and_the_total);
     RUN_TEST(test_the_poll_code_never_chooses_and_3e_chooses_s);
-    RUN_TEST(test_e_is_still_pending_and_source_1_is_unchanged);
+    RUN_TEST(test_e_on_source_1_says_it_is_local_and_source_1_is_unchanged);
+    RUN_TEST(test_a_server_saved_with_e_is_the_one_the_next_opening_uses);
     RUN_TEST(test_an_atr_chosen_for_d1_is_assigned_with_its_display_name_and_boots);
     RUN_TEST(test_a_load_longer_than_seven_seconds_shows_its_progress_and_mounts_on_d2);
     RUN_TEST(test_an_invalid_atr_is_refused_for_d3_and_its_slot_is_freed);

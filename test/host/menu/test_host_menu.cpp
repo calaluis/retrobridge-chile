@@ -306,7 +306,9 @@ void test_servers_and_edit_say_what_is_missing_and_change_nothing()
     assert_line(rig.keys({K2}), rb::host::kMainMessage, line(" PENDIENTE: FALTA EL CLIENTE TNFS"));
     assert_line(rig.keys({K4}), rb::host::kMainMessage, line(" FUENTE 4 SIN CONFIGURAR"));
     const MenuReply edit = rig.keys({KE});
-    assert_line(edit, rb::host::kMainMessage, line(" PENDIENTE: E NECESITA ENTRADA DE TEXTO"));
+    // Without --sources there is no file to save to (menu-editar-servidor; edit tests in test_menu_editar).
+    assert_line(edit, rb::host::kMainMessage, line(" SIN ARCHIVO DE FUENTES"));
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, edit.action());
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutMain, edit.layout());
     TEST_ASSERT_TRUE(rig.mailbox.idle());
     TEST_ASSERT_TRUE(rig.controller->menuOnD1());

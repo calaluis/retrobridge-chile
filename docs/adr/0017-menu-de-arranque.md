@@ -5,7 +5,8 @@
   reemplazadas; 1, 2 y 5 siguen vigentes. Enmendada el 2026-11-18 por la spec `menu-tnfs` (PR #44): ver
   «Enmienda 2», que reemplaza el punto 4 de la enmienda 1. Enmendada el 2026-11-19 por la spec
   `menu-navegacion`: ver «Enmienda 3», que amplía el punto 3 de la enmienda 2, y «Enmienda 4», que cambia
-  sus consecuencias tras la demo. «Enmienda 5» cierra el límite conocido del punto 2 de la enmienda 4.
+  sus consecuencias tras la demo. «Enmienda 5» cierra el límite conocido del punto 2 de la enmienda 4. «Enmienda 6» (spec
+  `menu-editar-servidor`) agrega la acción 3, el comando `T` y el código `$E0`.
 - Contexto: con `--image`, `retrobridge_host` sirve una sola ATR por ejecución. La Issue #38 pide elegir la imagen
   D1 desde el Atari, con el teclado, sin relanzar el host ni montar discos desde Altirra.
 
@@ -175,3 +176,36 @@ tecla que el host no usa: la barra vuelve a la fila que el host dibujó la últi
 
 Consecuencias: el programa 6502 ocupa 14 sectores desde `$0700`. La pantalla vive en `$09C2`-`$0D81`, sin cruzar
 4 KB. Una tecla que el host no usa deja la barra donde la muestra el Atari.
+
+## Enmienda 6 (2026-11-19, spec `menu-editar-servidor`): editar un servidor con E
+
+Contexto: `E` mostraba `PENDIENTE`. Faltaban una entrada de texto en el Atari y un archivo `--sources` que el host
+pueda escribir. Escribir cada tecla con `K` costaría una pantalla entera (962 bytes) por letra. `SioTransport` no
+recibe datos del Atari, y cambiarlo choca con ADR-016.
+
+1. **Acción 3 «editar» (M43).** El host responde a `E` con la pantalla principal y la acción 3. Tres bytes en
+   `kMenuEdit` (952), justo antes del bloque del cursor, dan la posición del campo en la pantalla (bajo y alto) y
+   el largo del texto. El campo mide 32 columnas y empieza después de `n  ` en la fila de la fuente. El 6502
+   edita sin SIO: letras (minúsculas; con Shift, mayúsculas), dígitos, `.` y `-`; Delete borra; el cursor es la
+   celda en vídeo inverso que sigue al texto. Control y las demás teclas no escriben.
+2. **Comando `T` (`$54`) de `$5A`.** Con RETURN, el 6502 envía las 32 posiciones del campo en ASCII, una por
+   comando: AUX1 la posición y AUX2 el caracter. No hay datos en ningún sentido (`DSTATS` = 0): ACK, al menos
+   250 µs y COMPLETE. Escribir dos veces la misma posición da el mismo texto, así que un reintento de `SIOV` no
+   necesita memoria en el host. Si un `T` falla, el 6502 muestra «host no responde» y no guarda.
+3. **`K` con `$E0` guarda; Esc cancela.** Tras el texto, el 6502 envía `K` con `$E0` (fuera de `$C0`-`$D3`, de
+   `$40`-`$44`, `$FE` y `$FF`) y una secuencia nueva en AUX2, sin fila. El host compara `$E0` antes de la máscara.
+   Un texto válido se escribe en `--sources`; uno no válido deja la acción 3 con el texto escrito; vacío equivale a
+   Esc. Esc envía `K` con `$1C` y el host vuelve a la principal.
+4. **El cambio vale sin relanzar.** `main.cpp` crea un enlace TNFS para cada fuente 2 a 8, configurada o no. El
+   enlace guarda su propia copia del nombre. `MenuLoader::changeServer` la cambia en el hilo del cargador antes del
+   siguiente trabajo, después de un UMOUNT sin espera a la sesión anterior.
+5. **Sin respuesta, se vuelve a abrir (demo).** Si un trabajo termina en «no responde», el cargador cierra el
+   enlace de esa fuente. El siguiente trabajo resuelve el nombre otra vez. En la demo, un registro DNS corregido
+   con el host en marcha seguía apuntando a la dirección vieja.
+6. **«Host no responde» limpia la pantalla (demo).** Al fallar `SIOV`, el 6502 borra todo menos el título, que es
+   igual en las dos pantallas, y muestra la principal con el aviso. Antes la display list principal mostraba lo que
+   quedaba en el buffer: una lista, o dos respuestas mezcladas cuando dos hosts atendían el mismo hub.
+
+Consecuencias: el programa 6502 ocupa 16 sectores desde `$0700`. La pantalla vive en `$0B16`-`$0ED5`, sin cruzar
+4 KB. Guardar cuesta 33 transacciones cortas y una pantalla. El host escribe un archivo en el hilo SIO; es pequeño
+y cabe en los 250 ms de `key()`.

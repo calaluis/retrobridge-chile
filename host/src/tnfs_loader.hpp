@@ -46,6 +46,9 @@ class TnfsLink {
 public:
     virtual rb::core::Result<void> open() = 0;
     virtual rb::netsio::DatagramPort& port() = 0;
+    // The server becomes `server` (menu-editar-servidor); the next open() uses it.
+    // Called on the loader thread only, between jobs.
+    virtual void rename(const char* server) noexcept = 0;
 
 protected:
     TnfsLink() = default;
@@ -117,6 +120,10 @@ public:
     // mark for the next wake. A free slot drops it.
     void recycle(std::size_t slot) noexcept override;
 
+    // menu-editar-servidor: applied on the loader thread before its next job.
+    void changeServer(unsigned source, const char* server) noexcept override;
+    static constexpr std::size_t kMaxServer = 32;  // MenuSources::kMaxName
+
 private:
     enum class Kind : uint8_t { List, Fetch };
     enum class State : uint8_t { None, Pending, Running, Done };
@@ -143,6 +150,7 @@ private:
     void fetch(const Job& job, rb::net_tnfs::TnfsClient& client, Outcome& out);
     void publish(uint32_t number, Outcome& out);
     void freeRecycled();
+    void applyRenames();
     bool cancelled(uint32_t number) const noexcept;
     void progress(uint32_t number, uint8_t percent) noexcept;
 
@@ -158,6 +166,9 @@ private:
     std::condition_variable done_;  // a job was published or dropped (await)
     bool recycle_[MemoryImageStore::kSlots] = {};  // slots the menu gave back (M41-20)
     bool recycleReady_ = false;                     // a new mark since the loader last looked
+    char rename_[kMaxSource + 1][kMaxServer + 1] = {};  // new server names (changeServer)
+    bool renamed_[kMaxSource + 1] = {};
+    bool renameReady_ = false;
     bool stop_ = false;
     uint32_t counter_ = 0;
     uint32_t current_ = 0;  // the job the menu waits for; 0: none

@@ -40,6 +40,10 @@ void MenuSioTransport::serveMenu(const CommandBytes& command)
         inner_.releaseDataLine();
         return;
     }
+    if (command.bytes[1] == kMenuTextCommand) {
+        serveText(command);
+        return;
+    }
     if (command.bytes[1] != kMenuCommand) {
         ++stats_.menuNaks;
         const uint8_t nak = rb::sio::code::kNak;
@@ -85,6 +89,25 @@ void MenuSioTransport::serveMenu(const CommandBytes& command)
             break;  // the Atari's SIOV times out and shows that the host does not answer
         }
     }
+    inner_.releaseDataLine();
+}
+
+// 'T' (menu-editar-servidor): AUX1 is a position of the text being edited, AUX2 its
+// ASCII character. No data either way: ACK, then COMPLETE after the same delay as
+// SioSession. A retry writes the same character again, so nothing is remembered.
+void MenuSioTransport::serveText(const CommandBytes& command)
+{
+    ++stats_.textCommands;
+    const uint8_t ack = rb::sio::code::kAck;
+    if (!inner_.send(Span<const uint8_t>{&ack, 1}).ok()) {
+        inner_.releaseDataLine();
+        return;
+    }
+    const uint64_t ackEnd = clock_.nowMicros();
+    controller_.text(command.bytes[2], command.bytes[3]);
+    clock_.waitUntil(ackEnd + rb::sio::SioSession::kCompleteDelayUs);
+    const uint8_t complete = rb::sio::code::kComplete;
+    (void)inner_.send(Span<const uint8_t>{&complete, 1});
     inner_.releaseDataLine();
 }
 

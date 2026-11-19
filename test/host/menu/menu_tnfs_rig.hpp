@@ -111,8 +111,15 @@ struct FakeLink final : TnfsLink {
         return {};
     }
     rb::netsio::DatagramPort& port() override { return port_; }
+    void rename(const char* server) noexcept override
+    {
+        std::snprintf(renamedTo, sizeof renamedTo, "%s", server);
+        renames.fetch_add(1);
+    }
     rb::netsio::DatagramPort& port_;
     std::optional<ErrorCode> failWith;
+    char renamedTo[33] = {};      // written on the loader thread; read after renames is seen
+    std::atomic<int> renames{0};
 };
 
 struct TestMemory final : rb::host::ImageMemory {

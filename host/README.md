@@ -91,7 +91,11 @@ ejemplo `FUENTE 2: /ATARI_CHILE/OMS_ATR`; una ruta larga se recorta por la izqui
 | `2`..`8` | principal | abre la raíz del servidor TNFS de esa fuente, de solo lectura (`FUENTE n SIN CONFIGURAR` si no hay) |
 | `A`..`T` | carpeta TNFS | entra en una carpeta (`/`) o elige una `.ATR` de la página visible; después se elige la unidad |
 | Esc | carpeta TNFS | vuelve a la carpeta anterior, en la página y fila desde donde se entró; en la raíz, a la principal; durante «CARGANDO nn%», cancela |
-| `E` | principal | pendiente: muestra `PENDIENTE: E NECESITA ENTRADA DE TEXTO` |
+| `E` | principal | edita el servidor de la fuente marcada por la barra (2..8); en una fila vacía, agrega una |
+| letras, `0`..`9`, `.`, `-` | edición | escriben en la fila, hasta 32; minúsculas, y con Shift mayúsculas |
+| Delete | edición | borra el último caracter |
+| RETURN | edición | guarda en `--sources` si es un nombre o una IPv4 válidos; vacío, como Esc |
+| Esc | edición | cancela sin cambiar nada |
 
 Con más de 20 entradas, debajo del pie aparece `PAGINA n DE m (t)`; una carpeta guarda como máximo 999 y entonces
 muestra `(999 DE t)`. Durante «CARGANDO nn%», moverse y RETURN no hacen nada.
@@ -105,8 +109,14 @@ monta como una local. Si el servidor no contesta o el nombre no se resuelve, apa
 RESPONDE` o `ERROR: SERVIDOR NO ENCONTRADO` y las unidades no cambian. Cada línea de `--sources` es un nombre o una
 IPv4; el puerto es el 16384. Al cerrar, el host termina cada sesión TNFS con UMOUNT.
 
-Pendiente (no implementado): editar un servidor con `E` (falta la entrada de texto en el Atari y escribir `--sources`), casete (sin soporte) y
-escritura en disco (unidades de solo lectura).
+`E` reescribe el archivo `--sources`: cambia solo la línea de esa fuente y conserva comentarios y líneas vacías. Una
+fuente nueva va al final y toma el primer número libre (`GUARDADA COMO FUENTE n`). El host escribe primero
+`<archivo>.tmp` y después lo pone en lugar del original, así que un error deja el archivo como estaba
+(`NO SE PUDO GUARDAR EL ARCHIVO`). El cambio vale sin relanzar: la próxima apertura de esa fuente termina la
+sesión con el servidor anterior y usa el nuevo. Sin `--sources`, `E` muestra `SIN ARCHIVO DE FUENTES`.
+
+Pendiente (no implementado): borrar una fuente, casete (sin soporte) y escritura en disco (unidades de solo
+lectura).
 
 1. Generar las imágenes de demostración (dos arrancables con mensajes distintos y una inválida):
 

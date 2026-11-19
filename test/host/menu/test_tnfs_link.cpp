@@ -72,6 +72,7 @@ struct Link final : rb::host::TnfsLink {
     explicit Link(rb::netsio::DatagramPort& p) : port_(p) {}
     rb::core::Result<void> open() override { return {}; }
     rb::netsio::DatagramPort& port() override { return port_; }
+    void rename(const char*) noexcept override {}
     rb::netsio::DatagramPort& port_;
 };
 

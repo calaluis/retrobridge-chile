@@ -92,9 +92,16 @@ struct FakeLink final : TnfsLink {
         return {};
     }
     rb::netsio::DatagramPort& port() override { return port_; }
+    void rename(const char* server) noexcept override
+    {
+        std::snprintf(renamedTo, sizeof renamedTo, "%s", server);
+        ++renames;
+    }
     rb::netsio::DatagramPort& port_;
     std::optional<ErrorCode> failWith;
     int opens = 0;
+    int renames = 0;
+    char renamedTo[33] = {};
 };
 
 // Heap memory that can be made to fail, or to wait until the test lets it go.
@@ -554,6 +561,29 @@ static void test_a_name_that_does_not_resolve_gives_no_encontrado_and_is_tried_a
     TEST_ASSERT_EQUAL(2, rig.link.opens);
 }
 
+// Demo of menu-editar-servidor: the DNS record of a server was fixed while the host ran.
+// After no answer, the next job opens the link again, so the name is resolved again.
+static void test_a_silent_server_is_opened_again_by_the_next_job(void)
+{
+    Rig rig;
+    for (int i = 0; i < 3; ++i) {
+        rig.server.silence(tnfs::cmd::kMount);
+    }
+    TnfsLoader loader(rig.links, rig.store, rig.clock, rig.memory, &rig.hooks);
+    TnfsFolder folder;
+    LoaderStatus status = awaitResult(loader, list(loader, "/"), folder);
+    TEST_ASSERT_TRUE(status.kind == Kind::Error);
+    TEST_ASSERT_TRUE(status.error == LoaderError::NoResponde);
+    TEST_ASSERT_EQUAL(1, rig.link.opens);
+    status = awaitResult(loader, list(loader, "/"), folder);
+    TEST_ASSERT_TRUE(status.kind == Kind::Folder);
+    TEST_ASSERT_EQUAL(2, rig.link.opens);
+    // An answered job keeps the link: no third open.
+    status = awaitResult(loader, list(loader, "/"), folder);
+    TEST_ASSERT_TRUE(status.kind == Kind::Folder);
+    TEST_ASSERT_EQUAL(2, rig.link.opens);
+}
+
 static void test_a_link_that_cannot_open_gives_no_responde(void)
 {
     Rig rig;
@@ -856,6 +886,7 @@ int main(void)
     RUN_TEST(test_a_mute_server_gives_no_responde);
     RUN_TEST(test_a_malformed_answer_gives_no_responde);
     RUN_TEST(test_a_name_that_does_not_resolve_gives_no_encontrado_and_is_tried_again);
+    RUN_TEST(test_a_silent_server_is_opened_again_by_the_next_job);
     RUN_TEST(test_a_link_that_cannot_open_gives_no_responde);
     RUN_TEST(test_a_source_without_server_gives_no_encontrado);
     RUN_TEST(test_a_missing_file_or_folder_gives_no_se_pudo_abrir);

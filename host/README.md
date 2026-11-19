@@ -94,7 +94,7 @@ ejemplo `FUENTE 2: /ATARI_CHILE/OMS_ATR`; una ruta larga se recorta por la izqui
 | `E` | principal | edita el servidor de la fuente marcada por la barra (2..8); en una fila vacía, agrega una |
 | letras, `0`..`9`, `.`, `-` | edición | escriben en la fila, hasta 32; minúsculas, y con Shift mayúsculas |
 | Delete | edición | borra el último caracter |
-| RETURN | edición | guarda en `--sources` si es un nombre o una IPv4 válidos; vacío, como Esc |
+| RETURN | edición | guarda en `--sources` si es un nombre o una IPv4 válidos; vacío borra la fuente (en una fila vacía, como Esc) |
 | Esc | edición | cancela sin cambiar nada |
 
 Con más de 20 entradas, debajo del pie aparece `PAGINA n DE m (t)`; una carpeta guarda como máximo 999 y entonces
@@ -115,8 +115,11 @@ fuente nueva va al final y toma el primer número libre (`GUARDADA COMO FUENTE n
 (`NO SE PUDO GUARDAR EL ARCHIVO`). El cambio vale sin relanzar: la próxima apertura de esa fuente termina la
 sesión con el servidor anterior y usa el nuevo. Sin `--sources`, `E` muestra `SIN ARCHIVO DE FUENTES`.
 
-Pendiente (no implementado): borrar una fuente, casete (sin soporte) y escritura en disco (unidades de solo
-lectura).
+Para borrar una fuente, `E`, Delete hasta vaciar el texto y RETURN: su línea sale del archivo, las fuentes siguientes
+suben un número (`FUENTE n BORRADA`) y sus sesiones TNFS se cierran. No pide confirmación; Esc antes de RETURN
+cancela.
+
+Pendiente (no implementado): casete (sin soporte) y escritura en disco (unidades de solo lectura).
 
 1. Generar las imágenes de demostración (dos arrancables con mensajes distintos y una inválida):
 

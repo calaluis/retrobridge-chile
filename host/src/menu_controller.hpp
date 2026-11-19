@@ -156,6 +156,7 @@ private:
     void startEdit();
     void onEdit(uint8_t code);
     void saveEdit();
+    void deleteSource();
     // The edited text without the spaces after it, in `out` (kMenuEditWidth + 1 bytes).
     std::size_t editedText(char* out) const noexcept;
     bool boot();

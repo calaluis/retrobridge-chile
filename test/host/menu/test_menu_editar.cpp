@@ -216,7 +216,7 @@ void test_e_opens_the_row_of_the_bar_with_its_name_in_the_field()
     TEST_ASSERT_EQUAL_UINT8(9, edit.screen()[rb::host::kMenuEdit + 2]);  // "localhost"
     assert_line(edit, sourceLine(3), textLine("3  localhost"));      // no bar while editing
     TEST_ASSERT_EQUAL_UINT8(0, edit.screen()[rb::host::kMenuCursor + 2]);  // no local cursor
-    assert_line(edit, rb::host::kMainMessage, line(" RETURN GUARDA, ESC CANCELA"));
+    assert_line(edit, rb::host::kMainMessage, line(" RETURN GUARDA, VACIO BORRA, ESC CANCELA"));
     // An empty row opens an empty field.
     rig.controller->key(KESC);
     const MenuReply empty = rig.pressE(1 + 3);  // source 5
@@ -289,7 +289,7 @@ void test_an_invalid_name_stays_in_the_field_and_changes_nothing()
     TEST_ASSERT_EQUAL_STRING("192.168.1.3", rig.sources.name(3));
 }
 
-void test_esc_and_an_empty_text_change_nothing()
+void test_esc_and_an_empty_text_on_an_empty_row_change_nothing()
 {
     EditRig rig;
     rig.pressE(1);
@@ -297,12 +297,83 @@ void test_esc_and_an_empty_text_change_nothing()
     const MenuReply esc = rig.controller->key(KESC);
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, esc.action());
     assert_line(esc, rb::host::kMainMessage, line(""));
-    rig.pressE(1);
+    rig.pressE(4);  // source 5: an empty row
     const MenuReply empty = rig.type("");
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, empty.action());
     assert_line(empty, rb::host::kMainMessage, line(""));
+    TEST_ASSERT_EQUAL_UINT(2, rig.sources.count());
     TEST_ASSERT_EQUAL_STRING("tnfs.example.cl", rig.sources.name(2));
     TEST_ASSERT_EQUAL_STRING(kOriginal, readFile(kFile).c_str());
+}
+
+// --- M44: an empty text deletes a configured source ---------------------------------
+
+void test_writing_no_name_removes_that_source_line_only()
+{
+    writeFile(kFile, kOriginal);
+    char error[96];
+    TEST_ASSERT_TRUE(rb::host::writeSourcesFile(kFile, 0, nullptr, error, sizeof error));
+    TEST_ASSERT_EQUAL_STRING("# servidores del laboratorio\n\n  # otro\nlocalhost\n", readFile(kFile).c_str());
+    writeFile(kFile, "uno\r\n# fin\ndos");  // the last line without a newline
+    TEST_ASSERT_TRUE(rb::host::writeSourcesFile(kFile, 1, nullptr, error, sizeof error));
+    TEST_ASSERT_EQUAL_STRING("uno\r\n# fin\n", readFile(kFile).c_str());
+    // No such source: nothing to delete, the file is unchanged.
+    TEST_ASSERT_FALSE(rb::host::writeSourcesFile(kFile, 1, nullptr, error, sizeof error));
+    TEST_ASSERT_EQUAL_STRING("uno\r\n# fin\n", readFile(kFile).c_str());
+}
+
+void test_an_empty_text_deletes_the_source_and_the_next_ones_move_up()
+{
+    EditRig rig;
+    rig.pressE(1);  // source 2: tnfs.example.cl
+    const MenuReply deleted = rig.type("");
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, deleted.action());
+    assert_line(deleted, rb::host::kMainMessage, line(" FUENTE 2 BORRADA"));
+    TEST_ASSERT_EQUAL_UINT(1, rig.sources.count());
+    TEST_ASSERT_EQUAL_STRING("localhost", rig.sources.name(2));
+    TEST_ASSERT_NULL(rig.sources.name(3));
+    std::array<uint8_t, 40> marked = textLine("2  localhost");
+    for (uint8_t& b : marked) {
+        b = static_cast<uint8_t>(b | 0x80);
+    }
+    assert_line(deleted, sourceLine(2), marked);  // the bar stays on the row
+    assert_line(deleted, sourceLine(3), textLine("3"));
+    TEST_ASSERT_EQUAL_STRING("# servidores del laboratorio\n\n  # otro\nlocalhost\n", readFile(kFile).c_str());
+    TEST_ASSERT_EQUAL_STRING("menu_source_deleted | source=2 name=tnfs.example.cl", rig.events.last.c_str());
+}
+
+void test_a_delete_that_cannot_be_written_keeps_the_source()
+{
+    EditRig rig{RB_TEST_MENU_DIR};  // reads kFile, but must write into a folder
+    rig.pressE(2);
+    const MenuReply failed = rig.type("");
+    assert_line(failed, rb::host::kMainMessage, line(" NO SE PUDO GUARDAR EL ARCHIVO"));
+    TEST_ASSERT_EQUAL_UINT(2, rig.sources.count());
+    TEST_ASSERT_EQUAL_STRING("localhost", rig.sources.name(3));
+    TEST_ASSERT_EQUAL_STRING(kOriginal, readFile(kFile).c_str());
+}
+
+void test_a_save_repeated_by_siov_deletes_one_source()
+{
+    EditRig rig;
+    rb::test::FakeClock clock;
+    rb::test::ScriptedSioTransport inner{clock};
+    rb::host::MenuSioTransport transport{inner, clock, *rig.controller};
+    rig.pressE(1);
+    for (uint8_t i = 0; i < rb::host::kMenuEditWidth; ++i) {
+        rig.controller->text(i, ' ');
+    }
+    std::array<uint8_t, 5> f{0x5A, 0x4B, rb::host::kMenuEditSave, 3 << 5 | 1, 0};
+    f[4] = rb::sio::sio_checksum(Span<const uint8_t>{f.data(), 4});
+    inner.push_frame(f);
+    inner.push_frame(f);  // the reply was lost: SIOV sends the same frame again
+    for (unsigned i = 0; i < 2; ++i) {
+        TEST_ASSERT_FALSE(transport.waitCommandFrame(20000).ok());
+    }
+    TEST_ASSERT_EQUAL_UINT(1, transport.stats().menuRetries);
+    TEST_ASSERT_EQUAL_UINT(1, rig.sources.count());
+    TEST_ASSERT_EQUAL_STRING("localhost", rig.sources.name(2));
+    TEST_ASSERT_EQUAL_STRING("# servidores del laboratorio\n\n  # otro\nlocalhost\n", readFile(kFile).c_str());
 }
 
 void test_e_on_source_1_or_without_a_file_says_why()
@@ -379,7 +450,11 @@ int main()
     RUN_TEST(test_source_2_is_added_on_an_empty_list);
     RUN_TEST(test_an_empty_row_below_the_last_takes_the_first_free_number);
     RUN_TEST(test_an_invalid_name_stays_in_the_field_and_changes_nothing);
-    RUN_TEST(test_esc_and_an_empty_text_change_nothing);
+    RUN_TEST(test_esc_and_an_empty_text_on_an_empty_row_change_nothing);
+    RUN_TEST(test_writing_no_name_removes_that_source_line_only);
+    RUN_TEST(test_an_empty_text_deletes_the_source_and_the_next_ones_move_up);
+    RUN_TEST(test_a_delete_that_cannot_be_written_keeps_the_source);
+    RUN_TEST(test_a_save_repeated_by_siov_deletes_one_source);
     RUN_TEST(test_e_on_source_1_or_without_a_file_says_why);
     RUN_TEST(test_a_file_that_cannot_be_written_says_so_and_keeps_the_source);
     RUN_TEST(test_text_command_gets_ack_and_complete_and_a_retry_writes_the_same);

@@ -800,7 +800,7 @@ void MenuController::startEdit()
     for (std::size_t i = 0; name != nullptr && name[i] != '\0' && i < editText_.size(); ++i) {
         editText_[i] = name[i];
     }
-    say(" RETURN GUARDA, ESC CANCELA");
+    say(" RETURN GUARDA, VACIO BORRA, ESC CANCELA");
 }
 
 void MenuController::text(uint8_t position, uint8_t ascii) noexcept
@@ -837,9 +837,8 @@ void MenuController::saveEdit()
     char name[kMenuEditWidth + 1];
     char detail[160];
     const std::size_t length = editedText(name);
-    if (length == 0) {  // empty: as Esc (clarify, 2026-11-19)
-        view_ = View::Main;
-        message_[0] = '\0';
+    if (length == 0) {
+        deleteSource();  // M44: an empty text deletes a configured source; on an empty row, as Esc
         return;
     }
     if (!MenuSources::validServer(name)) {
@@ -870,6 +869,39 @@ void MenuController::saveEdit()
     }
     std::snprintf(detail, sizeof detail, "source=%u name=%s", number, name);
     event("menu_source_saved", detail);
+}
+
+// M44 (menu-borrar-fuente): the source's line leaves --sources and the next
+// sources move up one number. Their links take the names now under their numbers.
+void MenuController::deleteSource()
+{
+    view_ = View::Main;
+    message_[0] = '\0';
+    const char* old = sources_.name(editSource_);
+    if (old == nullptr) {
+        return;  // an empty row: nothing to delete, as Esc
+    }
+    char name[MenuSources::kMaxName + 1];
+    std::snprintf(name, sizeof name, "%s", old);
+    char error[96];
+    char detail[160];
+    if (!writeSourcesFile(sourcesFile_, editSource_ - 2u, nullptr, error, sizeof error)) {
+        say(" NO SE PUDO GUARDAR EL ARCHIVO");
+        std::snprintf(detail, sizeof detail, "source=%u reason=%s", editSource_, error);
+        event("menu_source_rejected", detail);
+        return;
+    }
+    const unsigned last = static_cast<unsigned>(sources_.count()) + 1u;  // the old last number
+    sources_.remove(editSource_);
+    if (loader_ != nullptr) {
+        for (unsigned n = editSource_; n <= last; ++n) {
+            const char* now = sources_.name(n);
+            loader_->changeServer(n, now != nullptr ? now : "");
+        }
+    }
+    say(" FUENTE %u BORRADA", editSource_);
+    std::snprintf(detail, sizeof detail, "source=%u name=%s", editSource_, name);
+    event("menu_source_deleted", detail);
 }
 
 // ---------------------------------------------------------------------------

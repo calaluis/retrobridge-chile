@@ -122,6 +122,32 @@ void test_a_server_saved_with_e_is_the_one_the_next_opening_uses()
     std::remove(file);
 }
 
+void test_deleting_a_source_moves_the_next_servers_to_their_new_numbers()
+{
+    constexpr const char* file = RB_TEST_MENU_DIR "/sources-tnfs-delete.txt";
+    std::FILE* out = std::fopen(file, "wb");
+    TEST_ASSERT_NOT_NULL(out);
+    std::fputs("pulgarcito\nno-such-host\nsin-enlace\n", out);
+    std::fclose(out);
+    Rig rig;
+    rig.start();
+    rig.controller->setSourcesFile(file);
+    assert_title(rig.settle(K2), " FUENTE 2: /");  // the first session, with the old name
+    rig.settle(KESC);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionEdit, rig.controller->key(KE, 1).action());
+    for (uint8_t i = 0; i < rb::host::kMenuEditWidth; ++i) {
+        rig.controller->text(i, ' ');
+    }
+    assert_line(rig.controller->key(rb::host::kMenuEditSave), kMainMessage, " FUENTE 2 BORRADA");
+    // Source 2 is now the old source 3, source 3 the old source 4; both links take the new names.
+    rig.settle(K2);
+    TEST_ASSERT_EQUAL_INT(1, rig.link.renames.load());
+    TEST_ASSERT_EQUAL_STRING("no-such-host", rig.link.renamedTo);
+    TEST_ASSERT_EQUAL_INT(1, rig.unresolved.renames.load());
+    TEST_ASSERT_EQUAL_STRING("sin-enlace", rig.unresolved.renamedTo);
+    std::remove(file);
+}
+
 void test_e_on_source_1_says_it_is_local_and_source_1_is_unchanged()
 {
     Rig rig;
@@ -536,6 +562,7 @@ int main()
     RUN_TEST(test_the_poll_code_never_chooses_and_3e_chooses_s);
     RUN_TEST(test_e_on_source_1_says_it_is_local_and_source_1_is_unchanged);
     RUN_TEST(test_a_server_saved_with_e_is_the_one_the_next_opening_uses);
+    RUN_TEST(test_deleting_a_source_moves_the_next_servers_to_their_new_numbers);
     RUN_TEST(test_an_atr_chosen_for_d1_is_assigned_with_its_display_name_and_boots);
     RUN_TEST(test_a_load_longer_than_seven_seconds_shows_its_progress_and_mounts_on_d2);
     RUN_TEST(test_an_invalid_atr_is_refused_for_d3_and_its_slot_is_freed);

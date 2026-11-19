@@ -3,7 +3,7 @@ Independent firmware for Atari retro systems, initially supporting Atari XL/XE, 
 
 ## License
 
-Copyright (C) 2026 — copyright holder pending confirmation.
+Copyright (C) 2026 Luis Rodrigo Carrasco Lagos.
 
 RetroBridge Chile is free software: you can redistribute it and/or modify it under the terms of the
 GNU General Public License as published by the Free Software Foundation, **version 3 only**

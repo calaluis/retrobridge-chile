@@ -16,6 +16,7 @@ constexpr uint8_t kLeft = rb::host::kMenuNavLeft;
 constexpr uint8_t kRight = rb::host::kMenuNavRight;
 constexpr uint8_t kFire = rb::host::kMenuNavFire;
 constexpr uint8_t kReturn = 0x0C;
+constexpr uint8_t KD = 0x3A, KF = 0x38;  // Atari keyboard codes of D and F
 constexpr uint8_t kEquals = 0x0F;  // '=' without Control: a plain key
 
 // /OMS_ATR with `count` images G000.ATR..; `valid` is a real ATR.
@@ -592,9 +593,153 @@ void test_a_source_loading_from_the_main_screen_keeps_its_mark()
     assert_loading(loading, kMainMessage, "0");
     TEST_ASSERT_EQUAL_UINT(2, markedOf(loading, rb::host::kMainSources));
     TEST_ASSERT_EQUAL_UINT(0, markedOf(loading, rb::host::kMainDrives));
+    TEST_ASSERT_EQUAL_UINT8(0, loading.screen()[rb::host::kMenuCursor + 2]);  // no local bar while loading (N007)
     rig.gated.awaitHeld();
     rig.press(KESC);
     rig.gated.open();
+}
+
+// --- N007: the bar moves on the Atari; only RETURN, fire and a page change ask the host ---
+
+struct Block {
+    unsigned base, rows, row, paged;
+};
+
+Block blockOf(const MenuReply& reply)
+{
+    const uint8_t* b = reply.screen() + rb::host::kMenuCursor;
+    return {static_cast<unsigned>(b[0] | (b[1] << 8)), b[2], b[3], b[4]};
+}
+
+void assert_block(const MenuReply& reply, unsigned base, unsigned rows, unsigned row, unsigned paged)
+{
+    const Block b = blockOf(reply);
+    TEST_ASSERT_EQUAL_UINT(base, b.base);
+    TEST_ASSERT_EQUAL_UINT(rows, b.rows);
+    TEST_ASSERT_EQUAL_UINT(row, b.row);
+    TEST_ASSERT_EQUAL_UINT(paged, b.paged);
+}
+
+// The host tells the 6502 where the bar is and how far it may go on each screen.
+void test_every_shown_screen_carries_its_cursor_block()
+{
+    Rig rig;
+    addImages(rig, "/OMS_ATR", "G%03d.ATR", 205, 42);
+    rig.start();
+    assert_block(rig.settle(kRedraw), rb::host::kMainSources, 8, 0, 0);
+    const MenuReply oms = openOms(rig);
+    assert_block(oms, rb::host::kListEntries, 20, 0, 1);
+    assert_block(repeat(rig, kRight, 10), rb::host::kListEntries, 5, 0, 1);  // page 11: 5 rows
+    const MenuReply pick = rig.settle(kReturn);                               // G200.ATR
+    assert_block(pick, rb::host::kMainDrives, 8, 0, 0);
+    rig.settle(KESC);
+    rig.settle(KESC);  // back to the root of source 2
+    const MenuReply root = rig.settle(kRedraw);
+    TEST_ASSERT_EQUAL_UINT(0, blockOf(root).paged);  // one page: the edges stay on the Atari
+    // An empty folder has no bar; a load in progress neither.
+    const MenuReply empty = rig.settle(KD);  // VACIA/
+    assert_title(empty, " FUENTE 2: /VACIA");
+    TEST_ASSERT_EQUAL_UINT(0, blockOf(empty).rows);
+    rig.settle(KESC);
+    rig.gated.gate(tnfs::cmd::kStat);
+    const MenuReply loading = rig.press(KC);  // OMS_ATR/, the load waits
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionWait, loading.action());
+    TEST_ASSERT_EQUAL_UINT(0, blockOf(loading).rows);
+    rig.gated.awaitHeld();
+    rig.press(KESC);  // cancel
+    rig.gated.open();
+    // The local list too.
+    Rig local;
+    local.start();
+    assert_block(local.settle(K1), rb::host::kListEntries, 3, 0, 0);  // demo-dos, demo-uno, rota
+}
+
+// Moving inside a page asks the host nothing; RETURN asks once, with the row.
+void test_moves_inside_a_page_do_not_reach_the_host()
+{
+    Rig rig;
+    addImages(rig, "/OMS_ATR", "G%03d.ATR", 205, 42);
+    rig.start();
+    openOms(rig);
+    repeat(rig, kRight, 2);  // page 3
+    const unsigned before = rig.hostCalls;
+    const MenuReply down = repeat(rig, kDown, 19);
+    assert_marked(down, row(19), "T G059.ATR");
+    const MenuReply up = repeat(rig, kUp, 17);
+    assert_marked(up, row(2), "C G042.ATR");
+    TEST_ASSERT_EQUAL_UINT(before, rig.hostCalls);
+    const MenuReply pick = rig.settle(kFire);
+    TEST_ASSERT_EQUAL_UINT(before + 1, rig.hostCalls);
+    assert_line(pick, kMainMessage, " UNIDAD PARA: G042.ATR");
+    // The drive choice: moves on the Atari too.
+    repeat(rig, kDown, 3);
+    TEST_ASSERT_EQUAL_UINT(before + 1, rig.hostCalls);
+    rig.settle(kReturn);
+    TEST_ASSERT_EQUAL_STRING("G042.ATR", rig.controller->driveName(4));
+}
+
+// The edges: the host takes the row the bar was on, not the one it drew last.
+void test_an_edge_move_starts_from_the_row_the_atari_shows()
+{
+    Rig rig;
+    addImages(rig, "/OMS_ATR", "G%03d.ATR", 205, 42);
+    rig.start();
+    openOms(rig);
+    rig.settle(kRight);                       // page 2, the host draws row 0
+    repeat(rig, kDown, 19);                   // the Atari: row 19, the host still on 0
+    const MenuReply page3 = rig.settle(kDown);
+    assert_line(page3, kListMessage, " PAGINA 3 DE 11 (205)");
+    assert_marked(page3, row(0), "A G040.ATR");
+    rig.settle(KF);                           // the host: row 5 (G045)
+    rig.settle(KESC);                         // back from the drive choice, row 5 kept
+    repeat(rig, kUp, 5);                      // the Atari: row 0, the host still on 5
+    const MenuReply page2 = rig.settle(kUp);
+    assert_line(page2, kListMessage, " PAGINA 2 DE 11 (205)");
+    assert_marked(page2, row(19), "T G039.ATR");
+    // Page 1 has no page above: up from the top row leaves the bar there, not on the
+    // row the host drew last.
+    repeat(rig, kLeft, 1);
+    rig.settle(KF);
+    rig.settle(KESC);
+    repeat(rig, kUp, 5);
+    const MenuReply top = rig.settle(kUp);
+    assert_line(top, kListMessage, " PAGINA 1 DE 11 (205)");
+    assert_marked(top, row(0), "A G000.ATR");
+}
+
+// The confirm code itself: row n of the screen shown; a row off the screen does nothing.
+void test_a_confirmed_row_is_chosen_as_its_letter_and_off_rows_do_nothing()
+{
+    Rig byLetter;
+    addImages(byLetter, "/OMS_ATR", "G%03d.ATR", 205, 42);
+    byLetter.start();
+    openOms(byLetter);
+    byLetter.settle(kRight);
+    const MenuReply letter = byLetter.settle(KC);
+    Rig rig;
+    addImages(rig, "/OMS_ATR", "G%03d.ATR", 205, 42);
+    rig.start();
+    openOms(rig);
+    rig.settle(kRight);
+    const MenuReply confirmed = rig.rawPress(static_cast<uint8_t>(rb::host::kMenuConfirmRow + 2));
+    TEST_ASSERT_TRUE(sameScreen(letter, confirmed));
+    rig.settle(KESC);
+    const MenuReply last = repeat(rig, kRight, 9);  // page 11: 5 rows
+    TEST_ASSERT_TRUE(sameScreen(last, rig.rawPress(static_cast<uint8_t>(rb::host::kMenuConfirmRow + 5))));
+    TEST_ASSERT_TRUE(sameScreen(last, rig.rawPress(static_cast<uint8_t>(rb::host::kMenuConfirmRow + 19))));
+    // The local list: 3 images, so row 3 is not on the screen.
+    Rig local;
+    local.start();
+    const MenuReply images = local.settle(K1);
+    TEST_ASSERT_TRUE(sameScreen(images, local.rawPress(static_cast<uint8_t>(rb::host::kMenuConfirmRow + 3))));
+    // The main screen: row 2 is source 3, as '3'; row 8 is not a source.
+    Rig main;
+    main.start();
+    const MenuReply top = main.settle(kRedraw);
+    TEST_ASSERT_TRUE(sameScreen(top, main.rawPress(static_cast<uint8_t>(rb::host::kMenuConfirmRow + 8))));
+    Rig three;
+    three.start();
+    TEST_ASSERT_TRUE(sameScreen(three.settle(K3), main.rawPress(static_cast<uint8_t>(rb::host::kMenuConfirmRow + 2))));
 }
 
 int main()
@@ -621,6 +766,10 @@ int main()
     RUN_TEST(test_d2_chosen_with_the_cursor_mounts_as_the_letter_and_2);
     RUN_TEST(test_a_local_image_goes_to_the_drive_under_the_cursor);
     RUN_TEST(test_unmount_with_the_cursor);
+    RUN_TEST(test_every_shown_screen_carries_its_cursor_block);
+    RUN_TEST(test_moves_inside_a_page_do_not_reach_the_host);
+    RUN_TEST(test_an_edge_move_starts_from_the_row_the_atari_shows);
+    RUN_TEST(test_a_confirmed_row_is_chosen_as_its_letter_and_off_rows_do_nothing);
     RUN_TEST(test_a_source_loading_from_the_main_screen_keeps_its_mark);
     return UNITY_END();
 }

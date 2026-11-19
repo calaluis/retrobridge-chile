@@ -35,6 +35,16 @@ constexpr uint8_t kKeyReturn = 0x0C;
 constexpr std::size_t kPageRows = TnfsFolder::kPageRows;
 
 bool isNavigation(uint8_t code) noexcept { return code >= kMenuNavUp && code <= kMenuNavFire; }
+// RETURN or fire on a row of the local cursor (N007): kMenuConfirmRow + row.
+bool isConfirmRow(uint8_t code) noexcept
+{
+    return code >= kMenuConfirmRow && code < kMenuConfirmRow + kListMaxEntries;
+}
+static_assert(kMenuConfirmRow > kMenuNavFire && kMenuConfirmRow + kListMaxEntries <= kMenuPollKey,
+              "confirm codes apart from keys, moves, poll and redraw");
+static_assert(kMenuCursor >= kListMessage + kMenuLineWidth && kMenuCursor >= kMainMessage + kMenuLineWidth &&
+                  kMenuCursor + 5 <= kMenuScreenSize,
+              "the cursor block past every layout");
 bool isConfirm(uint8_t key) noexcept { return key == kKeyReturn || key == kMenuNavFire; }
 
 // Marks one 40-column line of the screen in inverse video, edge to edge.
@@ -254,6 +264,14 @@ MenuReply MenuController::key(uint8_t code)
     if (code == kMenuNoKey || code == kMenuPollKey) {
         return render(kMenuActionShow);
     }
+    // RETURN or fire on a row the 6502 marked by itself (N007): the cursor goes there
+    // first, then it is RETURN on the marked row. A row not on the screen does nothing.
+    if (isConfirmRow(code)) {
+        if (!selectRow(static_cast<unsigned>(code - kMenuConfirmRow))) {
+            return render(kMenuActionShow);
+        }
+        code = kKeyReturn;
+    }
     // $40-$44 (arrows, joystick, fire) are compared before the mask too: they are not keys
     // of the keyboard matrix, and the mask would turn them into $00-$04 (plan §8, point 2).
     const uint8_t key = isNavigation(code) ? code : code & kMenuKeyMask;  // Shift and Control do not change it
@@ -389,20 +407,20 @@ MenuController::EntryIndex MenuController::listKey(Cursor& cursor, std::size_t c
         return kNoEntry;  // nothing marked: moves, RETURN and fire do nothing
     }
     const std::size_t pages = (count + kPageRows - 1) / kPageRows;
-    const std::size_t rows = std::min(kPageRows, count - cursor.page * kPageRows);  // on this page
+    const std::size_t rows = pageRows(cursor, count);
     switch (key) {
     case kMenuNavUp:
-        if (cursor.row > 0) {
-            --cursor.row;
-        } else if (cursor.page > 0) {
+        // The 6502 moves inside the page by itself and sends up only from the top row, and
+        // down only from the bottom one (N007): the host's row may be older than the bar.
+        cursor.row = 0;
+        if (cursor.page > 0) {
             --cursor.page;
             cursor.row = static_cast<uint8_t>(kPageRows - 1);
         }
         return kNoEntry;
     case kMenuNavDown:
-        if (cursor.row + 1u < rows) {
-            ++cursor.row;
-        } else if (cursor.page + 1u < pages) {
+        cursor.row = static_cast<uint8_t>(rows - 1);
+        if (cursor.page + 1u < pages) {
             ++cursor.page;
             cursor.row = 0;
         }
@@ -431,6 +449,56 @@ MenuController::EntryIndex MenuController::listKey(Cursor& cursor, std::size_t c
     }
     cursor.row = static_cast<uint8_t>(letter);
     return static_cast<EntryIndex>(cursor.page * kPageRows + cursor.row);
+}
+
+std::size_t MenuController::pageRows(const Cursor& cursor, std::size_t count) noexcept
+{
+    return count == 0 ? 0 : std::min(kPageRows, count - cursor.page * kPageRows);
+}
+
+bool MenuController::paged(std::size_t count) noexcept { return count > kPageRows; }
+
+void MenuController::cursorBlock(uint8_t* screen, unsigned base, std::size_t rows, unsigned row, bool paged) noexcept
+{
+    uint8_t* block = screen + kMenuCursor;
+    block[0] = static_cast<uint8_t>(base & 0xFF);
+    block[1] = static_cast<uint8_t>(base >> 8);
+    block[2] = static_cast<uint8_t>(rows);
+    block[3] = static_cast<uint8_t>(rows == 0 ? 0 : row);
+    block[4] = paged && rows != 0 ? 1 : 0;
+}
+
+bool MenuController::selectRow(unsigned row) noexcept
+{
+    switch (view_) {
+    case View::Main:
+        if (row >= kDrives) {
+            return false;
+        }
+        sourceLine_ = static_cast<uint8_t>(row);
+        return true;
+    case View::Pick:
+    case View::Unmount:
+    case View::FolderPick:
+        if (row >= kDrives) {
+            return false;
+        }
+        driveLine_ = static_cast<uint8_t>(row);
+        return true;
+    case View::List:
+        if (row >= pageRows(listCursor_, catalog_.count())) {
+            return false;
+        }
+        listCursor_.row = static_cast<uint8_t>(row);
+        return true;
+    case View::Folder:
+        if (row >= pageRows(folderCursor_, folder_.count())) {
+            return false;
+        }
+        folderCursor_.row = static_cast<uint8_t>(row);
+        return true;
+    }
+    return false;
 }
 
 void MenuController::markRow(uint8_t* screen, const Cursor& cursor, std::size_t count) noexcept
@@ -607,6 +675,10 @@ MenuReply MenuController::render(uint8_t action) const noexcept
         reply.bytes[1] = kMenuLayoutList;
         std::memcpy(screen, kMenuListTemplate, kMenuScreenSize);
         renderFolder(screen, text, sizeof text);
+        if (action == kMenuActionShow && job_ == Job::None) {
+            cursorBlock(screen, kListEntries, pageRows(folderCursor_, folder_.count()), folderCursor_.row,
+                        paged(folder_.count()));
+        }
         return reply;
     }
     if (view_ == View::List) {
@@ -620,6 +692,10 @@ MenuReply MenuController::render(uint8_t action) const noexcept
             put(screen, static_cast<unsigned>(kListEntries + i * kMenuLineWidth), kMenuLineWidth, text, true);
         }
         markRow(screen, listCursor_, catalog_.count());
+        if (action == kMenuActionShow) {
+            cursorBlock(screen, kListEntries, pageRows(listCursor_, catalog_.count()), listCursor_.row,
+                        paged(catalog_.count()));
+        }
         // The total: the names kept, or every .atr seen once the catalog is full.
         const std::size_t total = catalog_.count() < MenuCatalog::kMaxEntries ? catalog_.count() : catalog_.atrSeen();
         char page[TnfsFolder::kNoticeSize];
@@ -647,10 +723,13 @@ MenuReply MenuController::render(uint8_t action) const noexcept
         put(screen, kMainDrives + (n - 1) * kMenuLineWidth, kMenuLineWidth, text, true);
     }
     put(screen, kMainTape, kMenuLineWidth, "C: SIN CINTA", true);
+    const bool local = action == kMenuActionShow && job_ == Job::None;  // the 6502 moves the bar (N007)
     if (view_ == View::Main) {
         invert(screen, kMainSources + sourceLine_ * kMenuLineWidth);
+        cursorBlock(screen, kMainSources, local ? kDrives : 0, sourceLine_, false);
     } else {  // Pick, FolderPick, Unmount: the drive under the cursor
         invert(screen, kMainDrives + driveLine_ * kMenuLineWidth);
+        cursorBlock(screen, kMainDrives, local ? kDrives : 0, driveLine_, false);
     }
     if (job_ != Job::None) {
         std::snprintf(text, sizeof text, " CARGANDO %u%%", static_cast<unsigned>(percent_));

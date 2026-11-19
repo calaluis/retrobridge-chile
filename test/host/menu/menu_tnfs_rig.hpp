@@ -285,10 +285,77 @@ struct Rig {
         controller->service();
     }
 
-    // One 'K' round trip: timed, and without any allocation on the menu thread
-    // (ADR-011), whether it starts, polls, ends or cancels a job.
+    rb::host::MenuReply shown;  // the screen the Atari shows (with the moves done there)
+    unsigned hostCalls = 0;      // 'K' round trips, the moves done on the Atari not counted
+
+    // What the 6502 does with a code before it sends it (tools/make_menu.py, N007): on a
+    // shown screen with a local cursor, up and down move the bar there; RETURN and fire send
+    // kMenuConfirmRow + row; at an edge, and for left and right, the host is asked only when
+    // the list has more pages. false: done on the Atari, nothing sent.
+    bool atari(uint8_t& code)
+    {
+        uint8_t* block = shown.bytes.data() + 2 + rb::host::kMenuCursor;
+        const unsigned rows = block[2];
+        if (shown.action() != rb::host::kMenuActionShow || rows == 0) {
+            return true;
+        }
+        const unsigned base = block[0] | (block[1] << 8);
+        uint8_t& row = block[3];
+        const auto flip = [&] {
+            uint8_t* line = shown.bytes.data() + 2 + base + row * 40u;
+            for (unsigned i = 0; i < 40; ++i) {
+                line[i] = static_cast<uint8_t>(line[i] ^ 0x80);
+            }
+        };
+        bool edge = false;
+        switch (code) {
+        case rb::host::kMenuNavUp:
+            edge = row == 0;
+            if (!edge) {
+                flip();
+                --row;
+                flip();
+            }
+            break;
+        case rb::host::kMenuNavDown:
+            edge = row + 1u >= rows;
+            if (!edge) {
+                flip();
+                ++row;
+                flip();
+            }
+            break;
+        case rb::host::kMenuNavLeft:
+        case rb::host::kMenuNavRight:
+            edge = true;
+            break;
+        case rb::host::kMenuNavFire:
+            code = static_cast<uint8_t>(rb::host::kMenuConfirmRow + row);
+            return true;
+        default:
+            if (code != rb::host::kMenuNoKey && code != rb::host::kMenuPollKey && (code & 0x3F) == 0x0C) {
+                code = static_cast<uint8_t>(rb::host::kMenuConfirmRow + row);  // RETURN, also with Shift
+            }
+            return true;
+        }
+        return edge && block[4] != 0;
+    }
+
+    // One code from the Atari: done there when the 6502 does it by itself (shown, no host
+    // call), else one 'K' round trip (rawPress).
     MenuReply press(uint8_t code)
     {
+        if (!atari(code)) {
+            return shown;
+        }
+        return rawPress(code);
+    }
+
+    // One 'K' round trip: timed, and without any allocation on the menu thread
+    // (ADR-011), whether it starts, polls, ends or cancels a job.
+    MenuReply rawPress(uint8_t code)
+    {
+        ++hostCalls;
         const auto begin = std::chrono::steady_clock::now();
         t_allocations = 0;
         t_counting = true;
@@ -299,6 +366,7 @@ struct Rig {
         TEST_ASSERT_TRUE(reply.action() <= rb::host::kMenuActionWait);
         TEST_ASSERT_EQUAL_UINT_MESSAGE(0, t_allocations, "key() allocated on the menu thread");
         step();
+        shown = reply;
         return reply;
     }
 

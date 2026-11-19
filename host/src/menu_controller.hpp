@@ -165,6 +165,16 @@ private:
     // changes the cursor and returns kNoEntry.
     static EntryIndex listKey(Cursor& cursor, std::size_t count, uint8_t key) noexcept;
     static void markRow(uint8_t* screen, const Cursor& cursor, std::size_t count) noexcept;
+    // Rows of the page the cursor is on (0 for an empty list) and whether there is more
+    // than one page: what the 6502 needs to move the bar by itself (N007).
+    static std::size_t pageRows(const Cursor& cursor, std::size_t count) noexcept;
+    static bool paged(std::size_t count) noexcept;
+    // The local cursor block at kMenuCursor: base of row 0, rows, marked row, paged.
+    // rows 0: the 6502 sends every move to the host, as before N007.
+    static void cursorBlock(uint8_t* screen, unsigned base, std::size_t rows, unsigned row, bool paged) noexcept;
+    // RETURN or fire on row `row` of the local cursor (kMenuConfirmRow + row): the
+    // cursor of the shown screen goes there. false if the row is not on the screen.
+    bool selectRow(unsigned row) noexcept;
     // Up and down move `line` (0..7) on the main screen; left and right are taken and do
     // nothing there. false for any other key.
     static bool moveLine(uint8_t& line, uint8_t key) noexcept;

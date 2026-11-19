@@ -62,6 +62,13 @@ LINE_WIDTH = 40
 TITLE_WIDTH = 20             # ANTIC modes 6 and 7: 20 characters per line
 SCREEN_SIZE = 960            # the largest layout (900 bytes) rounded to 24 lines
 REPLY_SIZE = 2 + SCREEN_SIZE  # action, layout, screen
+# Local cursor (menu-navegacion N007): five bytes at the end of the screen buffer, past every
+# layout, that no display list shows. Base of row 0 (screen offset, low and high), rows
+# (0: no local cursor), marked row, paged (1: the edges and left/right ask the host).
+CURSOR_AT, CURSOR_SIZE = SCREEN_SIZE - 5, 5
+CONFIRM_ROW = 0xC0           # RETURN or fire on a local cursor: CONFIRM_ROW + marked row (Control+Shift
+                             # range, so Shift+digit from an older program stays a key)
+KEY_RETURN = 0x0C
 
 ACTION_SHOW, ACTION_BOOT, ACTION_WAIT = 0, 1, 2
 LAYOUT_MAIN, LAYOUT_LIST = 0, 1
@@ -254,10 +261,11 @@ def menu_program():
         b"\xC9\xFF",                                  # CMP #$FF
         b"\xF0", ("rel", "key"),                      # BEQ key (nothing from the joystick)
         ("label", "send_nav"),
-        b"\x4C", ("abs", "send"),                     # JMP send (A = code)
+        b"\x4C", ("abs", "local"),                    # JMP local (the local cursor, N007)
         ("label", "boot"),
         abs_op(0x4C, COLDSV),                         # JMP COLDSV: boot what the host put on D1
         ("label", "nohost"),
+        b"\xA9\x00", b"\x8D", ("abs", "cur_count"),   # no local bar on the stale screen (N007)
         b"\xA2", bytes([LINE_WIDTH - 1]),             # LDX #39
         ("label", "copy"),
         b"\xBD", ("abs", "nohost_text"),              # LDA nohost_text,X
@@ -268,6 +276,78 @@ def menu_program():
         b"\x4C", ("abs", "key"),                      # JMP key
         ("label", "init"),
         b"\x60",                                      # RTS (DOSINI)
+        # send_nav: A = code. While a screen is shown (action 0) with a local cursor, up and
+        # down move the bar here, with no SIO; RETURN and fire send CONFIRM_ROW + row. At an
+        # edge, and for left and right, the host is asked only when the list has more pages.
+        ("label", "local"),
+        b"\xAC", ("abs", "action"),                   # LDY action
+        b"\xD0", ("rel", "ln_send"),                  # BNE ln_send (the wait: the host owns it)
+        b"\xAC", ("abs", "cur_count"),                # LDY cur_count
+        b"\xF0", ("rel", "ln_send"),                  # BEQ ln_send (no local cursor)
+        bytes([0xC9, NAV_UP]), b"\xD0", ("rel", "ln_down"),
+        b"\xAC", ("abs", "cur_row"),                  # LDY cur_row
+        b"\xF0", ("rel", "ln_edge"),                  # BEQ ln_edge (top row)
+        b"\x20", ("abs", "flip"),                     # JSR flip (unmark)
+        b"\xCE", ("abs", "cur_row"),                  # DEC cur_row
+        b"\x4C", ("abs", "ln_mark"),                  # JMP ln_mark
+        ("label", "ln_down"),
+        bytes([0xC9, NAV_DOWN]), b"\xD0", ("rel", "ln_side"),
+        b"\xAD", ("abs", "cur_row"),                  # LDA cur_row
+        b"\x18", b"\x69\x01",                         # CLC / ADC #1
+        b"\xCD", ("abs", "cur_count"),                # CMP cur_count
+        b"\x90", ("rel", "ln_next"),                  # BCC ln_next (a row below)
+        bytes([0xA9, NAV_DOWN]),                      # LDA #NAV_DOWN (bottom row)
+        b"\xD0", ("rel", "ln_edge"),                  # BNE ln_edge (always)
+        ("label", "ln_next"),
+        b"\x20", ("abs", "flip"),                     # JSR flip (unmark)
+        b"\xEE", ("abs", "cur_row"),                  # INC cur_row
+        ("label", "ln_mark"),
+        b"\x20", ("abs", "flip"),                     # JSR flip (mark)
+        b"\x4C", ("abs", "key"),                      # JMP key (moved: nothing to send)
+        ("label", "ln_side"),
+        bytes([0xC9, NAV_LEFT]), b"\xF0", ("rel", "ln_edge"),
+        bytes([0xC9, NAV_RIGHT]), b"\xF0", ("rel", "ln_edge"),
+        bytes([0xC9, NAV_FIRE]), b"\xF0", ("rel", "ln_ok"),
+        bytes([0xC9, KEY_RETURN]), b"\xD0", ("rel", "ln_send"),
+        ("label", "ln_ok"),
+        b"\xAD", ("abs", "cur_row"),                  # LDA cur_row
+        b"\x18", bytes([0x69, CONFIRM_ROW]),          # CLC / ADC #CONFIRM_ROW
+        b"\xD0", ("rel", "ln_send"),                  # BNE ln_send (always: not 0)
+        ("label", "ln_edge"),
+        b"\xAC", ("abs", "cur_paged"),                # LDY cur_paged
+        b"\xD0", ("rel", "ln_send"),                  # BNE ln_send (another page: ask)
+        b"\x4C", ("abs", "key"),                      # JMP key (one page: nothing to do)
+        ("label", "ln_send"),
+        b"\x4C", ("abs", "send"),                     # JMP send (A = code)
+        # flip: inverts the 40 bytes of the marked row (screen + base + row * 40).
+        ("label", "flip"),
+        b"\x18",                                      # CLC
+        b"\xAD", ("abs", "cur_base"),                 # LDA cur_base
+        b"\x69", ("lo", "screen"),                    # ADC #<screen
+        b"\x8D", ("abs", "fl_ld"), b"\x8D", ("abs", "fl_st"),
+        b"\xAD", ("abs", "cur_base_hi"),              # LDA cur_base+1
+        b"\x69", ("hi", "screen"),                    # ADC #>screen
+        b"\x8D", ("abs", "fl_ld_hi"), b"\x8D", ("abs", "fl_st_hi"),
+        b"\xAD", ("abs", "cur_row"),                  # LDA cur_row
+        b"\xAA",                                      # TAX
+        b"\xF0", ("rel", "fl_go"),                    # BEQ fl_go (row 0)
+        ("label", "fl_mul"),
+        b"\x18", b"\xAD", ("abs", "fl_ld"),            # CLC / LDA fl_ld
+        bytes([0x69, LINE_WIDTH]),                    # ADC #40
+        b"\x8D", ("abs", "fl_ld"), b"\x8D", ("abs", "fl_st"),
+        b"\xAD", ("abs", "fl_ld_hi"), b"\x69\x00",     # LDA fl_ld+1 / ADC #0
+        b"\x8D", ("abs", "fl_ld_hi"), b"\x8D", ("abs", "fl_st_hi"),
+        b"\xCA",                                      # DEX
+        b"\xD0", ("rel", "fl_mul"),                   # BNE fl_mul
+        ("label", "fl_go"),
+        b"\xA2", bytes([LINE_WIDTH - 1]),             # LDX #39
+        ("label", "fl_loop"),
+        b"\xBD", ("label", "fl_ld"), ("lo", "screen"), ("label", "fl_ld_hi"), ("hi", "screen"),  # LDA row,X
+        b"\x49\x80",                                  # EOR #$80
+        b"\x9D", ("label", "fl_st"), ("lo", "screen"), ("label", "fl_st_hi"), ("hi", "screen"),  # STA row,X
+        b"\xCA",                                      # DEX
+        b"\x10", ("rel", "fl_loop"),                  # BPL fl_loop
+        b"\x60",                                      # RTS
         # joy: A = the code the joystick asks to send now, or $FF. Keeps X.
         ("label", "joy"),
         abs_op(0xAD, STRIG0),                         # LDA STRIG0 (0: pressed)
@@ -352,6 +432,8 @@ def menu_program():
         "main_status": MAIN_STATUS, "main_message": MAIN_MESSAGE, "main_footer": MAIN_FOOTER,
         "list_title": LIST_TITLE, "list_entries": LIST_ENTRIES, "list_footer": LIST_FOOTER,
         "list_message": LIST_MESSAGE,
+        "cur_base": CURSOR_AT, "cur_base_hi": CURSOR_AT + 1, "cur_count": CURSOR_AT + 2,
+        "cur_row": CURSOR_AT + 3, "cur_paged": CURSOR_AT + 4,
     }
     sizes = {"lo": 1, "hi": 1, "abs": 2, "rel": 1}
 
@@ -406,6 +488,7 @@ def render_include(block: bytes, labels: dict) -> str:
         "kMainTape": MAIN_TAPE, "kMainFooter": MAIN_FOOTER, "kMainMessage": MAIN_MESSAGE,
         "kListTitle": LIST_TITLE, "kListEntries": LIST_ENTRIES, "kListMaxEntries": LIST_MAX_ENTRIES,
         "kListFooter": LIST_FOOTER, "kListMessage": LIST_MESSAGE,
+        "kMenuCursor": CURSOR_AT, "kMenuConfirmRow": CONFIRM_ROW,
     }
     lines = [
         "// Generated by tools/make_menu.py (Issues #38 and #40, menu-tnfs). Do not edit: regenerate with",

@@ -149,6 +149,8 @@ class Menu6502:
                 self.mem[ab] = self.y; pc += 3
             elif op == 0x29:
                 self.a &= imm; self.flags(self.a); pc += 2
+            elif op == 0x49:
+                self.a ^= imm; self.flags(self.a); pc += 2
             elif op == 0xAA:
                 self.x = self.a; self.flags(self.x); pc += 1
             elif op == 0xCA:
@@ -224,8 +226,36 @@ class Menu6502:
 
 
 def host_reply(action: int, layout: int, marker: int = 0x21) -> bytes:
-    screen = bytes([marker]) * make_menu.SCREEN_SIZE
-    return bytes([action, layout]) + screen
+    screen = bytearray([marker]) * make_menu.SCREEN_SIZE
+    screen[make_menu.CURSOR_AT:make_menu.CURSOR_AT + make_menu.CURSOR_SIZE] = bytes(make_menu.CURSOR_SIZE)  # no cursor
+    return bytes([action, layout]) + bytes(screen)
+
+
+def cursor_reply(count: int, row: int, paged: int, base: int = None, action: int = 0) -> bytes:
+    """A list screen with the local cursor (menu-navegacion N007): `count` rows from `base`,
+    `row` marked in inverse video as the host draws it."""
+    base = make_menu.LIST_ENTRIES if base is None else base
+    screen = bytearray(make_menu.SCREEN_SIZE)
+    for n in range(count):
+        screen[base + n * 40:base + n * 40 + 40] = bytes([0x21 + n]) * 40
+    screen[base + row * 40:base + row * 40 + 40] = bytes([(0x21 + row) | 0x80]) * 40
+    at = make_menu.CURSOR_AT
+    screen[at:at + make_menu.CURSOR_SIZE] = bytes([base & 0xFF, base >> 8, count, row, paged])
+    return bytes([action, 1]) + bytes(screen)
+
+
+def marked_rows(screen: bytes, count: int, base: int = None):
+    """The rows whose 40 bytes are all in inverse video; a half-marked row fails."""
+    base = make_menu.LIST_ENTRIES if base is None else base
+    rows = []
+    for n in range(count):
+        line = screen[base + n * 40:base + n * 40 + 40]
+        inverse = sum(1 for b in line if b & 0x80)
+        assert inverse in (0, 40), f"row {n} half in inverse video"
+        if inverse == 40:
+            assert all((b & 0x7F) == 0x21 + n for b in line), f"row {n} text changed"
+            rows.append(n)
+    return rows
 
 
 KEY_1, KEY_A, KEY_ESC = 0x1F, 0x3F, 0x1C
@@ -323,7 +353,7 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual((call["buffer"], call["length"]), (self.labels["reply"], 962))
         self.assertEqual(call["timeout"], make_menu.MENU_TIMEOUT_S)
         self.assertEqual(cpu.word(make_menu.SDLSTL), self.labels["dl_main"])
-        self.assertEqual(cpu.screen(), bytes([0x21]) * make_menu.SCREEN_SIZE)
+        self.assertEqual(cpu.screen(), host_reply(0, 0)[2:])
 
     def test_each_key_is_sent_as_its_keyboard_code(self):
         cpu = Menu6502(self.block, [KEY_1, KEY_ESC, KEY_A | 0x40], lambda dcb: host_reply(0, 0))
@@ -412,6 +442,14 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(cpu.screen()[message - 1], 0x21)  # nothing else was overwritten
         self.assertEqual(cpu.screen()[message + 40], 0x21)
 
+    def test_no_answer_turns_the_local_cursor_off(self):
+        # A list with the bar, then no answer: the arrows go to the host again, nothing flips.
+        replies = [cursor_reply(5, 0, 0), None, None]
+        cpu = Menu6502(self.block, [KEY_1, 0x8F], lambda dcb: replies.pop(0) if replies else None)
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        self.assertEqual([c["aux1"] for c in cpu.siov_calls], [0xFF, KEY_1, make_menu.NAV_DOWN])
+        self.assertEqual(cpu.screen()[make_menu.CURSOR_AT + 2], 0)
+
     # --- menu-navegacion (N001): arrows, joystick of port 1, fire ---
 
     def test_control_arrows_are_sent_as_navigation_codes(self):
@@ -496,6 +534,76 @@ class MenuProgramTest(unittest.TestCase):
         sends = self.joystick_sends(joy, 10, action=2)
         self.assertEqual(sends[0][0], make_menu.NAV_DOWN)
         self.assertLess(sends[0][1], 15)  # before the 15-frame poll
+
+    # --- N007: the cursor moves on the Atari; only RETURN, fire and a page change ask the host.
+
+    def local_run(self, keys, reply):
+        cpu = Menu6502(self.block, keys, lambda dcb: reply)
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        return cpu, [c["aux1"] for c in cpu.siov_calls[1:]]
+
+    def test_up_and_down_move_the_bar_without_asking_the_host(self):
+        cpu, sent = self.local_run([0x8F, 0x8F, 0x8F, 0x8E], cursor_reply(5, 0, 1))
+        self.assertEqual(sent, [])
+        self.assertEqual(marked_rows(cpu.screen(), 5), [2])
+        self.assertEqual(cpu.screen()[make_menu.CURSOR_AT + 3], 2)
+
+    def test_return_and_fire_send_the_marked_row(self):
+        # Each answer draws row 1 again, so the second RETURN (with Shift) sends row 1.
+        cpu, sent = self.local_run([0x8F, 0x8F, 0x0C, 0x4C], cursor_reply(5, 1, 0))
+        self.assertEqual(sent, [make_menu.CONFIRM_ROW + 3, make_menu.CONFIRM_ROW + 1])
+        cpu, sent = self.local_run([0x8F], cursor_reply(20, 18, 0))
+        self.assertEqual(marked_rows(cpu.screen(), 20), [19])
+
+    def test_the_edges_ask_the_host_only_when_there_are_more_pages(self):
+        _, sent = self.local_run([0x8E, 0x86, 0x87], cursor_reply(5, 0, 1))
+        self.assertEqual(sent, [make_menu.NAV_UP, make_menu.NAV_LEFT, make_menu.NAV_RIGHT])
+        _, sent = self.local_run([0x8F], cursor_reply(5, 4, 1))
+        self.assertEqual(sent, [make_menu.NAV_DOWN])
+        cpu, sent = self.local_run([0x8E, 0x86, 0x87, 0x8F, 0x8F, 0x8F, 0x8F, 0x8F], cursor_reply(3, 0, 0))
+        self.assertEqual(sent, [])
+        self.assertEqual(marked_rows(cpu.screen(), 3), [2])
+
+    def test_the_main_screen_cursor_runs_from_its_own_base(self):
+        base = make_menu.MAIN_SOURCES
+        cpu, sent = self.local_run([0x8F, 0x8F], cursor_reply(8, 0, 0, base=base))
+        self.assertEqual(sent, [])
+        self.assertEqual(marked_rows(cpu.screen(), 8, base=base), [2])
+        _, sent = self.local_run([0x8F, 0x8F, 0x0C], cursor_reply(8, 0, 0, base=base))
+        self.assertEqual(sent, [make_menu.CONFIRM_ROW + 2])
+
+    def test_letters_esc_and_digits_still_go_to_the_host(self):
+        _, sent = self.local_run([KEY_A, KEY_ESC, KEY_1], cursor_reply(5, 0, 0))
+        self.assertEqual(sent, [KEY_A, KEY_ESC, KEY_1])
+
+    def test_no_cursor_and_the_wait_send_every_move_as_before(self):
+        _, sent = self.local_run([0x8F, 0x0C], host_reply(0, 1))
+        self.assertEqual(sent, [make_menu.NAV_DOWN, 0x0C])
+        # During the wait (action 2) the host owns every move, as before.
+        replies = [cursor_reply(5, 0, 0, action=2)] + [host_reply(0, 1)] * 5
+        cpu = Menu6502(self.block, [], lambda dcb: replies.pop(0))
+        cpu.wait_key = (2, 0x8F)
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        self.assertEqual(cpu.siov_calls[1]["aux1"], make_menu.NAV_DOWN)
+
+    def test_the_joystick_moves_the_bar_locally(self):
+        down = lambda frame: (13, 1) if 2 <= frame < 4 else (15, 0) if 6 <= frame < 8 else (15, 1)  # noqa: E731
+        cpu = Menu6502(self.block, [], lambda dcb: cursor_reply(5, 0, 0))
+        cpu.joy, cpu.joy_until = down, 20
+        try:
+            cpu.run(max_steps=20 * STEPS_PER_FRAME + 20000)
+        except Halt:
+            pass
+        self.assertEqual([c["aux1"] for c in cpu.siov_calls[1:]], [make_menu.CONFIRM_ROW + 1])
+
+    def test_the_cursor_block_fits_after_every_layout_and_codes_stay_clear(self):
+        end = make_menu.CURSOR_AT + make_menu.CURSOR_SIZE
+        self.assertLessEqual(end, make_menu.SCREEN_SIZE)
+        self.assertGreaterEqual(make_menu.CURSOR_AT, max(make_menu.MAIN_END, make_menu.LIST_END))
+        codes = range(make_menu.CONFIRM_ROW, make_menu.CONFIRM_ROW + make_menu.LIST_MAX_ENTRIES)
+        self.assertGreater(min(codes), make_menu.NAV_FIRE)
+        self.assertLess(max(codes), make_menu.POLL)
+        self.assertEqual(self.labels["cur_base"], self.labels["screen"] + make_menu.CURSOR_AT)
 
     def test_committed_include_matches_the_generator(self):
         include = REPO / "host" / "src" / "menu_program.inc"

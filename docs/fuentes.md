@@ -2,7 +2,7 @@
 
 Cada PR agrega aquí las fuentes nuevas que consultó. Solo se registra documentación pública de protocolos,
 especificaciones de hardware y documentación oficial. No se consulta código fuente de FujiNet ni de otros
-emuladores de periféricos SIO.
+emuladores de periféricos SIO. Única excepción: el código propio del responsable (ADR-012, enmienda 1).
 
 | Fecha | Hito | Fuente | Para qué se usó |
 |---|---|---|---|
@@ -67,3 +67,4 @@ emuladores de periféricos SIO.
 | 2026-11-20 | menu-xex (plan y X001) | Gury, *Atari 8-bit file formats: EXE/XEX*, https://gury.atari8.info/refs/file_formats_exe.php (consultado el 2026-11-20); lo mismo dice la documentación de cc65 sobre el formato de carga del Atari | Formato `.xex`: cabecera `$FFFF`, segmentos inicio/fin/datos, `INITAD` (`$02E2`) llamado tras cada segmento y `RUNAD` (`$02E0`) al final; cargador 6502 propio (ADR-012) |
 | 2026-11-20 | menu-xex (X001) | Avery Lee, *Altirra Hardware Reference Manual*, edición 2026-01-02, §2.6 «Bank switching», «ROM control» (ya registrado el 2026-10-23) | `PORTB` (`$D301`) bit 1: un 0 enciende el BASIC del XL/XE; el cargador lo pone a 1 |
 | 2026-11-20 | menu-xex (X006) | Ninguna: no se encontró una fuente que describa el relleno de una transferencia XMODEM en un `.xex` | Relleno final aceptado (desviación 3 del plan): tolerancia propia, anotada como tal en ADR-017 enmienda 11 |
+| 2026-11-20 | ADR-012 enmienda 1 | Código propio del responsable en FujiNetWIFI/fujinet-firmware (GPL-3.0, sin CLA): PR #1722 (merge e7c81e0; commit 2737b90), #1756 (0d40344; 6ea2070, 5180b1d, 947a72f), #1773 (cf3382f; 8601cef, 57ca858), #1804 (fbc304b; 7d84b91); release `calaluis/fujinet-firmware` `v1.6.2-atari-fsk-beta.1`. Autoría comprobada con `gh pr view --json commits`. Cuarentena local en `D:\rb-e0\fsk-propio`, no versionada | Base para la futura carga de `.cas` (estándar y turbo). Aún no entra código al repositorio; solo las líneas propias, adaptadas |

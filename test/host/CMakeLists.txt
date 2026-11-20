@@ -210,6 +210,10 @@ rb_add_host_test(test_create_atr menu/test_create_atr.cpp ${rb_root}/host/src/cr
 target_include_directories(test_create_atr PRIVATE ${rb_root}/host/src)
 target_compile_definitions(test_create_atr PRIVATE RB_TEST_CREATE_DIR="${CMAKE_CURRENT_BINARY_DIR}/create-images")
 
+# Checking a .xex and wrapping it with the 6502 loader (menu-xex X002).
+rb_add_host_test(test_xex_image menu/test_xex_image.cpp ${rb_root}/host/src/xex_image.cpp)
+target_include_directories(test_xex_image PRIVATE ${rb_root}/host/src)
+
 rb_add_host_test(test_tnfs_folder menu/test_tnfs_folder.cpp ${rb_root}/host/src/tnfs_folder.cpp
                  ${rb_root}/host/src/menu_catalog.cpp)
 target_include_directories(test_tnfs_folder PRIVATE ${rb_root}/host/src)

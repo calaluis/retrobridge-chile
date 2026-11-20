@@ -34,7 +34,8 @@ add_executable(retrobridge_host
     src/tnfs_loader.cpp
     src/tnfs_link.cpp
     src/udp_tnfs_port.cpp
-    src/sha256.cpp)
+    src/sha256.cpp
+    src/xex_image.cpp)
 target_link_libraries(retrobridge_host PRIVATE rb_sio rb_file_storage rb_netsio rb_net_tnfs Threads::Threads)
 rb_apply_build_flags(retrobridge_host)
 if(WIN32)

@@ -30,6 +30,7 @@ uint32_t littleEndian32(Span<const uint8_t> bytes) noexcept
 
 Result<void> NetSioSioTransport::connect()
 {
+    motor_ = false;
     for (uint8_t attempt = 0; attempt < config_.pingAttempts; ++attempt) {
         pingAnswered_ = false;
         const Result<void> pinged = transmitSignal(id::kPingRequest);
@@ -63,6 +64,7 @@ Result<void> NetSioSioTransport::connect()
 void NetSioSioTransport::disconnect()
 {
     answerEmpty();
+    motor_ = false;
     if (connected_) {
         (void)transmitSignal(id::kDeviceDisconnected);  // best effort: the hub also expires silent devices
         connected_ = false;
@@ -122,6 +124,34 @@ Result<void> NetSioSioTransport::send(Span<const uint8_t> bytes)
         --credit_;
     }
     return sent;
+}
+
+Result<void> NetSioSioTransport::sendOutsideFrame(Span<const uint8_t> bytes)
+{
+    if (pendingSync_.has_value() || inFrame_ || receiving_ || bytes.empty() || bytes.size() > kMaxDataBlock) {
+        return Failure{ErrorCode::TransportError};  // a disk command owns the line, or a bad size
+    }
+    if (credit_ == 0) {
+        if (!creditAsked_) {
+            const Result<void> asked = transmit(encodeCreditStatus(Span<uint8_t>{tx_}, 0));
+            if (!asked.ok()) {
+                return asked;
+            }
+            creditAsked_ = true;
+            ++stats_.creditRequests;
+        }
+        return Failure{ErrorCode::Timeout};  // never waits: the C7 arrives with the next receive
+    }
+    const Result<void> sent = transmit(encodeDataBlock(Span<uint8_t>{tx_}, bytes));
+    if (sent.ok()) {
+        --credit_;
+    }
+    return sent;
+}
+
+Result<void> NetSioSioTransport::sendSpeed(uint32_t baud)
+{
+    return transmit(encodeSpeedChange(Span<uint8_t>{tx_}, baud));
 }
 
 void NetSioSioTransport::releaseDataLine()
@@ -324,9 +354,15 @@ bool NetSioSioTransport::process(std::size_t length)
     case id::kSpeedChange:
         stats_.lastBaud = littleEndian32(message.payload);
         return false;
+    case id::kMotorOn:
+    case id::kMotorOff:
+        motor_ = message.id == id::kMotorOn;
+        ++stats_.motorChanges;
+        return false;
     case id::kColdReset:
     case id::kWarmReset:
         ++stats_.resets;
+        motor_ = false;  // the OS starts with the cassette motor off
         abandonData();
         if (inFrame_) {
             inFrame_ = false;
@@ -335,6 +371,7 @@ bool NetSioSioTransport::process(std::size_t length)
         return false;
     case id::kCreditUpdate:
         credit_ = message.payload[0];
+        creditAsked_ = false;
         return false;
     case id::kPingResponse:
         pingAnswered_ = true;

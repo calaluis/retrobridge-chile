@@ -38,6 +38,35 @@ Rama `feat/cassette-cas` (worktree `.worktrees/feat-cassette-cas`, desde main `b
     `Invalid`, y con `fsk ` es `Pulses`;
   - dos pruebas de fallo no comprobaban la cinta vacía → ahora sí.
 
+## C002 — Reproductor, casetera y NetSIO (hecha, 2026-11-20)
+
+- `host/src/cassette_player.{hpp,cpp}`: `TapeLink` (puerto) y `CassettePlayer`. Con MOTOR encendido: pausa,
+  silencio, velocidad (solo si cambia) y bytes a 10 bits por byte con el reloj del host; como máximo 512 por envío.
+  Con MOTOR apagado se congela. Un envío fallido no mueve la cinta. El ritmo se cuenta en µs × baud: no deriva.
+- `host/src/cassette_deck.{hpp,cpp}`: la cinta de `C:` (copia de los bytes, índice, nombre); `mount` rechaza
+  `Pulses` e `Invalid` sin tocar `C:`; `eject`; `rewind`.
+- `host/src/netsio_tape_link.hpp`: `TapeLink` sobre NetSIO, con `sendOutsideFrame()`: nunca espera; falla si hay
+  una trama, una sincronía o una escritura en curso (el transporte tomaría los bytes como el ACK del disco).
+- `components/rb_netsio`: `encodeSpeedChange`; `motorOn()` desde `20`/`21` (ya no cuentan como ignorados;
+  estadística `motorChanges`; apagado tras conectar, desconectar y cada reinicio); `sendSpeed()` sin crédito;
+  `sendOutsideFrame()`: sin crédito pide `C6` una vez y falla hasta que llega el `C7`.
+- Controles:
+  - pruebas: `test_cassette_player` 15/15; `test_netsio_tape_link` 3/3; códec y transporte con casos nuevos;
+    `ctest` 70/70;
+  - RED: la implementación del reproductor se escribió antes de ver el rojo; en su lugar, 8 mutantes (sin MOTOR,
+    sin pausa, sin límite de 512, sin guarda de sincronía, sin estado de MOTOR, sin tope tras un rechazo, contando
+    tiempo parado, reinicio sin apagar MOTOR): todos fallan las pruebas;
+  - compilación: sin avisos con `-Werror`; `check_layering` OK; `check_notices` OK;
+  - `rsc risk`: tier 1 (el plan preveía 2), un revisor;
+  - trazabilidad: AC6 (pausa y velocidad), AC7 (MOTOR congela y reanuda), AC12 a nivel de casetera (`rewind`).
+- Revisión (1 revisor, ronda 1), 4 hallazgos, todos corregidos con prueba:
+  - MOTOR seguía encendido tras desconectar o reiniciar → se apaga en `connect`, `disconnect`, `20`/`FE`/`FF`;
+  - el envío de cinta podía esperar crédito hasta 1 s dentro del bucle y perder órdenes de disco →
+    `sendOutsideFrame()` no espera y falla también dentro de una trama;
+  - tras un rechazo, la cinta mandaba de golpe lo atrasado → el tiempo rechazado no se debe;
+  - el primer tick tras encender MOTOR contaba tiempo parado, y un reloj que retrocede contaba dos veces → corregido.
+- Pendiente para C003: que Altirra acepte `SPEED_CHANGE` desde el dispositivo y bytes fuera de una trama.
+
 ## Decision queue
 
 - (vacía)

@@ -93,6 +93,10 @@ rb_add_host_test(test_netsio_transport netsio/test_netsio_transport.cpp)
 target_link_libraries(test_netsio_transport PRIVATE rb_netsio)
 rb_add_host_test(test_netsio_transport_allocations netsio/test_netsio_transport_allocations.cpp)
 target_link_libraries(test_netsio_transport_allocations PRIVATE rb_netsio)
+# The cassette's link over NetSIO (cassette-cas C002).
+rb_add_host_test(test_netsio_tape_link netsio/test_netsio_tape_link.cpp)
+target_link_libraries(test_netsio_tape_link PRIVATE rb_netsio)
+target_include_directories(test_netsio_tape_link PRIVATE ${rb_root}/host/src)
 
 # rb_net_tnfs (menu-tnfs, ADR-012): read-only TNFS codec
 rb_add_host_test(test_tnfs_codec net_tnfs/test_tnfs_codec.cpp)
@@ -217,6 +221,11 @@ target_include_directories(test_xex_image PRIVATE ${rb_root}/host/src)
 # Checking an A8CAS .cas tape and indexing its blocks (cassette-cas C001).
 rb_add_host_test(test_cas_image menu/test_cas_image.cpp ${rb_root}/host/src/cas_image.cpp)
 target_include_directories(test_cas_image PRIVATE ${rb_root}/host/src)
+
+# The virtual cassette: MOTOR, gaps, rate and paced bytes (cassette-cas C002).
+rb_add_host_test(test_cassette_player menu/test_cassette_player.cpp ${rb_root}/host/src/cas_image.cpp
+                 ${rb_root}/host/src/cassette_player.cpp ${rb_root}/host/src/cassette_deck.cpp)
+target_include_directories(test_cassette_player PRIVATE ${rb_root}/host/src)
 
 rb_add_host_test(test_tnfs_folder menu/test_tnfs_folder.cpp ${rb_root}/host/src/tnfs_folder.cpp
                  ${rb_root}/host/src/menu_catalog.cpp)

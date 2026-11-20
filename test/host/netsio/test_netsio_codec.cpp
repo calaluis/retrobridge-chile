@@ -164,6 +164,11 @@ static void test_encoders_produce_fep003_bytes(void)
 
     TEST_ASSERT_EQUAL_size_t(1, rb::netsio::encodeSignal(buffer, id::kAliveRequest));
     TEST_ASSERT_EQUAL_HEX8(0xC4, out[0]);
+
+    // cassette-cas C002: 800 baud = 0x00000320, little-endian.
+    TEST_ASSERT_EQUAL_size_t(5, rb::netsio::encodeSpeedChange(buffer, 800));
+    const uint8_t speed[] = {0x80, 0x20, 0x03, 0x00, 0x00};
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(speed, out.data(), 5);
 }
 
 static void test_encoded_messages_decode_back(void)

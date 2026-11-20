@@ -83,5 +83,7 @@ std::size_t encodeSyncResponse(rb::core::Span<uint8_t> out, uint8_t syncNumber, 
 std::size_t encodeDataBlock(rb::core::Span<uint8_t> out, rb::core::Span<const uint8_t> data) noexcept;
 std::size_t encodeCreditStatus(rb::core::Span<uint8_t> out, uint8_t remainingCredit) noexcept;
 std::size_t encodeSignal(rb::core::Span<uint8_t> out, uint8_t messageId) noexcept;  // ID with no parameters
+// SPEED_CHANGE (80) with the rate as 4 bytes LE: the cassette's rate (cassette-cas C002).
+std::size_t encodeSpeedChange(rb::core::Span<uint8_t> out, uint32_t baud) noexcept;
 
 }  // namespace rb::netsio

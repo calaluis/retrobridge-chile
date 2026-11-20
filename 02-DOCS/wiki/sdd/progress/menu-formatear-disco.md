@@ -140,6 +140,19 @@ Evidencia en `D:\rb-e0\m46-formateo`: `host-run1.jsonl` (creación, formateos, c
 - No anotado: el número de error que mostró el DOS en el paso 3 (en la captura no se lee claro).
 - Sin capturas de pantalla guardadas en la carpeta; la del error del paso 3 quedó en la conversación.
 
+## F006 — Documentación (hecha, 2026-11-20)
+
+- `docs/adr/0019-escritura-de-sectores.md`: enmienda 1 (formateo `$21`/`$22`, densidad, trama `$FF`, STATUS,
+  `sio_write cmd=F|FM` y causa `density`; consecuencias de la demo F005).
+- `docs/adr/0017-menu-de-arranque.md`: enmienda 9 (tecla `N`, tres pasos, regla del nombre, mensajes y evento
+  `menu_create`).
+- `host/README.md`: fila de `N` en la tabla de teclas, párrafo de formatear y crear, `menu_create` en la lista de
+  eventos.
+- `docs/fuentes.md`: fila 2026-11-20 (manual de Altirra §10.2 y 1050, ya registrado; observación propia F005). Arreglo
+  de paso: la fila de menu-escritura-disco decía `D:` + retorno de carro + `b-e0`; ahora dice `D:\rb-e0` (2 veces).
+- Controles: `python -I tools/check_notices.py` OK; sin emoji en los 4 archivos; los enlaces a ADR-017 y ADR-019
+  existen.
+
 ## Pendiente
 
-F006 (docs).
+Cierre: verify de cierre y review de la rama; después push y PR (con aprobación).

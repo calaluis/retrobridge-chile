@@ -89,6 +89,7 @@ ejemplo `FUENTE 2: /ATARI_CHILE/OMS_ATR`; una ruta larga se recorta por la izqui
 | `A`..`T` | lista | elige una imagen de la página visible; después se elige la unidad (`1`..`8` o el cursor), Esc vuelve a la lista |
 | `A` | principal | arranca la imagen asignada a D1 |
 | `U` | principal | pide una unidad (`1`..`8`) y la desmonta; Esc cancela |
+| `N` | principal | crea una ATR vacía en la carpeta: nombre, `S` simple o `M` media, unidad `2`..`8`; Esc cancela |
 | `2`..`8` | principal | abre la raíz del servidor TNFS de esa fuente, de solo lectura (`FUENTE n SIN CONFIGURAR` si no hay) |
 | `A`..`T` | carpeta TNFS | entra en una carpeta (`/`) o elige una `.ATR` de la página visible; después se elige la unidad |
 | Esc | carpeta TNFS | vuelve a la carpeta anterior, en la página y fila desde donde se entró; en la raíz, a la principal; durante «CARGANDO nn%», cancela |
@@ -126,6 +127,13 @@ con el atributo de solo lectura del sistema queda protegida: el menú muestra «
 recibe un error de protección. Las imágenes TNFS y `--image` son de solo lectura. Cada escritura deja un evento
 `sio_write` en el registro JSONL. Una ATR solo la debe servir un host, y Altirra no debe tener esa unidad activa.
 
+Formatear y crear (spec `menu-formatear-disco`, [ADR-019](../docs/adr/0019-escritura-de-sectores.md) enmienda 1,
+[ADR-017](../docs/adr/0017-menu-de-arranque.md) enmienda 9): el DOS puede formatear una ATR de `--images` en simple
+(720 sectores) o en media (1040 sectores). Con la densidad equivocada responde ERROR y no cambia el archivo. Para un
+disco nuevo, `N` en la pantalla principal: se escribe el nombre (1 a 25 de A-Z, 0-9 y `-`), se elige `S` o `M` y la
+unidad. El host crea `<NOMBRE>.ATR`, la agrega a la lista y la monta; nunca sobrescribe un archivo existente. Después
+se formatea desde el DOS. El formateo queda en `sio_write` como `cmd=F` o `cmd=FM`; la creación, en `menu_create`.
+
 Pendiente (no implementado): casete (sin soporte).
 
 1. Generar las imágenes de demostración (dos arrancables con mensajes distintos y una inválida):
@@ -152,7 +160,7 @@ Pendiente (no implementado): casete (sin soporte).
    (DEMO-DOS.ATR asignada a D1), `A` (arranca y muestra `DEMO DOS OK`), Shift+F5 (vuelve con D1 en pantalla).
 
 El log registra el catálogo (`menu_entry`, numerado desde 1), las fuentes (`menu_source`), cada elección (`menu_select`), cada cambio
-aplicado a una unidad (`menu_mount`), cada desmontaje (`menu_unmount`), cada arranque (`menu_boot`), las teclas
+aplicado a una unidad (`menu_mount`), cada desmontaje (`menu_unmount`), cada arranque (`menu_boot`), cada ATR creada con `N` (`menu_create`), las teclas
 pendientes (`menu_pending`), cada vuelta al menú (`menu_return`), cada carpeta TNFS abierta (`menu_open`), cada
 imagen traída con su SHA-256 (`menu_fetch`), cada error TNFS con su causa (`menu_tnfs`) y cada orden enviada al
 servidor, con los indicadores de cada OPEN (`tnfs_request`). `--log` no puede nombrar ninguna imagen de la

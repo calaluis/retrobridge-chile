@@ -44,3 +44,24 @@
 - Tras un error, el DOS reintenta por su cuenta (en la demo, 112 `W` al sector 0, todos con NAK). Es conducta del
   DOS, no del host.
 - Dos hosts sobre la misma ATR, o Altirra con la unidad activa, pueden corromperla. No hay bloqueo de archivo.
+
+## Enmienda 1 (2026-11-20, spec `menu-formatear-disco`): formateo
+
+Contexto: el DOS del Atari formatea un disco antes de usarlo. Fuente: *Altirra Hardware Reference Manual*, §10.2
+«Format ($21)» y la sección del 1050 «Format Medium Density command» ($22).
+
+1. **Órdenes.** `$21` formatea en densidad simple y `$22` en densidad media. Solo con `allowWrites`; sin ella, NAK
+   como antes. AUX no se mira.
+2. **Densidad.** `$21` vale solo para una ATR de 720 sectores de 128 bytes; `$22`, solo para una de 1040 de 128.
+   Otra geometría (incluida la doble densidad) responde ERROR y no toca el archivo.
+3. **Ejecución.** El host escribe `$00` en cada sector antes de COMPLETE. La orden va por el camino de lectura:
+   ACK, ejecución, COMPLETE o ERROR, y siempre una trama del tamaño del sector.
+4. **Respuesta.** La trama lleva `$FF` en todos sus bytes: la lista de sectores malos está vacía y termina en
+   `$FFFF`. El resto en `$FF` es elección propia (M46-4): el manual no dice qué va después del terminador.
+5. **STATUS tras un fallo.** Como la escritura: D3 si la unidad está protegida, D2 en cualquier otro fallo
+   (densidad, E/S, unidad vacía).
+6. **Registro.** `sio_write` con `cmd=F` (`$21`) o `cmd=FM` (`$22`), sin sector ni CRC-32. Causa nueva: `density`.
+
+Consecuencias: el DOS 2.5 formatea en simple (`P`) y en media (`I`); la demo F005 confirmó que `I` manda `$22` y que
+después el DOS escribe el sector 1024. Con la densidad equivocada, el DOS reintenta (8 órdenes en la demo) y
+muestra su error. Un fallo de E/S a mitad deja en cero los sectores ya escritos.

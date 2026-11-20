@@ -155,4 +155,5 @@ Evidencia en `D:\rb-e0\m46-formateo`: `host-run1.jsonl` (creación, formateos, c
 
 ## Pendiente
 
-Cierre: verify de cierre y review de la rama; después push y PR (con aprobación).
+Nada. Cierre hecho: PR #56 fusionado en main (a543245), CI 6 de 6 en verde. Veredicto PASA en
+`verifications/menu-formatear-disco-2026-11-20-r2.md`.

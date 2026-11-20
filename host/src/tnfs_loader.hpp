@@ -90,9 +90,11 @@ public:
     static constexpr unsigned kMaxSource = 8;  // sources 2..8 are TNFS; 0 and 1 are not
 
     // links[n] is source n, or null when it has no server. The store, the clock,
-    // the memory and the links must outlive the loader.
+    // the memory and the links must outlive the loader. `imagesFolder` (menu-xex) is the
+    // --images folder a local .xex is read from (startXex with source 1); it must outlive
+    // the loader too. nullptr: a local .xex cannot be opened.
     TnfsLoader(TnfsLink* const (&links)[kMaxSource + 1], MemoryImageStore& store, rb::net_tnfs::TnfsClock& clock,
-               ImageMemory& memory, LoaderHooks* hooks = nullptr);
+               ImageMemory& memory, LoaderHooks* hooks = nullptr, const char* imagesFolder = nullptr);
     ~TnfsLoader();
     TnfsLoader(const TnfsLoader&) = delete;
     TnfsLoader& operator=(const TnfsLoader&) = delete;
@@ -103,6 +105,7 @@ public:
     bool ready() const noexcept { return doneFolder_.ready() && workFolder_.ready(); }
     uint32_t startList(unsigned source, const char* path, std::size_t length) noexcept override;
     uint32_t startFetch(unsigned source, const char* path, std::size_t length) noexcept override;
+    uint32_t startXex(unsigned source, const char* path, std::size_t length) noexcept override;
 
     // The state of job `job`. A finished result is handed over once: a Folder is
     // swapped into `folder` (whose old content the loader frees later on its own
@@ -125,7 +128,7 @@ public:
     static constexpr std::size_t kMaxServer = 32;  // MenuSources::kMaxName
 
 private:
-    enum class Kind : uint8_t { List, Fetch };
+    enum class Kind : uint8_t { List, Fetch, Xex };
     enum class State : uint8_t { None, Pending, Running, Done };
     struct Job {
         Kind kind = Kind::List;
@@ -148,6 +151,8 @@ private:
     void execute(const Job& job, Outcome& out);
     void list(const Job& job, rb::net_tnfs::TnfsClient& client, Outcome& out);
     void fetch(const Job& job, rb::net_tnfs::TnfsClient& client, Outcome& out);
+    void readLocal(const Job& job, Outcome& out);
+    void adopt(const Job& job, ImageBuffer&& bytes, Outcome& out);
     void publish(uint32_t number, Outcome& out);
     void freeRecycled();
     void applyRenames();
@@ -160,6 +165,7 @@ private:
     MemoryImageStore& store_;
     ImageMemory& memory_;
     LoaderHooks* hooks_;
+    const char* imagesFolder_;
 
     mutable std::mutex mutex_;
     std::condition_variable wake_;

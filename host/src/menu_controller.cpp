@@ -118,6 +118,10 @@ const char* loaderText(LoaderError error) noexcept
         return " ERROR: SERVIDOR NO ENCONTRADO";
     case LoaderError::NoSePudoAbrir:
         return " ERROR: NO SE PUDO ABRIR";
+    case LoaderError::XexNoValido:
+        return " XEX NO VALIDO";
+    case LoaderError::XexNoCompatible:
+        return " XEX NO COMPATIBLE";
     case LoaderError::NoResponde:
         break;
     }
@@ -131,6 +135,10 @@ const char* loaderName(LoaderError error) noexcept
         return "not found";
     case LoaderError::NoSePudoAbrir:
         return "could not open";
+    case LoaderError::XexNoValido:
+        return "invalid";
+    case LoaderError::XexNoCompatible:
+        return "incompatible";
     case LoaderError::NoResponde:
         break;
     }
@@ -587,11 +595,34 @@ void MenuController::onPick(int digit)
     const EntryIndex entry = chosen_;
     chosen_ = kNoEntry;
     view_ = View::Main;
+    const char* name = catalog_.name(entry);
+    if (hasXexExtension(name)) {
+        chooseXex(digit, 1, name, std::strlen(name), name);
+        return;
+    }
     if (digit == 1) {
         assignD1(entry);
     } else {
         mountOn(static_cast<unsigned>(digit), entry);
     }
+}
+
+// menu-xex: a .xex goes to D1 only (AC4). It is read (source 1: the --images folder) or
+// brought over TNFS, checked and wrapped with the 6502 loader on the loader thread, which
+// allocates; key() never does (ADR-011). The job ends in fetched() or failed().
+void MenuController::chooseXex(int digit, unsigned source, const char* path, std::size_t length, const char* name)
+{
+    if (digit != 1) {
+        say(" UN XEX SOLO VA EN D1");
+        char detail[TnfsFolder::kDisplayWidth + 48];
+        std::snprintf(detail, sizeof detail, "D%d name=%s refused: xex only on D1", digit, name);
+        event("menu_select", detail);
+        return;
+    }
+    std::snprintf(jobName_, sizeof jobName_, "%s", name);
+    jobDrive_ = 1;
+    message_[0] = '\0';
+    startJob(Job::Xex, source, path, length);
 }
 
 void MenuController::onUnmount(int digit)
@@ -1198,6 +1229,15 @@ void MenuController::onFolderPick(uint8_t key, int digit)
     const TnfsFolder::Entry& chosen = folder_.entry(chosen_);
     char path[TnfsFolder::kMaxPath + 1];
     const std::size_t length = folder_.path(chosen_, path);
+    if (hasXexExtension(path)) {
+        char name[TnfsFolder::kDisplayWidth + 1];
+        std::snprintf(name, sizeof name, "%s", chosen.display);
+        chosen_ = kNoEntry;
+        view_ = View::Folder;  // refused or loading, the view stays on the folder
+        message_[0] = '\0';
+        chooseXex(digit, source_, path, length, name);
+        return;
+    }
     std::snprintf(jobName_, sizeof jobName_, "%s", chosen.display);
     jobDrive_ = static_cast<unsigned>(digit);
     chosen_ = kNoEntry;
@@ -1218,7 +1258,9 @@ void MenuController::startJob(Job job, unsigned source, const char* path, std::s
     jobSource_ = source;
     job_ = job;
     percent_ = 0;
-    jobNumber_ = job == Job::Fetch ? loader_->startFetch(source, path, length) : loader_->startList(source, path, length);
+    jobNumber_ = job == Job::Fetch ? loader_->startFetch(source, path, length)
+                 : job == Job::Xex ? loader_->startXex(source, path, length)
+                                   : loader_->startList(source, path, length);
 }
 
 void MenuController::cancelJob() noexcept
@@ -1303,6 +1345,13 @@ void MenuController::failed(const LoaderStatus& status)
 {
     job_ = Job::None;
     say("%s", loaderText(status.error));  // the view stays where it was; the cause goes to the log only
+    if (status.error == LoaderError::XexNoValido || status.error == LoaderError::XexNoCompatible) {
+        char refused[TnfsFolder::kDisplayWidth + 96];
+        std::snprintf(refused, sizeof refused, "D%u name=%s refused: result=%s xex=1 segments=%u bytes=%lu",
+                      jobDrive_, jobName_, loaderName(status.error), static_cast<unsigned>(status.segments),
+                      static_cast<unsigned long>(status.bytes));
+        event("menu_select", refused);
+    }
     char detail[kTnfsMaxPath + LoaderStatus::kCauseSize + 48];
     std::snprintf(detail, sizeof detail, "source=%u path=%s %s: %s", jobSource_, jobPath_, loaderName(status.error),
                   status.cause);
@@ -1325,12 +1374,12 @@ void MenuController::fetched(const LoaderStatus& status)
     image.kind = Shown::Kind::Tnfs;
     image.slot = status.slot;
     std::snprintf(image.name, sizeof image.name, "%s", jobName_);
-    place(jobDrive_, image);
+    place(jobDrive_, image, status.xex ? &status : nullptr);
 }
 
 // An image that came over TNFS: validated like a local one, then assigned to
 // D1 or mounted on D2..D8. Refused, its slot goes back to the loader.
-void MenuController::place(unsigned number, const Shown& image)
+void MenuController::place(unsigned number, const Shown& image, const LoaderStatus* xex)
 {
     const rb::app::ImageLocation location = tnfsLocation(image.slot);
     std::optional<ErrorCode> error;
@@ -1370,12 +1419,15 @@ void MenuController::place(unsigned number, const Shown& image)
             verb = "accepted";
         }
     }
-    char detail[TnfsFolder::kDisplayWidth + 64];
+    char detail[TnfsFolder::kDisplayWidth + 96];
     if (error) {
         recycle(image);
         say(" ERROR: %s", reason(*error));  // the view stays on the folder
         std::snprintf(detail, sizeof detail, "D%u name=%s refused: error %u", number, image.name,
                       static_cast<unsigned>(*error));
+    } else if (xex != nullptr) {
+        std::snprintf(detail, sizeof detail, "D%u name=%s %s xex=1 segments=%u bytes=%lu", number, image.name, verb,
+                      static_cast<unsigned>(xex->segments), static_cast<unsigned long>(xex->bytes));
     } else {
         std::snprintf(detail, sizeof detail, "D%u name=%s %s", number, image.name, verb);
     }

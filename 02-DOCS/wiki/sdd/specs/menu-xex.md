@@ -179,3 +179,5 @@ Condición: el host corre con `--images`. No hay permisos: cualquier usuario del
 - 2026-11-20 — borrador (specify).
 - 2026-11-20 — clarify: 3 preguntas resueltas, AC9 cambia (aviso al elegir).
 - 2026-11-20 — aprobada por el responsable.
+- 2026-11-20 — X006, desviación 3 del plan (responsable: «Acepta el relleno ya», luego «A: múltiplo de 128»):
+  el relleno XMODEM final no vuelve inválido el archivo. AC8 no cambia.

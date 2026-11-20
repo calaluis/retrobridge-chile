@@ -163,9 +163,9 @@ bool logNamesImage(const char* log, const char* base, const char* name)
     return false;
 }
 
-// --images: true if --log is, by file identity, any .atr file of the folder,
+// --images: true if --log is, by file identity, any .atr or .xex file of the folder,
 // listed in the menu or not, valid image name or not (on Windows, names outside
-// the ANSI code page included). A folder that cannot be listed or an .atr that
+// the ANSI code page included). A folder that cannot be listed or an image that
 // cannot be identified while the log exists also refuses: fail closed.
 bool logNamesFolderAtr(const char* log, const char* folder)
 {
@@ -380,10 +380,10 @@ int runMenu(const Options& options)
         return 2;
     }
     if (catalog.count() == 0) {
-        std::fprintf(stderr, "retrobridge_host: no .atr images in %s\n", options.images);
+        std::fprintf(stderr, "retrobridge_host: no .atr or .xex images in %s\n", options.images);
         return 2;
     }
-    // Protect every .atr of the folder, not only the kMaxEntries the menu shows:
+    // Protect every .atr and .xex of the folder, not only the kMaxEntries the menu shows:
     // a file beyond the list is still an image the user keeps there.
     if (logNamesFolderAtr(options.log, options.images)) {
         return 2;
@@ -434,7 +434,7 @@ int runMenu(const Options& options)
     rb::host::HostTnfsClock tnfsClock{clock};
     rb::host::HeapImageMemory imageMemory;
     std::optional<rb::host::TnfsLoader> loader;
-    loader.emplace(linkOf, repository.memory(), tnfsClock, imageMemory);
+    loader.emplace(linkOf, repository.memory(), tnfsClock, imageMemory, nullptr, options.images);  // menu-xex
     rb::host::MenuController controller{catalog, sources, repository, mailbox, &events, &*loader};
     controller.setSourcesFile(options.sources);
     controller.setImagesFolder(options.images, catalog);  // N creates a blank ATR there

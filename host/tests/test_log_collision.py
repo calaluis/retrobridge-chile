@@ -65,6 +65,9 @@ class HostCase(unittest.TestCase):
         self.assertEqual(self.image.stat().st_mtime_ns, self.mtime, "the ATR was written")
 
 
+XEX = bytes([0xFF, 0xFF, 0x00, 0x30, 0x00, 0x30, 0x60])  # menu-xex: one segment, a single RTS
+
+
 class LogCollisionTest(HostCase):
     def assert_refused(self, image_arg, log_arg):
         before = self.entries()
@@ -104,6 +107,17 @@ class ImagesFolderTest(HostCase):
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("refusing to write into the image", result.stderr)
         self.assert_image_intact()
+        self.assertEqual(self.entries(), before, "a file was created")
+
+    def test_log_naming_a_xex_of_the_folder_is_refused(self):
+        """menu-xex X003: a .xex of the folder is an image too; the log never writes into it."""
+        xex = self.root / "images" / "juego.xex"
+        xex.write_bytes(XEX)
+        before = self.entries()
+        result = self.run_folder("images", "images\\JUEGO.XEX" if os.name == "nt" else "images/juego.xex")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("refusing to write into the image", result.stderr)
+        self.assertEqual(xex.read_bytes(), XEX)
         self.assertEqual(self.entries(), before, "a file was created")
 
     def make_21_images(self):
@@ -210,7 +224,7 @@ class ImagesFolderTest(HostCase):
         (self.root / "empty" / "notes.txt").write_text("x")
         result = self.run_folder("empty", "run.jsonl")
         self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn("no .atr images", result.stderr)
+        self.assertIn("no .atr or .xex images", result.stderr)
         self.assertFalse((self.root / "run.jsonl").exists())
 
     def test_missing_folder_is_refused(self):

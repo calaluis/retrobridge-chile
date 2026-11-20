@@ -12,6 +12,29 @@ using rb::host::MenuCatalog;
 void setUp(void) {}
 void tearDown(void) {}
 
+// menu-xex X003 (AC1): .xex files are listed with the .atr ones, in the same order.
+static void test_xex_files_are_listed_with_the_atr_files(void)
+{
+    MenuCatalog catalog;
+    TEST_ASSERT_TRUE(catalog.offer("juego.xex"));
+    TEST_ASSERT_TRUE(catalog.offer("B.ATR"));
+    TEST_ASSERT_TRUE(catalog.offer("A.XEX"));
+    TEST_ASSERT_TRUE(catalog.offer("c.Xex"));
+    TEST_ASSERT_FALSE(catalog.offer("x.xexx"));
+    TEST_ASSERT_FALSE(catalog.offer(".xex"));
+    TEST_ASSERT_FALSE(catalog.offer("d.com"));
+    TEST_ASSERT_EQUAL_size_t(4, catalog.count());
+    const char* expected[] = {"A.XEX", "B.ATR", "c.Xex", "juego.xex"};
+    for (std::size_t i = 0; i < 4; ++i) {
+        TEST_ASSERT_EQUAL_STRING(expected[i], catalog.name(i));
+    }
+    TEST_ASSERT_TRUE(rb::host::hasXexExtension("JUEGO.XEX"));
+    TEST_ASSERT_FALSE(rb::host::hasXexExtension("JUEGO.ATR"));
+    TEST_ASSERT_TRUE(rb::host::hasImageExtension("a.atr"));
+    TEST_ASSERT_TRUE(rb::host::hasImageExtension("a.xex"));
+    TEST_ASSERT_FALSE(rb::host::hasImageExtension("xex"));
+}
+
 static void test_25_local_images_are_all_kept_in_order(void)
 {
     MenuCatalog catalog;
@@ -47,6 +70,7 @@ static void test_1200_local_images_keep_the_first_999(void)
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_xex_files_are_listed_with_the_atr_files);
     RUN_TEST(test_25_local_images_are_all_kept_in_order);
     RUN_TEST(test_1200_local_images_keep_the_first_999);
     return UNITY_END();

@@ -37,19 +37,33 @@ int compareNames(const char* a, const char* b) noexcept
     return exact < 0 ? -1 : (exact > 0 ? 1 : 0);
 }
 
-bool hasAtrExtension(const char* fileName) noexcept
+namespace {
+
+// True if the name is longer than ".ext" and ends in '.' plus `ext` (three lowercase letters), any case.
+bool hasExtension(const char* fileName, const char* ext) noexcept
 {
     const std::size_t length = std::strlen(fileName);
     if (length <= 4) {
         return false;
     }
-    const char* ext = fileName + length - 4;
-    return ext[0] == '.' && lower(ext[1]) == 'a' && lower(ext[2]) == 't' && lower(ext[3]) == 'r';
+    const char* tail = fileName + length - 4;
+    return tail[0] == '.' && lower(tail[1]) == ext[0] && lower(tail[2]) == ext[1] && lower(tail[3]) == ext[2];
+}
+
+}  // namespace
+
+bool hasAtrExtension(const char* fileName) noexcept { return hasExtension(fileName, "atr"); }
+
+bool hasXexExtension(const char* fileName) noexcept { return hasExtension(fileName, "xex"); }
+
+bool hasImageExtension(const char* fileName) noexcept
+{
+    return hasAtrExtension(fileName) || hasXexExtension(fileName);
 }
 
 bool isCatalogName(const char* fileName) noexcept
 {
-    if (!hasAtrExtension(fileName) || std::strlen(fileName) > MenuCatalog::kMaxName) {
+    if (!hasImageExtension(fileName) || std::strlen(fileName) > MenuCatalog::kMaxName) {
         return false;
     }
     // build_image_path also refuses ':' and '\'; such a file could be listed but never opened.

@@ -97,7 +97,7 @@ FileIdentity compareFiles(const char* a, const char* b) noexcept
 namespace {
 
 template <typename Char>
-bool endsWithAtr(const Char* name) noexcept
+bool endsWithImage(const Char* name) noexcept
 {
     std::size_t length = 0;
     while (name[length] != 0) {
@@ -108,7 +108,12 @@ bool endsWithAtr(const Char* name) noexcept
     }
     const Char* ext = name + length - 4;
     auto lower = [](Char c) { return (c >= 'A' && c <= 'Z') ? static_cast<Char>(c - 'A' + 'a') : c; };
-    return ext[0] == '.' && lower(ext[1]) == 'a' && lower(ext[2]) == 't' && lower(ext[3]) == 'r';
+    if (ext[0] != '.') {
+        return false;
+    }
+    const bool atr = lower(ext[1]) == 'a' && lower(ext[2]) == 't' && lower(ext[3]) == 'r';
+    const bool xex = lower(ext[1]) == 'x' && lower(ext[2]) == 'e' && lower(ext[3]) == 'x';  // menu-xex X003
+    return atr || xex;
 }
 
 }  // namespace
@@ -139,7 +144,7 @@ FolderCheck findAtrIdenticalTo(const char* log, const char* folder, char* match,
     }
     FolderCheck result = FolderCheck::Clear;
     do {
-        if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 || !endsWithAtr(entry.cFileName)) {
+        if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 || !endsWithImage(entry.cFileName)) {
             continue;
         }
         wchar_t path[MAX_PATH * 2 + 2];
@@ -182,7 +187,7 @@ FolderCheck findAtrIdenticalTo(const char* log, const char* folder, char* match,
     FolderCheck result = FolderCheck::Clear;
     char path[4096];
     while (const dirent* entry = ::readdir(dir)) {
-        if (!endsWithAtr(entry->d_name)) {
+        if (!endsWithImage(entry->d_name)) {
             continue;
         }
         const int written = std::snprintf(path, sizeof path, "%s/%s", folder, entry->d_name);

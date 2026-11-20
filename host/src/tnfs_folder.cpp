@@ -62,7 +62,7 @@ bool kept(const TnfsListing& entry) noexcept
     if (entry.name.empty() || entry.name[0] == '.') {
         return false;
     }
-    return entry.isDir || hasAtrExtension(entry.name.c_str());
+    return entry.isDir || hasImageExtension(entry.name.c_str());
 }
 
 }  // namespace

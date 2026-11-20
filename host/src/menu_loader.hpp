@@ -23,6 +23,8 @@ enum class LoaderError : uint8_t {
     NoResponde,     // no answer, a malformed answer, or the link failed
     NoEncontrado,   // the server name does not resolve, or the source has no server
     NoSePudoAbrir,  // the server refused, no memory, no free slot, path too long
+    XexNoValido,    // menu-xex: the file is no valid .xex (AC8)
+    XexNoCompatible,  // menu-xex: a segment touches the loader or page 1 (AC9)
 };
 
 struct LoaderStatus {
@@ -33,7 +35,9 @@ struct LoaderStatus {
     uint8_t percent = 0;                    // InProgress
     std::size_t slot = 0;                   // Image: the caller now owns this slot
     uint32_t bytes = 0;                     // Image
-    Sha256Digest sha256{};                  // Image
+    Sha256Digest sha256{};                  // Image (of the bytes read)
+    bool xex = false;                       // Image or Error of startXex
+    uint32_t segments = 0;                  // xex: segments of the file
     LoaderError error = LoaderError::NoResponde;  // Error
     char cause[kCauseSize] = {};            // Error: for the host log, never for the screen
 };
@@ -48,6 +52,11 @@ public:
     // in progress is cancelled.
     virtual uint32_t startList(unsigned source, const char* path, std::size_t length) noexcept = 0;
     virtual uint32_t startFetch(unsigned source, const char* path, std::size_t length) noexcept = 0;
+    // menu-xex: bring the .xex at `path` (source 1: a file name of the --images folder; 2..8:
+    // TNFS), check it and wrap it with the 6502 loader (XexImage). The Image's slot holds the
+    // wrapped disk; `bytes`, `sha256` and `segments` describe the .xex itself. Reading and
+    // wrapping allocate, so they run on the loader thread.
+    virtual uint32_t startXex(unsigned source, const char* path, std::size_t length) noexcept = 0;
 
     // The state of job `job`. A finished result is handed over once: a Folder is
     // swapped into `folder`; an Image gives its slot to the caller.

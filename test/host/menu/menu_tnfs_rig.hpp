@@ -169,7 +169,7 @@ void assert_line(const MenuReply& reply, unsigned offset, const char* text)
 }
 
 // A list row in inverse video, edge to edge: the cursor (menu-navegacion).
-void assert_marked(const MenuReply& reply, unsigned offset, const char* text)
+[[maybe_unused]] void assert_marked(const MenuReply& reply, unsigned offset, const char* text)
 {
     std::array<uint8_t, 40> expected = line(text);
     for (uint8_t& b : expected) {
@@ -179,7 +179,7 @@ void assert_marked(const MenuReply& reply, unsigned offset, const char* text)
 }
 
 // The source and folder of a list, on the path line (N008); the title above it never changes.
-void assert_title(const MenuReply& reply, const char* text)
+[[maybe_unused]] void assert_title(const MenuReply& reply, const char* text)
 {
     const std::array<uint8_t, 40> title = line(" RETROBRIDGE CHILE");
     TEST_ASSERT_EQUAL_UINT8_ARRAY(title.data(), reply.screen() + rb::host::kListTitle, rb::host::kMenuTitleWidth);
@@ -188,7 +188,7 @@ void assert_title(const MenuReply& reply, const char* text)
 }
 
 [[maybe_unused]] unsigned driveLine(unsigned n) { return rb::host::kMainDrives + (n - 1) * 40; }
-unsigned row(unsigned n) { return rb::host::kListEntries + n * 40; }
+[[maybe_unused]] unsigned row(unsigned n) { return rb::host::kListEntries + n * 40; }
 constexpr unsigned kMainMessage = rb::host::kMainMessage;
 constexpr unsigned kListMessage = rb::host::kListMessage;
 
@@ -269,7 +269,7 @@ struct Rig {
     // The loader starts once the test has set up the server (it is not thread-safe).
     void start()
     {
-        loader.emplace(links, repository->memory(), clock, memory);
+        loader.emplace(links, repository->memory(), clock, memory, nullptr, RB_TEST_MENU_DIR);  // menu-xex: local .xex
         controller.emplace(catalog, sources, *repository, mailbox, &events, &*loader);
         controller->onColdReset();
         controller->service();
@@ -421,7 +421,7 @@ struct Rig {
 };
 
 // The pattern of the screen while a load is in progress.
-void assert_loading(const MenuReply& reply, unsigned offset, const char* percent)
+[[maybe_unused]] void assert_loading(const MenuReply& reply, unsigned offset, const char* percent)
 {
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionWait, reply.action());
     char text[24];

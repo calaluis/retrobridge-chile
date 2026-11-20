@@ -1,5 +1,7 @@
 #include "tnfs_loader.hpp"
 
+#include "xex_image.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <cstdarg>
@@ -165,8 +167,9 @@ private:
 // ---------------------------------------------------------------------------
 
 TnfsLoader::TnfsLoader(TnfsLink* const (&links)[kMaxSource + 1], MemoryImageStore& store,
-                       rb::net_tnfs::TnfsClock& clock, ImageMemory& memory, LoaderHooks* hooks)
-    : store_(store), memory_(memory), hooks_(hooks)
+                       rb::net_tnfs::TnfsClock& clock, ImageMemory& memory, LoaderHooks* hooks,
+                       const char* imagesFolder)
+    : store_(store), memory_(memory), hooks_(hooks), imagesFolder_(imagesFolder)
 {
     for (unsigned n = 2; n <= kMaxSource; ++n) {
         links_[n] = links[n];
@@ -207,6 +210,11 @@ uint32_t TnfsLoader::startList(unsigned source, const char* path, std::size_t le
 uint32_t TnfsLoader::startFetch(unsigned source, const char* path, std::size_t length) noexcept
 {
     return start(Kind::Fetch, source, path, length);
+}
+
+uint32_t TnfsLoader::startXex(unsigned source, const char* path, std::size_t length) noexcept
+{
+    return start(Kind::Xex, source, path, length);
 }
 
 uint32_t TnfsLoader::start(Kind kind, unsigned source, const char* path, std::size_t length) noexcept
@@ -429,6 +437,10 @@ void TnfsLoader::execute(const Job& job, Outcome& out)
 {
     LoaderStatus& status = out.status;
     const unsigned source = job.source;
+    if (job.kind == Kind::Xex && source == 1) {
+        readLocal(job, out);
+        return;
+    }
     if (source < 2 || source > kMaxSource || links_[source] == nullptr) {
         setError(status, LoaderError::NoEncontrado, "fuente %u sin servidor", source);
         return;
@@ -526,9 +538,85 @@ void TnfsLoader::fetch(const Job& job, TnfsClient& client, Outcome& out)
                  client.lastStatus());
         return;
     }
-    status.bytes = sink.buffer.size();
-    status.sha256 = sha256(Span<const uint8_t>(sink.buffer.data(), sink.buffer.size()));
-    const rb::core::Result<std::size_t> slot = store_.adopt(std::move(sink.buffer));
+    adopt(job, std::move(sink.buffer), out);
+}
+
+// menu-xex: a .xex of the --images folder, read whole into memory. `job.path` is a
+// catalog name, so it names a file of that folder only.
+void TnfsLoader::readLocal(const Job& job, Outcome& out)
+{
+    LoaderStatus& status = out.status;
+    if (imagesFolder_ == nullptr || job.tooLong) {
+        setError(status, LoaderError::NoSePudoAbrir, "no hay carpeta local para %s", job.path);
+        return;
+    }
+    const std::string path = std::string(imagesFolder_) + "/" + job.path;
+    std::FILE* file = std::fopen(path.c_str(), "rb");
+    if (file == nullptr) {
+        setError(status, LoaderError::NoSePudoAbrir, "no se pudo abrir %s", path.c_str());
+        return;
+    }
+    long size = -1;
+    if (std::fseek(file, 0, SEEK_END) == 0) {
+        size = std::ftell(file);
+    }
+    constexpr long kLargest = static_cast<long>(XexImage::kMaxSectors * XexImage::kSectorSize);
+    ImageBuffer bytes;
+    const bool sized = size >= 0 && size <= kLargest && std::fseek(file, 0, SEEK_SET) == 0;
+    const bool allocated = sized && memory_.allocate(bytes, static_cast<uint32_t>(size)) && bytes.valid() &&
+                           bytes.size() == static_cast<uint32_t>(size);
+    const bool read = allocated && (size == 0 || std::fread(bytes.data(), 1, bytes.size(), file) == bytes.size());
+    std::fclose(file);
+    if (!sized) {
+        setError(status, LoaderError::NoSePudoAbrir, "%s: tamano %ld fuera de 0..%ld", path.c_str(), size, kLargest);
+        return;
+    }
+    if (!allocated) {
+        setError(status, LoaderError::NoSePudoAbrir, "sin memoria: la reserva de %ld bytes para %s fallo", size,
+                 path.c_str());
+        return;
+    }
+    if (!read) {
+        setError(status, LoaderError::NoSePudoAbrir, "no se pudo leer %s", path.c_str());
+        return;
+    }
+    adopt(job, std::move(bytes), out);
+}
+
+// The bytes of a whole image into a slot. For a .xex (menu-xex), the slot gets the disk
+// XexImage wraps it in; the .xex itself is freed here, on the loader thread.
+void TnfsLoader::adopt(const Job& job, ImageBuffer&& bytes, Outcome& out)
+{
+    LoaderStatus& status = out.status;
+    status.bytes = bytes.size();
+    status.sha256 = sha256(Span<const uint8_t>(bytes.data(), bytes.size()));
+    ImageBuffer image = std::move(bytes);
+    if (job.kind == Kind::Xex) {
+        status.xex = true;
+        ImageBuffer disk;
+        const XexWrap wrapped = XexImage::wrap(Span<const uint8_t>(image.data(), image.size()), disk);
+        status.segments = wrapped.segments;
+        switch (wrapped.result) {
+        case XexResult::Ok:
+            break;
+        case XexResult::Invalid:
+            setError(status, LoaderError::XexNoValido, "%s no es un .xex valido", job.path);
+            return;
+        case XexResult::Incompatible:
+            setError(status, LoaderError::XexNoCompatible, "%s: un segmento pisa el cargador o la pagina 1",
+                     job.path);
+            return;
+        case XexResult::TooLarge:
+            setError(status, LoaderError::NoSePudoAbrir, "%s: el disco pasaria de %lu sectores", job.path,
+                     static_cast<unsigned long>(XexImage::kMaxSectors));
+            return;
+        case XexResult::NoMemory:
+            setError(status, LoaderError::NoSePudoAbrir, "sin memoria para envolver %s", job.path);
+            return;
+        }
+        image = std::move(disk);
+    }
+    const rb::core::Result<std::size_t> slot = store_.adopt(std::move(image));
     if (!slot.ok()) {
         setError(status, LoaderError::NoSePudoAbrir, "sin hueco libre para %s (%lu bytes)", job.path,
                  static_cast<unsigned long>(status.bytes));

@@ -144,10 +144,11 @@ private:
     enum class View : uint8_t { Main, List, Pick, Unmount, Folder, FolderPick, Edit, Create };
     enum class CreateStep : uint8_t { Name, Density, Drive };
     enum class InFlight : uint8_t { None, Menu, Boot, Mount, Unmount };
-    enum class Job : uint8_t { None, Open, Enter, Up, Fetch };
+    enum class Job : uint8_t { None, Open, Enter, Up, Fetch, Xex };
 
-    // What a drive shows: nothing, an entry of the local catalog, or a TNFS
-    // image in a slot of the MemoryImageStore.
+    // What a drive shows: nothing, an entry of the local catalog, or an image in a
+    // slot of the MemoryImageStore: one that came over TNFS, or the disk a .xex (local
+    // or TNFS) was wrapped in (menu-xex). Kind::Tnfs covers every slot.
     struct Shown {
         enum class Kind : uint8_t { None, Local, Tnfs };
         Kind kind = Kind::None;
@@ -168,6 +169,7 @@ private:
     void onMain(int digit, uint8_t code);
     void onList(uint8_t code);
     void onPick(int digit);
+    void chooseXex(int digit, unsigned source, const char* path, std::size_t length, const char* name);
     void onUnmount(int digit);
     void startEdit();
     void onEdit(uint8_t code);
@@ -198,7 +200,7 @@ private:
     void listed();
     void fetched(const LoaderStatus& status);
     void failed(const LoaderStatus& status);
-    void place(unsigned drive, const Shown& image);
+    void place(unsigned drive, const Shown& image, const LoaderStatus* xex = nullptr);
     void recycle(const Shown& shown) noexcept;
     void renderFolder(uint8_t* screen, char* text, std::size_t size) const noexcept;
     // The entry a list key asks for: a letter of the visible page, or RETURN / fire on

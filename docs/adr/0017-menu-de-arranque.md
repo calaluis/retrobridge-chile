@@ -294,3 +294,37 @@ Hardware Reference Manual* (ANTIC: `DLISTL`; SO: `SDLSTL`, `RTCLOK`).
 Consecuencias: el protocolo con el host no cambia. El programa pasa de 16 a 17 sectores. Cada respuesta se muestra
 un cuadro más tarde (la espera del borrado vertical): la repetición del joystick que va al host pasa de 30/9 a 31/10
 cuadros (Enmienda 3, punto 2); el cursor local no cambia. La demo en Altirra no mostró barrido.
+
+## Enmienda 11 (2026-11-20, spec `menu-xex`): programas `.xex` en D1
+
+Contexto: el menú solo listaba `.atr`. Muchos juegos y programas existen solo como `.xex` (un archivo binario del
+DOS, sin disco). Fuentes: Gury, *Atari 8-bit file formats: EXE/XEX*, y el *Altirra Hardware Reference Manual*
+§2.6 (`PORTB`); ver `docs/fuentes.md`. El cargador es código 6502 propio (ADR-012).
+
+1. **Listar.** La fuente local y las carpetas TNFS muestran los `.xex` junto a los `.atr`, en el mismo orden y en las
+   mismas páginas.
+2. **Solo D1.** Un `.xex` elegido para D2..D8 se rechaza con ` UN XEX SOLO VA EN D1`, y la unidad no cambia.
+3. **Envolver.** El host lee el `.xex` entero (de la carpeta o por TNFS, con ` CARGANDO`) y arma en memoria una ATR
+   de arranque: 3 sectores con el cargador y, desde el sector 4, el `.xex` tal cual, completado con ceros. La
+   longitud del `.xex` va en 3 bytes dentro del cargador. La ATR se sirve desde un hueco de memoria (`*tnfs*<n>`),
+   de solo lectura. La lectura y la envoltura las hace el hilo de carga, no el hilo de SIO (ADR-011).
+4. **Cargador.** El arranque lo carga en `$0700`. Pone a 1 el bit 1 de `PORTB` (`$D301`): en un XL/XE el BASIC
+   queda apagado. Lee los sectores con SIOV, segmento a segmento. Antes de cada segmento apunta `INITAD` (`$02E2`)
+   a un `RTS` propio; después del segmento lo llama. Al final salta a `RUNAD` (`$02E0`); sin `RUNAD` en el archivo,
+   salta a un bucle propio y la pantalla queda quieta. Si un sector no se lee,
+   muestra su propia pantalla con ` ERROR DE LECTURA XEX`. No ajusta `RAMTOP` ni reabre `E:` (desviación 1 del
+   plan: sin fuente citada para esas variables del SO).
+5. **Rechazos al elegir.** Sin cabecera `$FFFF`, con un segmento cortado o con inicio mayor que fin:
+   ` XEX NO VALIDO`. Un segmento sobre la zona del cargador (`$0700`-`$08FF`, con su búfer) o sobre la página 1
+   (`$0100`-`$01FF`, la pila): ` XEX NO COMPATIBLE`. D1 conserva lo que tenía.
+6. **Relleno XMODEM** (desviación 3 del plan, decidida por el responsable). Tras el último segmento completo, un
+   resto de 1 a 127 bytes es relleno cuando el archivo mide un múltiplo de 128, su último byte es `$1A` y el resto no
+   es un segmento: todo `$1A`, o una cabecera cortada o con inicio mayor que fin que no empieza con `$FFFF`. El
+   cargador recibe la longitud sin el relleno. Es una tolerancia propia, sin fuente.
+
+Consecuencias: el protocolo con el Atari no cambia; `A` arranca D1 como siempre. Un `.xex` que necesita DOS
+(`DOSVEC`, archivos en `D:`) falla después de cargar. Un `.xex` que lee `RAMTOP` no ve los 8 KB que libera el
+BASIC. En un 400/800 `PORTB` no existe: el BASIC en cartucho se quita a mano. Un `.xex` que no se puede leer o
+que no cabe en una ATR (más de 65535 sectores) da ` ERROR: NO SE PUDO ABRIR`. El registro suma `xex=1`,
+`segments=n` y `bytes=m` (el tamaño del `.xex`) en `menu_select`, al asignar y al rechazar por inválido o
+incompatible; el rechazo en D2..D8 dice `refused: xex only on D1`.

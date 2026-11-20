@@ -193,6 +193,7 @@ Evidencia en `D:\rb-e0\m45-escritura`: `host.jsonl` (2 corridas; `host-run1.json
   después montar; prueba `test_remounting_the_same_atr_keeps_it_writable` en rojo antes y en verde después.
 - Desviación anotada: sector fuera de rango en `W`/`P` = NAK al comando (spec línea 106 dice ERROR).
 
-## Pendiente
+## Entrega
 
-Push y PR con aprobación del responsable; el CI cubre AC10 (firmware) y los sanitizers.
+PR #53 fusionado en main (01dbfe1). CI 6 de 6 en verde: sanitizers y firmware (AC10). Veredicto final:
+PASA (`02-DOCS/wiki/sdd/verifications/menu-escritura-disco-2026-11-19-r2.md`).

@@ -114,6 +114,24 @@ Rama `feat/cassette-cas` (worktree `.worktrees/feat-cassette-cas`, desde main `b
     corta, 64+1), AC6 (fallos), AC7 (todas las cintas reales); `rsc risk`: tier 1, un revisor.
 - Revisión (1 revisor, ronda 1): sin hallazgos que corregir; 2 preguntas anotadas arriba.
 
+## C102 — FskWave: la señal de una tirada (hecha, 2026-11-20)
+
+- `components/rb_cassette`: `FskWave` convierte los valores de una tirada, por piezas, en porciones {nivel, ticks}:
+  1 valor = 100 ticks de 1 µs; índice par = espacio, impar = marca, contado en toda la tirada; un 0 no da porción pero
+  gasta su índice; porciones de como máximo 32767 ticks; el resto de un valor partido sigue en la pieza siguiente.
+- Adaptado de `casFSK.h` y `cassette_fsk_pull_portion` (PR #1756, commits 6ea2070 y 5180b1d); fila en `docs/fuentes.md`.
+- Cintas reales: International Karate, 107 tiradas cortas (48,1 ms de señal, sin partir); `turbo_software_zorro.cas`,
+  1 tirada de 927 s (unos 15 min) con 2281 porciones partidas. Esa tirada confirma que C103 (carga de a poco) hace falta.
+- Controles:
+  - pruebas: `test_fsk_wave` 10/10 con `RB_CAS_SAMPLES` (8/8 y 2 ignoradas sin ella); RED: 6 fallos contra el
+    esqueleto; `ctest` 71/71;
+  - mutantes: sin `remaining_ = 0` en `reset()`, y con `remaining_ = 0` en `setValues()`: los dos fallan;
+  - compilación: sin avisos con `-Werror`; `check_layering` OK; `check_notices` OK;
+  - seguridad: sin E/S ni reservas; `RB_ASSERT` de longitud par;
+  - trazabilidad: AC3; `rsc risk`: tier 1, un revisor.
+- Revisión (1 revisor, ronda 1): sin defectos; 3 huecos de prueba corregidos (resto pendiente entre piezas, `reset()`
+  a mitad de una porción, una cinta real con valores largos).
+
 ## Decision queue
 
 - **resuelta (2026-11-20)** — C003 falló con `international_karate.cas`. La propuesta de una cinta inventada se

@@ -219,6 +219,9 @@ target_include_directories(test_xex_image PRIVATE ${rb_root}/host/src)
 # RB_CAS_SAMPLES (outside the repo); without it those two cases are ignored.
 rb_add_host_test(test_cas_index cassette/test_cas_index.cpp)
 target_link_libraries(test_cas_index PRIVATE rb_cassette)
+# The FSK signal of a run: levels and portions (cassette-cas C102).
+rb_add_host_test(test_fsk_wave cassette/test_fsk_wave.cpp)
+target_link_libraries(test_fsk_wave PRIVATE rb_cassette)
 
 # Checking an A8CAS .cas tape and indexing its blocks (cassette-cas C001).
 rb_add_host_test(test_cas_image menu/test_cas_image.cpp ${rb_root}/host/src/cas_image.cpp)

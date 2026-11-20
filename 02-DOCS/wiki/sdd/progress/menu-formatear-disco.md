@@ -113,6 +113,33 @@ plan: 02-DOCS/wiki/sdd/plans/menu-formatear-disco.md
   - **SUSTITUIDA** — sanitizadores: el CI compila con `-DRB_SANITIZE=ON`; aquí no.
   - **HERRAMIENTA-AUSENTE** — firmware ESP-IDF: sin `idf.py` en este PC; lo compila el CI.
 
+## F005 — Demo en Altirra (hecha, 2026-11-20)
+
+Montaje: Altirra 4.31 con todas las unidades D en **Off**; hub `netsiohub` en 9997; un solo `retrobridge_host`
+(5e178a0) con `--images D:\rb-e0\m46-formateo\images --peer netsiohub`. DOS 2.5 chileno (`DOS25D1D2D3.ATR`) en D1. Carpeta
+`D:\rb-e0\m46-formateo` (no `m46`: esa carpeta ya tiene la demo de otra función).
+
+1. Menú: `N`, `NUEVO`, `S`, `2`: `menu_create name=NUEVO.ATR density=single drive=2 result=created`, montada en D2
+   con 720 x 128 (AC5).
+2. DOS 2.5, `P` (formatear 720) en D2: `sio_write drive=2 cmd=F result=complete`; después el DOS escribe VTOC
+   (360), directorio (361-368) y sectores de arranque (AC1). Copia `D1:DOS.SYS` a `D2:PRUEBA`: 72 `W` completos.
+3. DOS 2.5, `I` (formatear) en D2: el DOS manda `$22`; 8 `sio_write drive=2 cmd=FM result=error cause=density`
+   (con sus reintentos) y el DOS muestra error. Ninguna escritura en D2 entre esos 8 y la orden siguiente del DOS.
+   Se repitió tras otro formateo con `P`: el mismo resultado (AC3).
+4. Reset en frío; menú: `N`, `MEDIA`, `M`, `3`: `MEDIA.ATR` con 1040 x 128 en D3. DOS 2.5, `I` en D3:
+   `sio_write drive=3 cmd=FM result=complete`; después el DOS escribe su VTOC, incluido el sector 1024, que solo
+   existe en densidad media. Confirma que el DOS 2.5 usa `$22` para densidad media (riesgo del plan, §7) (AC2).
+5. Copia `D1:DOS.SYS` a `D2:PRUEBA` y a `D3:PRUEBA`. Host cerrado y relanzado (lista: 3 imágenes). Reset en frío,
+   D2 = `NUEVO.ATR`, D3 = `MEDIA.ATR`, DOS en D1. Leer el directorio de D2 y de D3 (`02 32 52 69 01`,
+   `02 33 52 69 01`): las dos respuestas llevan `PRUEBA`; el responsable lo ve en pantalla. SHA-256 iguales antes
+   y después del relanzamiento (AC9).
+
+Evidencia en `D:\rb-e0\m46-formateo`: `host-run1.jsonl` (creación, formateos, copias), `host.jsonl` (tras relanzar),
+`sha256-tras-ac3.txt`, `sha256-tras-formateos.txt`, `sha256-antes-relanzar.txt`, `version.txt`.
+
+- No anotado: el número de error que mostró el DOS en el paso 3 (en la captura no se lee claro).
+- Sin capturas de pantalla guardadas en la carpeta; la del error del paso 3 quedó en la conversación.
+
 ## Pendiente
 
-F005 (demo en Altirra), F006 (docs).
+F006 (docs).

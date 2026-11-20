@@ -80,6 +80,9 @@ public:
     rb::core::Span<const uint8_t> piece(uint32_t valueIndex) const noexcept;
     StartGate startGate() const noexcept;
 
+    // The tape of the last start() (same task as start(): not for the consumer task).
+    const TapeSource* source() const noexcept { return source_; }
+
     // Diagnostics.
     uint32_t reads() const noexcept { return reads_; }
     uint32_t faults() const noexcept { return faults_; }

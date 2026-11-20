@@ -82,7 +82,8 @@ Rama `feat/cassette-cas` (worktree `.worktrees/feat-cassette-cas`, desde main `b
 ## C100 — Quitar lo que no sigue (hecha, 2026-11-20)
 
 - C003 sin commit descartado: `host/src/cassette_run.hpp` borrado; `host/src/main.cpp` y `host/CMakeLists.txt` vuelven
-  al commit. La evidencia sigue en `D:b-e0\m49-cas\c003`.
+  al commit. La evidencia sigue en `D:
+b-e0\m49-cas\c003`.
 - Retirado el envío de cinta por NetSIO: `encodeSpeedChange`, `sendSpeed`, `sendOutsideFrame`, `creditAsked_`,
   `host/src/netsio_tape_link.hpp` y `test_netsio_tape_link`, más sus pruebas de códec y transporte.
 - Se conserva: `motorOn()`, `motorChanges` y sus dos pruebas (MOTOR de NetSIO).
@@ -175,6 +176,30 @@ Rama `feat/cassette-cas` (worktree `.worktrees/feat-cassette-cas`, desde main `b
   - tras un corte, `start()` podía llamarse con el productor aún dentro de `step()`: ahora espera a que salga de
     `Loading`, y la pausa sigue contando mientras;
   - una caída de MOTOR con la tirada ya sonada la repetía: ahora avanza.
+
+## C105 — CassetteCommands: `cas mount|status|eject|rewind` (hecha, 2026-11-20)
+
+- `components/rb_cassette`: `CassetteCommands::run(args, motor, wave, out)` responde una línea. `mount` da el nombre y
+  los bloques `data` y `fsk ` (la ruta puede tener espacios). Un archivo que no abre o no se indexa da su mensaje y
+  deja la cinta montada y su posición como estaban (AC6). Uno bueno la reemplaza y queda al principio. `status`:
+  segmento, fase, MOTOR y «run too big». `eject` y `rewind`. Archivos por el puerto `TapeFiles` (la SD en el ESP32).
+- Dos tablas de segmentos del llamador: el índice nuevo se arma en la de repuesto; solo si sale bien se cambian.
+- Una cinta que sale (mount, eject) se cierra solo cuando el productor ya no la carga; mientras, `mount` y `eject`
+  responden «busy». Nuevo accesor `FskLoader::source()`.
+- Código propio de RetroBridge: no adapta líneas de FujiNet; sin fila nueva en `docs/fuentes.md`.
+- Cinta real: `PAL_ALIEN_AMBUSH_TURBO_SOFTWARE.cas` → «51 data, 49 fsk», 100 segmentos (cuenta independiente).
+- Controles:
+  - pruebas: `test_cassette_commands` 27/27 con `RB_CAS_SAMPLES`; RED: 26 de 26 fallos contra el esqueleto; `ctest`
+    72/72;
+  - sin reservas: contador de `new` alrededor de los comandos, con control positivo;
+  - compilación: sin avisos con `-Werror`; `check_layering` OK; `check_notices` OK;
+  - seguridad: ruta acotada a 256, nombre a 64, respuesta con `vsnprintf` acotado; ningún cierre con el productor
+    leyendo;
+  - trazabilidad: AC6, AC8; `rsc risk`: **no ejecutado** (permiso denegado en esta sesión); tier del plan: 1, un revisor.
+- Revisión (1 revisor, ronda 1): sin defectos. Dos huecos de prueba cerrados: la cinta vieja se cierra cuando el
+  cargador ya carga la nueva (el mutante que quitaba esa condición sobrevivía; ahora falla), y tras un montaje fallido
+  la cinta vieja suena entera con sus segmentos. Anotado para C106: la cinta retirada se cierra en el siguiente `cas`;
+  el adaptador del ESP32 puede llamar a `run` sin texto o cerrar en su bucle.
 
 ## Decision queue
 

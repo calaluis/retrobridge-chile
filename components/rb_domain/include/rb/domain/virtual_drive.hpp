@@ -44,6 +44,10 @@ public:
     // Writes a sector of the current disk and records whether it failed.
     rb::core::Result<uint16_t> writeSector(SectorNumber sector, rb::core::Span<const uint8_t> data);
 
+    // Formats the mounted disk (DiskImage::format); NoDiskMounted when empty.
+    // Records the outcome like a read or a write.
+    rb::core::Result<void> format(Density density);
+
     DriveStatus status() const noexcept;
 
     // In-memory queries for the SIO dispatcher's first phase (ADR-005): no I/O,

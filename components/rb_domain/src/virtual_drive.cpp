@@ -53,6 +53,17 @@ Result<uint16_t> VirtualDrive::writeSector(SectorNumber sector, Span<const uint8
     return result;
 }
 
+Result<void> VirtualDrive::format(Density density)
+{
+    if (!disk_) {
+        lastOperationFailed_ = true;
+        return Failure{ErrorCode::NoDiskMounted};
+    }
+    Result<void> result = disk_->format(density);
+    lastOperationFailed_ = !result.ok();
+    return result;
+}
+
 Result<uint16_t> VirtualDrive::validateRead(SectorNumber sector) const noexcept
 {
     if (!disk_) {

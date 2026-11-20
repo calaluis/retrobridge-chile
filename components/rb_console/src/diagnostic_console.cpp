@@ -52,6 +52,7 @@ const char* error_name(ErrorCode error)
     case ErrorCode::InvalidPinAssignment: return "InvalidPinAssignment";
     case ErrorCode::StorageNotMounted: return "StorageNotMounted";
     case ErrorCode::WriteProtected: return "WriteProtected";
+    case ErrorCode::DensityMismatch: return "DensityMismatch";
     default: return "Error";
     }
 }

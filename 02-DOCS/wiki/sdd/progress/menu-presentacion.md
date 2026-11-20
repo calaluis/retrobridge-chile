@@ -87,6 +87,15 @@ anterior se cerró antes (una sola instancia por hub). Un primer arranque sin hu
 
 Evidencia en `D:\rb-e0\m47-presentacion`: `host.jsonl`, `host-sin-hub.jsonl`, `version.txt`, `retrobridge_host.exe`.
 
+## P005 — Documentación (hecha, 2026-11-20)
+
+- `docs/adr/0017-menu-de-arranque.md`: enmienda 10 (búfer oculto, aviso ` CARGANDO...`, cambio de lista en el
+  borrado vertical y copia, pie nuevo; consecuencias: 17 sectores y repetición del joystick de 30/9 a 31/10).
+- `host/README.md`: el pie con todas las teclas y la carga sin barrido.
+- `docs/fuentes.md`: fila 2026-11-20 (manual de Altirra, ANTIC y SO, ya registrado; observación propia P004).
+- Spec: AC6 y Behaviour precisados (quien reintenta es SIOV; si falla, el error de hoy). Revisión anotada.
+- Controles: `python -I tools/check_notices.py` OK; `rsc spec gate` PASS; sin emoji en los 4 archivos.
+
 ## Pendiente
 
-P005 (docs).
+Cierre: verify de cierre y review de la rama; después push y PR (con aprobación).

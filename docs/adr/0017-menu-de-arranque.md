@@ -271,3 +271,26 @@ había que crearlo en el PC.
 
 Consecuencias: solo cambia el host; el programa 6502 no cambia. El editor del 6502 no tiene `_`, así que el
 mensaje no lo anuncia, aunque la regla lo acepta. Una ATR creada queda en la carpeta aunque el montaje falle.
+
+## Enmienda 10 (2026-11-20, spec `menu-presentacion`): carga sin barrido y pie con todas las teclas
+
+Contexto: la pantalla nueva se veía dibujarse de arriba hacia abajo mientras llegaba, porque SIOV escribía la
+respuesta en la memoria que muestran las listas de visualización. Además, el pie no mostraba `N`. Fuente: *Altirra
+Hardware Reference Manual* (ANTIC: `DLISTL`; SO: `SDLSTL`, `RTCLOK`).
+
+1. **Búfer oculto.** La respuesta de `K` llega a un búfer de 962 bytes fuera de la vista: RAM en la primera página
+   después del bloque que carga el arranque (hoy `$1000`-`$13C2`). No se carga del disco, así que el bloque no crece
+   por él. El generador falla si no cabe bajo `$4000`.
+2. **Aviso.** Antes de cada `K`, salvo la consulta `POLL` de la acción 2, el 6502 escribe ` CARGANDO...` en la fila
+   de mensajes de la pantalla que se ve (la de la principal o la de la lista). En la acción 2 se sigue viendo el
+   ` CARGANDO nn%` del host.
+3. **Mostrar de una vez.** Si SIOV termina bien, el 6502 espera un cambio de `RTCLOK` (borrado vertical), pone la
+   lista de visualización del layout nuevo en `SDLSTL` y en `DLISTL`, y copia el búfer a la pantalla de arriba hacia
+   abajo. Si SIOV falla, no se copia nada: queda la pantalla vieja y sale ` ERROR: EL HOST NO RESPONDE`, como antes;
+   ahora además el layout visible vuelve a la principal.
+4. **Pie principal.** `[1-8] FUENTE`, `[E] SERVIDOR`, `[N] NUEVA ATR` / `[A] ARRANCAR D1`, `[U] DESMONTAR UNIDAD`.
+   El pie de la lista no cambia.
+
+Consecuencias: el protocolo con el host no cambia. El programa pasa de 16 a 17 sectores. Cada respuesta se muestra
+un cuadro más tarde (la espera del borrado vertical): la repetición del joystick que va al host pasa de 30/9 a 31/10
+cuadros (Enmienda 3, punto 2); el cursor local no cambia. La demo en Altirra no mostró barrido.

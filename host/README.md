@@ -69,7 +69,10 @@ los datos no coinciden).
 Con `--images <carpeta>`, en lugar de `--image`, RetroBridge sirve su propio menú como D1 tras cada reinicio en
 frío y atiende las unidades D1 a D8. La pantalla principal muestra las fuentes (1 = la carpeta, rotulada `SD`;
 2 a 8 = las del archivo `--sources`) y el estado de D1 a D8 y C:. Los avisos y errores aparecen en la última
-línea, debajo del pie de teclas. El protocolo está en ADR-017; el cliente TNFS, en ADR-018.
+línea, debajo del pie de teclas. El pie muestra todas las teclas de la pantalla principal: `1-8` fuente,
+`E` servidor, `N` nueva ATR, `A` arrancar D1 y `U` desmontar unidad. Mientras el host responde, la pantalla
+queda quieta con ` CARGANDO...` en esa línea, y la nueva aparece entera, sin barrido (ADR-017 enmienda 10).
+El protocolo está en ADR-017; el cliente TNFS, en ADR-018.
 
 Todo se puede hacer con el cursor: las flechas (Control + `-` `=` `+` `*`) o el joystick del puerto 1 lo
 mueven, y RETURN o el botón rojo confirman lo marcado. La fila marcada sale en vídeo inverso. Las letras y los

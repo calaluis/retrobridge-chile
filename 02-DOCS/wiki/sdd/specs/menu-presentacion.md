@@ -113,7 +113,7 @@ Condición: el menú arrancó en D1. Cualquier usuario del Atari puede hacerlo; 
 
 - **Petición normal.** Al mandar una tecla al host, el 6502 escribe ` CARGANDO...` en la fila de mensajes de la
   pantalla que se ve: la de la principal o la de la lista, cada una en su lugar. Recibe la respuesta fuera de la vista. Si llega entera y válida, la muestra de una vez.
-- **Respuesta cortada o mezclada.** Como hoy: el 6502 la descarta y reintenta. La pantalla vieja queda visible con
+- **Respuesta cortada o mezclada.** Como hoy: SIOV reintenta solo; si falla, el 6502 muestra el error de hoy. La pantalla vieja queda visible con
   el aviso; nunca se muestra la respuesta mala.
 - **Espera (acción 2).** La pantalla que manda el host (con ` CARGANDO nn%`) se muestra entera, como cualquier otra.
 - **Edición (acción 3).** El campo se edita sobre la pantalla ya mostrada, como hoy.
@@ -135,7 +135,8 @@ Condición: el menú arrancó en D1. Cualquier usuario del Atari puede hacerlo; 
   ` CARGANDO nn%` como hoy.
 - **AC5** — Dado el editor de servidores o el nombre de `N`, cuando el usuario escribe, entonces el campo se edita
   como hoy.
-- **AC6** — Dada una respuesta cortada, cuando el 6502 la recibe, entonces no la muestra y reintenta.
+- **AC6** — Dada una respuesta cortada, cuando SIOV termina con error, entonces el 6502 no la muestra y sale el
+  error de hoy (` ERROR: EL HOST NO RESPONDE`).
 - **AC7** — Dado `A` en la principal, cuando arranca D1, entonces el programa arranca como hoy.
 - **AC8** — Las pruebas de `ctest` y de `tools/` pasan; el pie del programa generado contiene las 5 teclas.
 
@@ -179,3 +180,4 @@ Condición: el menú arrancó en D1. Cualquier usuario del Atari puede hacerlo; 
 - 2026-11-20 — borrador (specify).
 - 2026-11-20 — clarify: 2 preguntas resueltas, AC3 precisado, AC9 nuevo.
 - 2026-11-20 — aprobada por el responsable.
+- 2026-11-20 — precisión de AC6 y de Behaviour (plan §1): quien reintenta es SIOV, no el 6502.

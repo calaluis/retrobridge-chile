@@ -133,6 +133,7 @@ Formatear y crear (spec `menu-formatear-disco`, [ADR-019](../docs/adr/0019-escri
 disco nuevo, `N` en la pantalla principal: se escribe el nombre (1 a 25 de A-Z, 0-9 y `-`), se elige `S` o `M` y la
 unidad. El host crea `<NOMBRE>.ATR`, la agrega a la lista y la monta; nunca sobrescribe un archivo existente. Después
 se formatea desde el DOS. El formateo queda en `sio_write` como `cmd=F` o `cmd=FM`; la creación, en `menu_create`.
+La carpeta necesita al menos una ATR para que el host arranque: el primer disco se copia desde el PC.
 
 Pendiente (no implementado): casete (sin soporte).
 

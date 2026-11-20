@@ -59,7 +59,8 @@ Contexto: el DOS del Atari formatea un disco antes de usarlo. Fuente: *Altirra H
 4. **Respuesta.** La trama lleva `$FF` en todos sus bytes: la lista de sectores malos está vacía y termina en
    `$FFFF`. El resto en `$FF` es elección propia (M46-4): el manual no dice qué va después del terminador.
 5. **STATUS tras un fallo.** Como la escritura: D3 si la unidad está protegida, D2 en cualquier otro fallo
-   (densidad, E/S, unidad vacía).
+   (densidad, E/S, unidad vacía). Duran hasta la siguiente `R`, `W`, `P` o formateo aceptado en esa unidad; un
+   STATUS no los borra.
 6. **Registro.** `sio_write` con `cmd=F` (`$21`) o `cmd=FM` (`$22`), sin sector ni CRC-32. Causa nueva: `density`.
 
 Consecuencias: el DOS 2.5 formatea en simple (`P`) y en media (`I`); la demo F005 confirmó que `I` manda `$22` y que

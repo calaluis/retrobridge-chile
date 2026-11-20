@@ -18,6 +18,8 @@ uint32_t clampTimeout(uint64_t micros) noexcept
     return static_cast<uint32_t>(micros < kMax ? micros : kMax);
 }
 
+constexpr uint8_t kAckByte = 0x41;  // 'A'
+
 uint32_t littleEndian32(Span<const uint8_t> bytes) noexcept
 {
     return static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8) |
@@ -125,6 +127,46 @@ Result<void> NetSioSioTransport::send(Span<const uint8_t> bytes)
 void NetSioSioTransport::releaseDataLine()
 {
     answerEmpty();
+}
+
+Result<void> NetSioSioTransport::receiveAfterAck(Span<uint8_t> frame)
+{
+    if (!pendingSync_.has_value() || frame.empty() || frame.size() > std::numeric_limits<uint16_t>::max()) {
+        return Failure{ErrorCode::TransportError};
+    }
+    const std::size_t length = encodeSyncResponse(Span<uint8_t>{tx_}, *pendingSync_, ack::kValid, kAckByte,
+                                                  static_cast<uint16_t>(frame.size()));
+    const Result<void> sent = transmit(length);
+    if (!sent.ok()) {
+        return sent;  // still pending: releaseDataLine() answers it empty
+    }
+    pendingSync_.reset();
+    ++stats_.validSyncResponses;
+
+    data_ = frame.data();
+    dataSize_ = frame.size();
+    dataCount_ = 0;
+    dataComplete_ = false;
+    receiving_ = true;
+    const uint64_t deadline = clock_.nowMicros() + config_.dataTimeoutUs;
+    while (receiving_) {
+        if (clock_.nowMicros() >= deadline) {
+            abandonData();
+            break;
+        }
+        const Result<bool> received = receiveOne(deadline);
+        if (!received.ok() && received.error() != ErrorCode::Timeout) {
+            abandonData();
+            break;
+        }
+    }
+    data_ = nullptr;
+    if (!dataComplete_) {
+        ++stats_.dataFramesDiscarded;
+        return Failure{ErrorCode::TransportError};
+    }
+    ++stats_.dataFramesReceived;
+    return {};
 }
 
 Result<void> NetSioSioTransport::transmit(std::size_t length)
@@ -238,6 +280,7 @@ bool NetSioSioTransport::process(std::size_t length)
 
     switch (message.id) {
     case id::kCommandOn:
+        abandonData();  // the computer gave up on the write; keep the new frame
         if (inFrame_) {
             ++stats_.framesDiscarded;
         }
@@ -247,6 +290,10 @@ bool NetSioSioTransport::process(std::size_t length)
         return false;
     case id::kDataByte:
     case id::kDataBlock:
+        if (receiving_) {
+            appendData(message.payload);
+            return false;
+        }
         append(message.payload);
         return false;
     case id::kCommandOffSync:
@@ -266,7 +313,13 @@ bool NetSioSioTransport::process(std::size_t length)
         return true;
     case id::kDataByteSync:
         pendingSync_ = message.payload[1];
-        answerEmpty();  // write data frame: v1 is read-only and never plans this sync
+        if (receiving_) {
+            appendData(message.payload.first(1));  // the checksum, last byte of the frame
+            receiving_ = false;
+            dataComplete_ = dataCount_ == dataSize_;
+            return false;  // the sync waits for the ACK/NAK of the data
+        }
+        answerEmpty();  // a write data frame nobody planned
         return false;
     case id::kSpeedChange:
         stats_.lastBaud = littleEndian32(message.payload);
@@ -274,6 +327,7 @@ bool NetSioSioTransport::process(std::size_t length)
     case id::kColdReset:
     case id::kWarmReset:
         ++stats_.resets;
+        abandonData();
         if (inFrame_) {
             inFrame_ = false;
             ++stats_.framesDiscarded;
@@ -308,6 +362,24 @@ void NetSioSioTransport::append(Span<const uint8_t> bytes) noexcept
             ++frame_.count;
         }
     }
+}
+
+void NetSioSioTransport::appendData(Span<const uint8_t> bytes) noexcept
+{
+    for (uint8_t byte : bytes) {
+        if (dataCount_ < dataSize_) {
+            data_[dataCount_] = byte;
+        }
+        if (dataCount_ <= dataSize_) {
+            ++dataCount_;  // dataSize_ + 1 marks a frame longer than announced
+        }
+    }
+}
+
+void NetSioSioTransport::abandonData() noexcept
+{
+    receiving_ = false;
+    dataComplete_ = false;
 }
 
 }  // namespace rb::netsio

@@ -64,6 +64,31 @@ nombres (`plus1-intento1..5.jsonl`).
     errores de memoria hasta que corra el CI.
   - **HERRAMIENTA-AUSENTE** — firmware ESP-IDF: sin `idf.py` en este PC; lo compila el CI.
 
+## W003 — Recepción de datos por NetSIO (hecha, 2026-11-19)
+
+- `NetSioSioTransport::receiveAfterAck(frame)`: con la sync del comando pendiente envía
+  `81 <sync> 01 'A' <frame.size() LE>`; junta `01`/`02` en `frame` hasta `09`, cuyo byte es el último y cuya sync
+  queda pendiente para el ACK/NAK de los datos (siguiente `send()`). Largo distinto, `11` nuevo, reset o
+  `dataTimeoutUs` (1 s): TransportError; la sync pendiente se suelta vacía. Un `11` durante los datos conserva la
+  trama nueva. Un `09` fuera de una escritura sigue contestándose vacío.
+- Estadísticas nuevas: `dataFramesReceived`, `dataFramesDiscarded`.
+- Pruebas: 10 casos nuevos en `test_netsio_transport` (37 en total) y 1 en `test_netsio_transport_allocations`
+  (0 asignaciones). 63 de 63 en verde; `check_layering` y `check_notices` OK.
+- Control negativo: con `dataComplete_ = true` fijo, fallan los casos de largo mayor y menor (2 fallos);
+  restaurado, 36 de 36. Sin `abandonData()` en el reset, falla el caso de reset.
+- Riesgo `rsc risk`: tier 1. Un revisor (correctitud): sin defectos. Detalles aplicados: prueba de reset durante
+  los datos y comentario de `dataFramesDiscarded`. Aceptados: sin prueba de error de recepción durante los datos;
+  `abandonData()` también corre fuera de una escritura (inofensivo).
+- Controles (verify por tarea, corrida nueva tras el último cambio):
+  - pruebas: PASS, 63 de 63; `test_netsio_transport` 37 de 37; asignaciones 4 de 4 (0 en la escritura).
+  - compilación: PASS, MinGW ucrt64, `-Werror`, 0 avisos.
+  - seguridad: PASS por lectura dirigida. Los bytes del Atari solo se copian dentro de `frame` (tope
+    `dataSize_`); el exceso solo se cuenta.
+  - trazabilidad: PASS. `write_size` = sector + 1 = medida W001 (M45-1); `09` fuera de escritura vacío = sin
+    cambio para el resto.
+  - **SUSTITUIDA** — sanitizadores: solo en el CI (`-DRB_SANITIZE=ON`). No detecta errores de memoria aquí.
+  - **HERRAMIENTA-AUSENTE** — firmware ESP-IDF: sin `idf.py`; lo compila el CI.
+
 ## Pendiente
 
-W003 a W007.
+W004 a W007.

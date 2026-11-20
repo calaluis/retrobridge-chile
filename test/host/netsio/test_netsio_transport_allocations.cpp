@@ -133,6 +133,26 @@ static void test_transactions_do_not_allocate(void)
     delete h;
 }
 
+static void test_write_data_frame_does_not_allocate(void)
+{
+    NetSioHarness* h = make_harness(rb::test::harness_config(PeerProfile::NetsiohubTrailingByte));
+    h->connect();
+    h->push_frame(command_frame(kD1, 0x57, 4, 0), 0x07);
+    std::array<uint8_t, 1 + 128> block{};
+    block[0] = 0x02;
+    h->from_atari_bytes(block.data(), block.size());
+    h->from_atari({0x09, 0x00, 0x08});
+    std::array<uint8_t, 129> frame{};
+    const uint8_t ack[] = {0x41};
+
+    const unsigned long before = g_allocations;
+    TEST_ASSERT_TRUE(h->transport.waitCommandFrame(20000).ok());
+    TEST_ASSERT_TRUE(h->transport.receiveAfterAck(rb::core::Span<uint8_t>{frame}).ok());
+    TEST_ASSERT_TRUE(h->transport.send(rb::core::Span<const uint8_t>{ack}).ok());
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, g_allocations - before, "write data frame over NetSIO allocated");
+    delete h;
+}
+
 static void test_failures_do_not_allocate(void)
 {
     NetSioHarness* h = make_harness(rb::test::harness_config(PeerProfile::Fep003Strict));
@@ -153,6 +173,7 @@ int main(void)
     UNITY_BEGIN();
     RUN_TEST(test_counter_detects_allocations);
     RUN_TEST(test_transactions_do_not_allocate);
+    RUN_TEST(test_write_data_frame_does_not_allocate);
     RUN_TEST(test_failures_do_not_allocate);
     return UNITY_END();
 }

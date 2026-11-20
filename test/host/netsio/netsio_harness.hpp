@@ -97,6 +97,19 @@ struct NetSioHarness {
         port.push_bytes(datagram.data(), length);
     }
 
+    // One message from the Atari built from a buffer (long DATA BLOCKs).
+    void from_atari_bytes(const uint8_t* bytes, std::size_t length)
+    {
+        std::array<uint8_t, ScriptedDatagramPort::kMaxBytes> datagram{};
+        for (std::size_t i = 0; i < length; ++i) {
+            datagram[i] = bytes[i];
+        }
+        if (profile == rb::netsio::PeerProfile::NetsiohubTrailingByte) {
+            datagram[length++] = trailer++;
+        }
+        port.push_bytes(datagram.data(), length);
+    }
+
     // COMMAND ON, DATA BLOCK with the 5 frame bytes, COMMAND OFF + SYNC.
     void push_frame(const std::array<uint8_t, 5>& frame, uint8_t sync)
     {

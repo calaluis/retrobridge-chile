@@ -15,7 +15,13 @@
 //             (menu-tnfs; without a loader they say the client is missing);
 //             E edits the server of the source under the bar, or adds one
 //             on an empty row (menu-editar-servidor); A boots the image
-//             assigned to D1; U asks which drive to unmount.
+//             assigned to D1; U asks which drive to unmount; N creates a
+//             blank ATR in the local folder (menu-formatear-disco).
+//   create    three steps on the main screen: the name, edited by the 6502 in
+//             the message row (action 3, as edit; lower case is taken as
+//             capitals, M46-3); S or M, the density; 2..8,
+//             the drive. The file is created, listed and mounted there; Esc
+//             cancels at any step.
 //   edit      action 3: the 6502 edits the row by itself; its text comes with
 //             text() and 'K' kMenuEditSave saves it in --sources; Esc cancels.
 //   list      A..T choose an image of the local source; Esc goes back.
@@ -42,6 +48,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "create_atr.hpp"
 #include "menu_catalog.hpp"
 #include "menu_image.hpp"
 #include "menu_loader.hpp"
@@ -96,6 +103,13 @@ public:
     void onColdReset() noexcept;
     // The --sources file E rewrites (menu-editar-servidor); nullptr: E says there is none.
     void setSourcesFile(const char* path) noexcept { sourcesFile_ = path; }
+    // The --images folder and its catalog (the one given to the constructor), where N
+    // creates a blank ATR (menu-formatear-disco); not set: N says there is none.
+    void setImagesFolder(const char* folder, MenuCatalog& catalog) noexcept
+    {
+        imagesFolder_ = folder;
+        writableCatalog_ = &catalog;
+    }
     // Command 'T': character `ascii` at `position` of the text being edited. Writing
     // a position again gives the same text, so a retry of SIOV changes nothing.
     void text(uint8_t position, uint8_t ascii) noexcept;
@@ -127,7 +141,8 @@ private:
         uint16_t page = 0;
     };
     static constexpr std::size_t kStackDepth = 32;  // folder levels remembered for Esc (M42-3)
-    enum class View : uint8_t { Main, List, Pick, Unmount, Folder, FolderPick, Edit };
+    enum class View : uint8_t { Main, List, Pick, Unmount, Folder, FolderPick, Edit, Create };
+    enum class CreateStep : uint8_t { Name, Density, Drive };
     enum class InFlight : uint8_t { None, Menu, Boot, Mount, Unmount };
     enum class Job : uint8_t { None, Open, Enter, Up, Fetch };
 
@@ -160,6 +175,15 @@ private:
     void deleteSource();
     // The edited text without the spaces after it, in `out` (kMenuEditWidth + 1 bytes).
     std::size_t editedText(char* out) const noexcept;
+    // True while the 6502 edits a field: a server (Edit) or a new name (Create).
+    bool editing() const noexcept { return view_ == View::Edit || (view_ == View::Create && createStep_ == CreateStep::Name); }
+    void startCreate();
+    void onCreateName(uint8_t code);
+    void onCreate(uint8_t key, int digit);
+    void createOn(unsigned drive);
+    void createEvent(const char* result, unsigned drive);
+    // An entry inserted at `from`: every saved position at or after it moves one down.
+    void shiftEntries(EntryIndex from) noexcept;
     bool boot();
     void assignD1(EntryIndex entry);
     void mountOn(unsigned drive, EntryIndex entry);
@@ -250,6 +274,13 @@ private:
     const char* sourcesFile_ = nullptr;
     unsigned editSource_ = 0;
     std::array<char, kMenuEditWidth> editText_{};
+
+    // N (menu-formatear-disco): the folder, the step, and the name and density chosen.
+    const char* imagesFolder_ = nullptr;
+    MenuCatalog* writableCatalog_ = nullptr;
+    CreateStep createStep_ = CreateStep::Name;
+    bool createSingle_ = true;
+    char createName_[kMaxNewAtrName + 5] = {};  // "<NAME>.ATR"; empty until a valid name
 
     std::array<char, kMenuLineWidth + 1> message_{};
     bool coldResetPending_ = false;

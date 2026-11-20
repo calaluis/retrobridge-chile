@@ -168,7 +168,7 @@ add_test(NAME generate_menu_images
          COMMAND ${Python3_EXECUTABLE} -I ${rb_root}/tools/make_atr.py --out ${rb_menu_images} --demo)
 set_tests_properties(generate_menu_images PROPERTIES FIXTURES_SETUP menu_images)
 rb_add_host_test(test_host_menu menu/test_host_menu.cpp
-                 ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
+                 ${rb_root}/host/src/create_atr.cpp ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
                  ${rb_root}/host/src/menu_controller.cpp ${rb_root}/host/src/menu_sio_transport.cpp
                  ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_folder.cpp)
 target_include_directories(test_host_menu PRIVATE ${rb_root}/host/src)
@@ -176,7 +176,7 @@ target_compile_definitions(test_host_menu PRIVATE RB_TEST_MENU_DIR="${rb_menu_im
 set_tests_properties(test_host_menu PROPERTIES FIXTURES_REQUIRED menu_images)
 # Disk writes with --images (menu-escritura-disco, W005).
 rb_add_host_test(test_host_write menu/test_host_write.cpp
-                 ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
+                 ${rb_root}/host/src/create_atr.cpp ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
                  ${rb_root}/host/src/menu_controller.cpp ${rb_root}/host/src/menu_sio_transport.cpp
                  ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_folder.cpp)
 target_include_directories(test_host_write PRIVATE ${rb_root}/host/src)
@@ -186,7 +186,7 @@ target_link_libraries(test_host_write PRIVATE Threads::Threads)
 set_tests_properties(test_host_write PROPERTIES FIXTURES_REQUIRED menu_images)
 # E on the main screen: edit or add a server and rewrite --sources (menu-editar-servidor, M43).
 rb_add_host_test(test_menu_editar menu/test_menu_editar.cpp
-                 ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
+                 ${rb_root}/host/src/create_atr.cpp ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
                  ${rb_root}/host/src/menu_controller.cpp ${rb_root}/host/src/menu_sio_transport.cpp
                  ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_folder.cpp)
 target_include_directories(test_menu_editar PRIVATE ${rb_root}/host/src)
@@ -228,7 +228,7 @@ target_link_libraries(test_tnfs_loader PRIVATE rb_net_tnfs Threads::Threads)
 
 # TNFS sources in the menu: MenuController with the loader over the fake server (menu-tnfs T012).
 rb_add_host_test(test_menu_tnfs menu/test_menu_tnfs.cpp ${rb_root}/host/src/menu_controller.cpp
-                 ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
+                 ${rb_root}/host/src/create_atr.cpp ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
                  ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp
                  ${rb_root}/host/src/tnfs_folder.cpp ${rb_root}/host/src/sha256.cpp)
 target_include_directories(test_menu_tnfs PRIVATE ${rb_root}/host/src)
@@ -238,7 +238,7 @@ set_tests_properties(test_menu_tnfs PROPERTIES FIXTURES_REQUIRED menu_images)
 
 # Cursor and pages in the lists (menu-navegacion N003), on the rig of test_menu_tnfs.
 rb_add_host_test(test_menu_navegacion menu/test_menu_navegacion.cpp ${rb_root}/host/src/menu_controller.cpp
-                 ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
+                 ${rb_root}/host/src/create_atr.cpp ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
                  ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp
                  ${rb_root}/host/src/tnfs_folder.cpp ${rb_root}/host/src/sha256.cpp)
 target_include_directories(test_menu_navegacion PRIVATE ${rb_root}/host/src)
@@ -251,7 +251,7 @@ rb_add_host_test(test_tnfs_link menu/test_tnfs_link.cpp ${rb_root}/host/src/tnfs
                  ${rb_root}/host/src/udp_tnfs_port.cpp ${rb_root}/host/src/udp_datagram_port.cpp
                  ${rb_root}/host/src/jsonl_log.cpp ${rb_root}/host/src/tnfs_loader.cpp
                  ${rb_root}/host/src/tnfs_folder.cpp ${rb_root}/host/src/sha256.cpp
-                 ${rb_root}/host/src/menu_controller.cpp ${rb_root}/host/src/menu_catalog.cpp
+                 ${rb_root}/host/src/menu_controller.cpp ${rb_root}/host/src/create_atr.cpp ${rb_root}/host/src/menu_catalog.cpp
                  ${rb_root}/host/src/menu_image.cpp ${rb_root}/host/src/menu_sources.cpp)
 target_include_directories(test_tnfs_link PRIVATE ${rb_root}/host/src)
 target_compile_definitions(test_tnfs_link PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")

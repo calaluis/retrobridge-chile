@@ -4,9 +4,13 @@
 // per write command (W/P) that reached a drive, written to the JSONL log:
 //   drive=n cmd=W|P sector=s result=complete|error|nak [crc32=xxxxxxxx] [cause=...]
 //   [reply=lost]
+// and one per format (menu-formatear-disco): $21 is cmd=F, $22 is cmd=FM, with
+// no sector and no crc32:
+//   drive=n cmd=F|FM result=complete|error|nak [cause=...] [reply=lost]
 // crc32 is the CRC-32 (IEEE) of the sector data received (absent when the
-// command itself was NAKed). cause, on error: no_disk, protected or io (the
-// file could not be written: disk full, file locked by another program).
+// command itself was NAKed). cause, on error: no_disk, protected, density (a
+// format whose density is not the disk's) or io (the file could not be
+// written: disk full, file locked by another program).
 // reply=lost: COMPLETE or ERROR could not be sent; the result still happened.
 
 #include <cstddef>
@@ -14,12 +18,18 @@
 #include <cstdio>
 
 #include "rb/domain/virtual_drive.hpp"
+#include "rb/sio/sio_codes.hpp"
 
 namespace rb::host {
 
+constexpr uint8_t kSioFormat = rb::sio::command::kFormat;              // $21
+constexpr uint8_t kSioFormatMedium = rb::sio::command::kFormatMedium;  // $22
+
+inline bool isFormat(uint8_t command) noexcept { return command == kSioFormat || command == kSioFormatMedium; }
+
 struct SioWriteRecord {
     uint8_t drive = 0;    // 1..8
-    uint8_t command = 0;  // 'W' or 'P'
+    uint8_t command = 0;  // 'W', 'P', kSioFormat or kSioFormatMedium
     uint16_t sector = 0;
     char result = 0;      // 'C' complete, 'E' error, 'N' nak
     bool haveData = false;
@@ -52,8 +62,8 @@ inline uint32_t crc32(const uint8_t* data, std::size_t length) noexcept
     return ~crc;
 }
 
-// Cause of an ERROR, from the drive as it is right after the write.
-inline const char* sioWriteCause(const rb::domain::VirtualDrive* drive) noexcept
+// Cause of an ERROR, from the drive as it is right after the command.
+inline const char* sioWriteCause(const rb::domain::VirtualDrive* drive, uint8_t command) noexcept
 {
     if (drive == nullptr) {
         return "no_drive";
@@ -62,7 +72,17 @@ inline const char* sioWriteCause(const rb::domain::VirtualDrive* drive) noexcept
     if (!status.diskPresent()) {
         return "no_disk";
     }
-    return status.writeProtected() ? "protected" : "io";
+    if (status.writeProtected()) {
+        return "protected";
+    }
+    if (isFormat(command) && drive->geometry() != nullptr) {
+        const rb::domain::Density wanted =
+            command == kSioFormat ? rb::domain::Density::Single : rb::domain::Density::Enhanced;
+        if (drive->geometry()->density() != wanted) {
+            return "density";
+        }
+    }
+    return "io";
 }
 
 // Writes the event detail into `out`; `drive` is the drive written (for cause).
@@ -70,8 +90,12 @@ inline void formatSioWrite(const SioWriteRecord& record, const rb::domain::Virtu
                            std::size_t size) noexcept
 {
     const char* result = record.result == 'C' ? "complete" : record.result == 'E' ? "error" : "nak";
-    int used = std::snprintf(out, size, "drive=%u cmd=%c sector=%u result=%s", static_cast<unsigned>(record.drive),
-                             static_cast<char>(record.command), static_cast<unsigned>(record.sector), result);
+    int used = isFormat(record.command)
+                   ? std::snprintf(out, size, "drive=%u cmd=%s result=%s", static_cast<unsigned>(record.drive),
+                                   record.command == kSioFormat ? "F" : "FM", result)
+                   : std::snprintf(out, size, "drive=%u cmd=%c sector=%u result=%s",
+                                   static_cast<unsigned>(record.drive), static_cast<char>(record.command),
+                                   static_cast<unsigned>(record.sector), result);
     if (used < 0 || static_cast<std::size_t>(used) >= size) {
         return;
     }
@@ -85,7 +109,7 @@ inline void formatSioWrite(const SioWriteRecord& record, const rb::domain::Virtu
     }
     if (record.result == 'E') {
         const int more =
-            std::snprintf(out + used, size - static_cast<std::size_t>(used), " cause=%s", sioWriteCause(drive));
+            std::snprintf(out + used, size - static_cast<std::size_t>(used), " cause=%s", sioWriteCause(drive, record.command));
         if (more < 0 || static_cast<std::size_t>(used + more) >= size) {
             return;
         }

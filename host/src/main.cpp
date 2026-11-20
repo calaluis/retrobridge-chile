@@ -437,6 +437,7 @@ int runMenu(const Options& options)
     loader.emplace(linkOf, repository.memory(), tnfsClock, imageMemory);
     rb::host::MenuController controller{catalog, sources, repository, mailbox, &events, &*loader};
     controller.setSourcesFile(options.sources);
+    controller.setImagesFolder(options.images, catalog);  // N creates a blank ATR there
     if (!loader->ready() || !controller.ready()) {
         loader.reset();  // its thread is joined before the log closes
         std::fclose(logFile);

@@ -43,7 +43,7 @@ void MenuSioTransport::trackWrite(const CommandBytes& command) noexcept
     const uint8_t device = command.bytes[0];
     const uint8_t code = command.bytes[1];
     if (device < rb::sio::device::kFirstDisk || device > rb::sio::device::kLastDisk ||
-        (code != rb::sio::command::kWriteSector && code != rb::sio::command::kPutSector) ||
+        (code != rb::sio::command::kWriteSector && code != rb::sio::command::kPutSector && !isFormat(code)) ||
         rb::sio::sio_checksum(Span<const uint8_t>{command.bytes.data(), 4}) != command.bytes[4]) {
         return;
     }
@@ -97,6 +97,8 @@ Result<void> MenuSioTransport::send(Span<const uint8_t> bytes)
     case WriteStage::Command:  // the command itself was NAKed (invalid sector)
         if (first == rb::sio::code::kNak) {
             reportWrite('N');
+        } else if (isFormat(write_.command)) {
+            writeStage_ = WriteStage::Completion;  // a format has no data frame: it runs after the ACK
         }
         break;
     case WriteStage::Data:

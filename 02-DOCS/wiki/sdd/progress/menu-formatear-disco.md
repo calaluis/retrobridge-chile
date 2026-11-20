@@ -80,6 +80,39 @@ plan: 02-DOCS/wiki/sdd/plans/menu-formatear-disco.md
   - **SUSTITUIDA** — sanitizadores: el CI compila con `-DRB_SANITIZE=ON`; aquí no.
   - **HERRAMIENTA-AUSENTE** — firmware ESP-IDF: sin `idf.py` en este PC; lo compila el CI.
 
+## F004 — Menú «Crear» y registro del formateo (hecha, 2026-11-20)
+
+- `MenuController`: tecla `N` (`$23`) en la pantalla principal y vista `Create` en tres pasos (M46-5):
+  - nombre: el 6502 lo edita en la fila de mensajes, tras `NOMBRE:` (acción 3, como el editor de servidores). Las
+    minúsculas valen como mayúsculas: sin Shift el 6502 manda minúsculas. Nombre inválido = ` NOMBRE NO VALIDO:
+    LETRAS, 0-9 Y -`; nombre ya en la lista = ` YA EXISTE <NOMBRE>.ATR`.
+  - densidad: `S` simple, `M` media.
+  - unidad: `2`..`8` o RETURN sobre la barra; `1` no se ofrece (D1 sirve el menú). Esc cancela en cada paso.
+- Al crear: `createAtr`, `MenuCatalog::insert`, `shiftEntries` (corre en +1 las posiciones guardadas de las
+  unidades, el montaje en vuelo, el remontaje y el cursor de la lista) y `mountOn`. Evento
+  `menu_create name=… density=single|medium|- drive=n result=created|exists|invalid_name|io|full|no_folder|not_listed`.
+- Sin carpeta: ` SIN CARPETA LOCAL`. Lista llena (999): ` LISTA LLENA: 999 IMAGENES`, antes de pedir el nombre.
+- `main.cpp`: `setImagesFolder(--images, catalog)`.
+- `sio_write` del formateo: `drive=n cmd=F|FM result=… [cause=no_disk|protected|density|io] [reply=lost]`, sin
+  sector ni crc32. `MenuSioTransport` sigue `$21`/`$22`: tras el ACK pasa a la respuesta final.
+- Pruebas: 10 casos nuevos en `test_host_write` (crear simple y media, formatear `F` y `FM`, otra densidad, protegida
+  y vacía, nombre existente, nombre inválido, minúsculas, cancelar y D1, lista llena, nombres de unidades tras
+  insertar). Primero en rojo (no compilaba), después en verde: 21 de 21 en `test_host_write`, 65 de 65 en total.
+  Cinco pruebas del menú enlazan ahora `create_atr.cpp`.
+- Riesgo `rsc risk`: tier 1. Un revisor (correctitud): un hallazgo, corregido. El editor del 6502 manda minúsculas
+  sin Shift y no tiene `_`; el host rechazaba `disco1`. Ahora pasa el nombre a mayúsculas, y el mensaje ya no
+  anuncia `_` (la regla M46-3 sigue aceptándolo). Detalle también corregido: el campo empezaba en la columna 8 y el
+  cursor del 6502 quedaba fuera de la fila; ahora empieza en la 7. Sin otros defectos: índices tras insertar, orden
+  de `key()`, máquina de estados del transporte y causa `density` revisados.
+- Controles (verify por tarea, corrida nueva sobre 02c3981 + cambios):
+  - pruebas: PASS, 65 de 65. `retrobridge_host.exe` compila.
+  - compilación: PASS, MinGW ucrt64, `-Werror`, 0 avisos.
+  - seguridad: PASS por lectura dirigida. El nombre pasa por `isNewAtrName`; crear nunca sobrescribe.
+  - trazabilidad: PASS. Formatear = AC1, AC2; otra densidad = AC3; protegida = AC4; crear = AC5; existente = AC6;
+    inválido = AC7; lista llena = AC8; pruebas anteriores en verde = AC10.
+  - **SUSTITUIDA** — sanitizadores: el CI compila con `-DRB_SANITIZE=ON`; aquí no.
+  - **HERRAMIENTA-AUSENTE** — firmware ESP-IDF: sin `idf.py` en este PC; lo compila el CI.
+
 ## Pendiente
 
-F004 (menú y registro, incluido `sio_write` del formateo), F005 (demo), F006 (docs).
+F005 (demo en Altirra), F006 (docs).

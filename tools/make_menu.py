@@ -156,8 +156,9 @@ def footer_key(key: str, label: str) -> bytes:
 
 
 def main_footer() -> bytes:
-    rows = (footer_key("1-8", " ABRIR FUENTE") + footer_key("E", " EDITAR SERVIDOR"),
-            footer_key("A", "   ARRANCAR D1 ") + footer_key("U", " GESTIONAR UNIDADES"))
+    # menu-presentacion: every key of the main screen in two rows, N included (AC3).
+    rows = (footer_key("1-8", " FUENTE  ") + footer_key("E", " SERVIDOR ") + footer_key("N", " NUEVA ATR"),
+            footer_key("A", " ARRANCAR D1  ") + footer_key("U", " DESMONTAR UNIDAD"))
     return b"".join(row + bytes(LINE_WIDTH - len(row)) for row in rows)
 
 

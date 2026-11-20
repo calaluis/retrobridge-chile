@@ -369,10 +369,11 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(screen[sub:sub + 20], make_menu.screen_codes(" ESTADO DE UNIDADES ", 20))
         inv = lambda text: bytes(b | 0x80 for b in make_menu.screen_codes(text, len(text)))  # noqa: E731
         txt = lambda text: make_menu.screen_codes(text, len(text))  # noqa: E731
-        row1 = (b"\x42" + inv("1-8") + b"\x56" + txt(" ABRIR FUENTE") + b"\x42" + inv("E") + b"\x56"
-                + txt(" EDITAR SERVIDOR") + b"\x00" * 3)
-        row2 = (b"\x42" + inv("A") + b"\x56" + txt("   ARRANCAR D1 ") + b"\x42" + inv("U") + b"\x56"
-                + txt(" GESTIONAR UNIDADES"))
+        # menu-presentacion (AC3): every key of the main screen, N included.
+        row1 = (b"\x42" + inv("1-8") + b"\x56" + txt(" FUENTE  ") + b"\x42" + inv("E") + b"\x56"
+                + txt(" SERVIDOR ") + b"\x42" + inv("N") + b"\x56" + txt(" NUEVA ATR"))
+        row2 = (b"\x42" + inv("A") + b"\x56" + txt(" ARRANCAR D1  ") + b"\x42" + inv("U") + b"\x56"
+                + txt(" DESMONTAR UNIDAD") + b"\x00" * 3)
         self.assertEqual((len(row1), len(row2)), (40, 40))
         foot = make_menu.MAIN_FOOTER
         self.assertEqual(screen[foot:foot + 80], row1 + row2)

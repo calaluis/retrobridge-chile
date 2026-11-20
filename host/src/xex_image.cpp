@@ -42,7 +42,8 @@ XexWrap check(rb::core::Span<const uint8_t> xex) noexcept
             return result;  // Invalid: start after end, or cut data
         }
         at += end - start + 1;
-        if (start <= kXexLoaderHigh && end >= kXexLoaderLow) {
+        if ((start <= kXexLoaderHigh && end >= kXexLoaderLow) ||
+            (start <= XexImage::kStackHigh && end >= XexImage::kStackLow)) {
             incompatible = true;
         }
         ++result.segments;

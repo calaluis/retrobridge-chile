@@ -132,3 +132,54 @@ Rama `feat/menu-xex` (worktree `.worktrees/feat-menu-xex`, desde main `ff9ff63`)
   - 3, la prueba del registro solo usa mayúsculas en Windows: aceptado. La regla de extensión con mayúsculas y
     minúsculas mezcladas ya la prueba `test_menu_catalog`.
 - Estado intermedio conocido: elegir un `.xex` hoy da «ATR INVALIDA» (`DiskImage::open` falla). X004 lo resuelve.
+
+## X004 — Elegir y arrancar un `.xex` (hecha, 2026-11-20)
+
+- Decisión del responsable (2026-11-20): un segmento en la página 1 (`$0100`-`$01FF`, la pila) da
+  ` XEX NO COMPATIBLE` (`XexImage::kStackLow`/`kStackHigh`; prueba nueva en `test_xex_image`).
+- Desviación 2 del plan, anotada en el plan.
+  - Leer y envolver un `.xex` reserva memoria, y `key()` no puede hacerlo (ADR-011).
+  - Por eso `MenuLoader::startXex` lo lleva al hilo de carga: fuente 1 = archivo de `--images`; 2..8 = TNFS.
+  - `TnfsLoader::adopt()` envuelve el `.xex` y guarda en el hueco de memoria solo el disco resultante.
+  - Los rechazos llegan como `XexNoValido` y `XexNoCompatible`.
+- `MenuController`:
+  - `chooseXex`: si la unidad no es D1, dice ` UN XEX SOLO VA EN D1` y no cambia nada (AC4);
+  - si es D1, inicia `Job::Xex` (mientras tanto se ve `CARGANDO`);
+  - si se acepta, `place()` deja el `.xex` en D1, como una imagen TNFS (AC3); `A` monta el hueco (AC5, parte host);
+  - los rechazos muestran ` XEX NO VALIDO` (AC8) o ` XEX NO COMPATIBLE` (AC9).
+  - Registro:
+    - `menu_select ... assigned xex=1 segments=n bytes=m`;
+    - `menu_select ... refused: result=invalid|incompatible`.
+- `main.cpp` pasa `--images` al hilo de carga.
+- Pruebas:
+  - `test_menu_xex` (nueva, 7) usa el rig de TNFS con su propia carpeta local, creada por la prueba;
+  - cada `K` comprueba que contesta en menos de 250 ms y que no reserva memoria;
+  - se escribieron primero, y no compilaron porque faltaban el constructor con la carpeta y `startXex`; después,
+    en verde.
+  - Al rig se le agregaron la carpeta y `[[maybe_unused]]` en cuatro ayudantes.
+- Mutantes (los 4 detectados):
+  - sin la regla de solo D1;
+  - el `.xex` crudo en el hueco, sin envolver;
+  - el rechazo sin registrar;
+  - un `.xex` de TNFS tratado como `.ATR`.
+- Controles:
+  - pruebas: PASS. `ctest` 67 de 67; `ctest` del ejecutable 1 de 1; `tools/tests` 161 de 161.
+  - compilación: PASS. `-Werror`; el ejecutable enlaza.
+  - seguridad: PASS.
+    - Los bytes de la red solo los lee `XexImage::wrap`, ya revisado.
+    - El archivo local se arma con el nombre del catálogo, que sale del escaneo de la carpeta y no lleva `/`, `:` ni
+      `\`.
+    - El tamaño se comprueba antes de reservar memoria.
+  - trazabilidad: PASS. AC3, AC4, AC5 (parte host), AC8, AC9 y AC10.
+  - `check_layering` y `check_notices`: OK.
+- Riesgo:
+  - el plan había previsto nivel 2; `rsc risk` dio nivel 1, con un revisor, al que se le pidió mirar también hilos y
+    entradas de la red.
+  - No encontró nada obligatorio; dejó 4 detalles menores:
+    - 1, falta una prueba de Esc, reinicio en frío o un trabajo reemplazado durante una carga de `.xex`: aceptado.
+      `Job::Xex` usa los mismos `startJob`, `cancelJob` y `publish` que `Fetch`, que ya prueba `test_menu_tnfs`.
+    - 2, faltaban casos de `readLocal`: se agregó el de un `.xex` listado que ya no está, que da
+      ` ERROR: NO SE PUDO ABRIR`. El caso de un archivo demasiado grande queda sin prueba en el menú; lo cubre
+      `test_xex_image`.
+    - 3, un nombre con `..`: el escaneo no los produce. Sin cambio.
+    - 4, `events.has` busca un trozo del texto: aceptado. Los textos que se buscan son específicos.

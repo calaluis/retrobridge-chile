@@ -122,6 +122,15 @@ las tres. X005 (`.xex` de prueba) puede ir con X001. X006 (demo) y X007 (docs) a
   aviso de error usa `SDLSTL`/`RTCLOK`, que ya tienen fuente. `SIOV` reemplaza a `DSKINV` por la misma razón: el
   bloque de control de SIO ya está documentado en el proyecto.
 
+- **Desviación 2 (2026-11-20, X004).** Leer y envolver un `.xex` reserva memoria, y `key()` corre en el hilo de
+  SIO, que no reserva (ADR-011). Por eso lo hace el hilo de carga (`TnfsLoader`), también con un `.xex` local:
+  `MenuLoader::startXex(fuente, ruta)` (fuente 1: un archivo de la carpeta `--images`, que el hilo recibe en su
+  constructor; 2..8: TNFS). El hueco de memoria guarda el disco envuelto, y `LoaderStatus` trae `xex` y `segments`.
+  Los rechazos llegan como `LoaderError::XexNoValido` y `XexNoCompatible`. Un `.xex` local también muestra
+  `CARGANDO` mientras se lee.
+- **Página 1 (2026-11-20, X004, decidida por el responsable).** Un segmento en `$0100`-`$01FF` (la pila) también da
+  ` XEX NO COMPATIBLE`.
+
 ## Tasks
 
 Rama `feat/menu-xex` (desde main `ff9ff63`). Riesgo previsto por tarea (0/1/2); `rsc risk` decide el real.

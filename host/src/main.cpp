@@ -434,7 +434,7 @@ int runMenu(const Options& options)
     rb::host::HostTnfsClock tnfsClock{clock};
     rb::host::HeapImageMemory imageMemory;
     std::optional<rb::host::TnfsLoader> loader;
-    loader.emplace(linkOf, repository.memory(), tnfsClock, imageMemory);
+    loader.emplace(linkOf, repository.memory(), tnfsClock, imageMemory, nullptr, options.images);  // menu-xex
     rb::host::MenuController controller{catalog, sources, repository, mailbox, &events, &*loader};
     controller.setSourcesFile(options.sources);
     controller.setImagesFolder(options.images, catalog);  // N creates a blank ATR there

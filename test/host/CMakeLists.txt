@@ -224,7 +224,7 @@ rb_add_host_test(test_sha256 menu/test_sha256.cpp ${rb_root}/host/src/sha256.cpp
 target_include_directories(test_sha256 PRIVATE ${rb_root}/host/src)
 
 # The TNFS loading thread: jobs, cancel, late results and errors (menu-tnfs T011).
-rb_add_host_test(test_tnfs_loader menu/test_tnfs_loader.cpp ${rb_root}/host/src/tnfs_loader.cpp
+rb_add_host_test(test_tnfs_loader menu/test_tnfs_loader.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/host/src/xex_image.cpp
                  ${rb_root}/host/src/tnfs_folder.cpp ${rb_root}/host/src/menu_catalog.cpp
                  ${rb_root}/host/src/sha256.cpp)
 target_include_directories(test_tnfs_loader PRIVATE ${rb_root}/host/src)
@@ -233,17 +233,26 @@ target_link_libraries(test_tnfs_loader PRIVATE rb_net_tnfs Threads::Threads)
 # TNFS sources in the menu: MenuController with the loader over the fake server (menu-tnfs T012).
 rb_add_host_test(test_menu_tnfs menu/test_menu_tnfs.cpp ${rb_root}/host/src/menu_controller.cpp
                  ${rb_root}/host/src/create_atr.cpp ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
-                 ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp
+                 ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/host/src/xex_image.cpp
                  ${rb_root}/host/src/tnfs_folder.cpp ${rb_root}/host/src/sha256.cpp)
 target_include_directories(test_menu_tnfs PRIVATE ${rb_root}/host/src)
 target_compile_definitions(test_menu_tnfs PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
 target_link_libraries(test_menu_tnfs PRIVATE rb_net_tnfs Threads::Threads)
 set_tests_properties(test_menu_tnfs PROPERTIES FIXTURES_REQUIRED menu_images)
 
+# Choosing and booting a .xex (menu-xex X004), on the rig of test_menu_tnfs with its own folder.
+rb_add_host_test(test_menu_xex menu/test_menu_xex.cpp ${rb_root}/host/src/menu_controller.cpp
+                 ${rb_root}/host/src/create_atr.cpp ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
+                 ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/host/src/xex_image.cpp
+                 ${rb_root}/host/src/tnfs_folder.cpp ${rb_root}/host/src/sha256.cpp)
+target_include_directories(test_menu_xex PRIVATE ${rb_root}/host/src)
+target_compile_definitions(test_menu_xex PRIVATE RB_TEST_MENU_DIR="${CMAKE_CURRENT_BINARY_DIR}/xex-images")
+target_link_libraries(test_menu_xex PRIVATE rb_net_tnfs Threads::Threads)
+
 # Cursor and pages in the lists (menu-navegacion N003), on the rig of test_menu_tnfs.
 rb_add_host_test(test_menu_navegacion menu/test_menu_navegacion.cpp ${rb_root}/host/src/menu_controller.cpp
                  ${rb_root}/host/src/create_atr.cpp ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
-                 ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp
+                 ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/host/src/xex_image.cpp
                  ${rb_root}/host/src/tnfs_folder.cpp ${rb_root}/host/src/sha256.cpp)
 target_include_directories(test_menu_navegacion PRIVATE ${rb_root}/host/src)
 target_compile_definitions(test_menu_navegacion PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
@@ -253,7 +262,7 @@ set_tests_properties(test_menu_navegacion PROPERTIES FIXTURES_REQUIRED menu_imag
 # What main.cpp wires for TNFS: request trace, UDP link, shared JSONL log (menu-tnfs T013).
 rb_add_host_test(test_tnfs_link menu/test_tnfs_link.cpp ${rb_root}/host/src/tnfs_link.cpp
                  ${rb_root}/host/src/udp_tnfs_port.cpp ${rb_root}/host/src/udp_datagram_port.cpp
-                 ${rb_root}/host/src/jsonl_log.cpp ${rb_root}/host/src/tnfs_loader.cpp
+                 ${rb_root}/host/src/jsonl_log.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/host/src/xex_image.cpp
                  ${rb_root}/host/src/tnfs_folder.cpp ${rb_root}/host/src/sha256.cpp
                  ${rb_root}/host/src/menu_controller.cpp ${rb_root}/host/src/create_atr.cpp ${rb_root}/host/src/menu_catalog.cpp
                  ${rb_root}/host/src/menu_image.cpp ${rb_root}/host/src/menu_sources.cpp)

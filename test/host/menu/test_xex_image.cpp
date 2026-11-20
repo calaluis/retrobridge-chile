@@ -162,6 +162,14 @@ void test_a_segment_on_the_loader_is_incompatible(void)
     assert_rejected(segment(0x3000, {1}) + segment(0x0800, {1}), XexResult::Incompatible);
 }
 
+void test_a_segment_on_page_one_is_incompatible(void)
+{
+    assert_rejected(segment(0x0100, {0}), XexResult::Incompatible);
+    assert_rejected(segment(0x01FF, {0}), XexResult::Incompatible);
+    assert_rejected(segment(0x00F0, Bytes(0x20, 0)), XexResult::Incompatible);  // zero page into page 1
+    assert_ok(segment(0x00FF, {0}) + segment(0x0200, {0}), 2);
+}
+
 void test_segments_next_to_the_loader_are_compatible(void)
 {
     assert_ok(segment(kXexLoaderLow - 2, {0, 0}) + segment(kXexLoaderHigh + 1, {0}), 2);
@@ -205,6 +213,7 @@ int main(void)
     RUN_TEST(test_start_after_end_is_invalid);
     RUN_TEST(test_cut_data_or_a_cut_header_is_invalid);
     RUN_TEST(test_a_segment_on_the_loader_is_incompatible);
+    RUN_TEST(test_a_segment_on_page_one_is_incompatible);
     RUN_TEST(test_segments_next_to_the_loader_are_compatible);
     RUN_TEST(test_an_invalid_file_is_invalid_even_if_it_also_touches_the_loader);
     RUN_TEST(test_more_than_65535_sectors_is_too_large);

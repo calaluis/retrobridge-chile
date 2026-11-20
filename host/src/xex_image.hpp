@@ -20,7 +20,7 @@ namespace rb::host {
 enum class XexResult : uint8_t {
     Ok,
     Invalid,       // no $FFFF at the start, start > end, a cut header or cut data (AC8)
-    Incompatible,  // a segment touches the loader and its buffer (AC9)
+    Incompatible,  // a segment touches the loader and its buffer, or page 1 (AC9)
     TooLarge,      // the disk would pass 65535 sectors
     NoMemory,      // the image buffer could not be allocated
 };
@@ -35,6 +35,10 @@ public:
     static constexpr uint32_t kSectorSize = 128;
     static constexpr uint32_t kHeaderSize = 16;
     static constexpr uint32_t kMaxSectors = 65535;
+    // Page 1, the 6502 stack: a segment there would overwrite the loader's return addresses
+    // (decided by the owner on 2026-11-20, X004).
+    static constexpr uint32_t kStackLow = 0x0100;
+    static constexpr uint32_t kStackHigh = 0x01FF;
 
     // On Ok, `out` holds the whole ATR (header included); otherwise it is left as it was.
     // Checked in this order: TooLarge (by size alone), Invalid, Incompatible, NoMemory.

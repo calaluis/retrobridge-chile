@@ -154,8 +154,8 @@ nombres (`plus1-intento1..5.jsonl`).
 ## W006 — Demo en Altirra (hecha, 2026-11-19)
 
 Montaje: Altirra 4.31 con todas las unidades D en **Off**; hub `netsiohub` en 9997; un solo `retrobridge_host`
-(04af098) con `--images D:b-e0\m45-escritura\images --peer netsiohub`. Todo por el host: menú en D1, DOS 2.5
-chileno (`DOS25D1D2D3.ATR`) en D1, ATR de datos en D2. Carpeta `D:b-e0\m45-escritura` (no `m45`: esa carpeta
+(04af098) con `--images D:\rb-e0\m45-escritura\images --peer netsiohub`. Todo por el host: menú en D1, DOS 2.5
+chileno (`DOS25D1D2D3.ATR`) en D1, ATR de datos en D2. Carpeta `D:\rb-e0\m45-escritura` (no `m45`: esa carpeta
 ya tiene la demo de otra función).
 
 1. Copia `D1:` → `D2:PRUEBA.BAS` con `escritura-d2.atr` (escribible): 8 `sio_write` `result=complete`
@@ -169,13 +169,23 @@ ya tiene la demo de otra función).
    error, igual que en W001; nada escrito.
 4. El menú en D1 también contesta STATUS con `$BF` (protegido).
 
-Evidencia en `D:b-e0\m45-escritura`: `host.jsonl` (2 corridas; `host-run1.jsonl` = la primera),
+Evidencia en `D:\rb-e0\m45-escritura`: `host.jsonl` (2 corridas; `host-run1.jsonl` = la primera),
 `sha256-antes.txt`, `sha256-despues-escritura.txt`, `sha256-despues.txt`, `2-sin-montar-error144.png`,
 `3-relanzado-prueba-bas.png`, `version.txt`.
 
 - **HERRAMIENTA-AUSENTE** — firmware ESP-IDF (AC10): sin `idf.py` en este PC; lo compila el CI.
 - No anotado: el número de error que mostró el DOS en el paso 3.
 
+## W007 — Documentación (hecha, 2026-11-19)
+
+- `docs/adr/0019-escritura-de-sectores.md` (nuevo): secuencia NetSIO de escritura, `allowWrites` solo con
+  `--images`, STATUS `$BF` y D1 a D3, un solo escritor, evento `sio_write`.
+- ADR-016: Estado y tabla apuntan a ADR-019. ADR-017: enmienda 8 (marca « SL»).
+- `host/README.md`: unidades de Altirra en Off; párrafo de escritura. `README.md`: enlace a ADR-019.
+- `docs/fuentes.md`: FEP-003 releída (no fija `write_size`) y medición propia W001/W006.
+- Controles: `check_notices` OK; `check_layering` OK; sin emoji; `rsc risk` tier 1, un revisor (refuter-correctness): 1 hallazgo menor (faltaba la causa `no_drive` en ADR-019), corregido.
+- **NO-APLICA** — tests y build: solo cambian documentos.
+
 ## Pendiente
 
-W007 (docs).
+Cierre ASDD (verify y review del branch), push y PR con aprobación del responsable.

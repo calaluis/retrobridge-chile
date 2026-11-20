@@ -15,7 +15,8 @@ cmake --build build/retrobridge_host
 ## Usar con Altirra (ruta B)
 
 1. En Altirra: *System > Configure System > Devices*, agregar el dispositivo personalizado `netsio.atdevice`.
-   Dejar D1 vacía y no ejecutar FujiNet-PC.
+   Dejar en Off las unidades que sirve RetroBridge (D1, y D2..D8 si se usan desde el menú); vacías no basta.
+   No ejecutar FujiNet-PC.
 2. Iniciar el hub NetSIO (herramienta externa de laboratorio; no forma parte de RetroBridge):
    `python -u -m netsiohub`. Escucha TCP 9996 (Altirra) y UDP 9997 (dispositivos).
 3. Iniciar RetroBridge:
@@ -119,7 +120,13 @@ Para borrar una fuente, `E`, Delete hasta vaciar el texto y RETURN: su línea sa
 suben un número (`FUENTE n BORRADA`) y sus sesiones TNFS se cierran. No pide confirmación; Esc antes de RETURN
 cancela.
 
-Pendiente (no implementado): casete (sin soporte) y escritura en disco (unidades de solo lectura).
+Escritura en disco (spec `menu-escritura-disco`, [ADR-019](../docs/adr/0019-escritura-de-sectores.md)): con
+`--images`, el DOS del Atari puede guardar en D1..D8. Cada `W`/`P` escribe el sector en la ATR, en su sitio. Una ATR
+con el atributo de solo lectura del sistema queda protegida: el menú muestra « SL» al final de la línea y el DOS
+recibe un error de protección. Las imágenes TNFS y `--image` son de solo lectura. Cada escritura deja un evento
+`sio_write` en el registro JSONL. Una ATR solo la debe servir un host, y Altirra no debe tener esa unidad activa.
+
+Pendiente (no implementado): casete (sin soporte).
 
 1. Generar las imágenes de demostración (dos arrancables con mensajes distintos y una inválida):
 

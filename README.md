@@ -25,4 +25,5 @@ Consulta la [guía de compilación](docs/toolchain.md) para construir el firmwar
   H3c storage regression with the H4 firmware: [2026-10-25](docs/mediciones/h4-regresion-h3c-2026-10-25.md)
 - Host boot menu over NetSIO (Altirra): [ADR-017](docs/adr/0017-menu-de-arranque.md); read-only TNFS sources
   (`--sources`), loaded into memory and mounted from the Atari menu:
-  [ADR-018](docs/adr/0018-cliente-tnfs-de-solo-lectura.md)
+  [ADR-018](docs/adr/0018-cliente-tnfs-de-solo-lectura.md); sector writes to `--images` ATRs:
+  [ADR-019](docs/adr/0019-escritura-de-sectores.md)

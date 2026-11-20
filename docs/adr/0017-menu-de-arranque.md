@@ -7,7 +7,7 @@
   `menu-navegacion`: ver «Enmienda 3», que amplía el punto 3 de la enmienda 2, y «Enmienda 4», que cambia
   sus consecuencias tras la demo. «Enmienda 5» cierra el límite conocido del punto 2 de la enmienda 4. «Enmienda 6» (spec
   `menu-editar-servidor`) agrega la acción 3, el comando `T` y el código `$E0`. «Enmienda 7» (spec
-  `menu-borrar-fuente`) cambia el punto 3 de la enmienda 6: el texto vacío borra la fuente.
+  `menu-borrar-fuente`) cambia el punto 3 de la enmienda 6: el texto vacío borra la fuente. «Enmienda 8» (spec `menu-escritura-disco`) agrega la marca « SL».
 - Contexto: con `--image`, `retrobridge_host` sirve una sola ATR por ejecución. La Issue #38 pide elegir la imagen
   D1 desde el Atari, con el teclado, sin relanzar el host ni montar discos desde Altirra.
 
@@ -230,3 +230,16 @@ tecla nueva con confirmación.
 Consecuencias: solo cambia el host; el programa 6502 y `menu_program.inc` no cambian. Un RETURN con el texto vacío
 borra sin pedir confirmación: es un riesgo aceptado por el responsable. Un reintento de `SIOV` del mismo `K` se
 descarta como siempre (M40-2), así que no borra dos fuentes.
+
+## Enmienda 8 (2026-11-19, spec `menu-escritura-disco`): marca de solo lectura
+
+Contexto: [ADR-019](0019-escritura-de-sectores.md) permite escribir en las ATR de `--images`. El usuario debe ver
+en el menú qué unidades no aceptan escrituras.
+
+1. Cada línea de unidad del menú muestra « SL» al final si la unidad está protegida: ATR con atributo de solo
+   lectura o imagen de una fuente TNFS.
+2. El nombre se corta a 29 columnas para dejar sitio a la marca. Las unidades sin protección no llevan marca.
+3. La marca se fija al asignar D1, al montar y al arrancar. Una unidad vacía no lleva marca.
+
+Consecuencias: solo cambia el host; el programa 6502 no cambia. La marca dice lo que el host sabe al montar; si el
+atributo cambia después, la marca no se actualiza hasta el siguiente montaje.

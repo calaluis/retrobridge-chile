@@ -68,6 +68,25 @@ Rama `feat/menu-presentacion` (worktree `.worktrees/feat-menu-presentacion`, des
 
 - `ctest` 65 de 65 con el `.inc` nuevo (imagen del menú con 17 sectores); `retrobridge_host.exe` compila.
 
+## P004 — Demo en Altirra (hecha, 2026-11-20)
+
+Montaje: Altirra con D1..D8 en **Off**; hub `netsiohub` en 9997; un solo `retrobridge_host` (3ae8013) con
+`--images D:\rb-e0\m47-presentacion\images --sources D:\rb-e0\m47-presentacion\sources.txt --peer netsiohub`. El host del responsable de una prueba
+anterior se cerró antes (una sola instancia por hub). Un primer arranque sin hub terminó con
+`connect failed: no PING_RESPONSE` (`host-sin-hub.jsonl`); se relanzó con el hub arriba.
+
+- Registro (`host.jsonl`, 05:41-05:47 UTC): 23 `menu_open` (lista local y TNFS `tnfs.calaluis.cl` con carpetas de
+  hasta 4 niveles y `Roms_ATR` de 205 entradas paginadas), 1701 `tnfs_request` sin error, `menu_fetch` de `11.ATR`
+  (133136 bytes), `menu_select D1`, `menu_boot D1 name=11.ATR`, reinicio en frío y `menu_return` (AC4, AC7).
+- Observación del responsable en pantalla: «Sin barrido, todo bien». Cubre AC1, AC2, AC3, AC9 y la nota 2 del
+  revisor de P002 (ninguna fila vieja visible al cambiar de pantalla).
+- No hay capturas guardadas en la carpeta: lo visual queda como observación del responsable, no como archivo.
+- `E` y `N` cancelados con Esc no dejan evento: AC5 queda cubierto por las pruebas de edición del intérprete, no por
+  el registro.
+- AC6 (respuesta cortada) no se provocó en la demo: lo cubre la prueba del intérprete.
+
+Evidencia en `D:\rb-e0\m47-presentacion`: `host.jsonl`, `host-sin-hub.jsonl`, `version.txt`, `retrobridge_host.exe`.
+
 ## Pendiente
 
-P004 (demo en Altirra), P005 (docs).
+P005 (docs).

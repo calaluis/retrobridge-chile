@@ -7,7 +7,8 @@ include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/rb_build_flags.cmake)
 
 set(rb_srcs
     "src/cas_index.cpp"
-    "src/fsk_wave.cpp")
+    "src/fsk_wave.cpp"
+    "src/fsk_loader.cpp")
 
 if(ESP_PLATFORM)
     idf_component_register(SRCS ${rb_srcs} INCLUDE_DIRS "include" REQUIRES rb_core)

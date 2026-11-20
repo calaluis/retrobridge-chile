@@ -132,6 +132,27 @@ Rama `feat/cassette-cas` (worktree `.worktrees/feat-cassette-cas`, desde main `b
 - Revisión (1 revisor, ronda 1): sin defectos; 3 huecos de prueba corregidos (resto pendiente entre piezas, `reset()`
   a mitad de una porción, una cinta real con valores largos).
 
+## C103 — FskLoader: carga de a poco (hecha, 2026-11-20)
+
+- `components/rb_cassette`: `FskLoader` carga una tirada `fsk ` en un banco contiguo del llamador (PSRAM en el ESP32,
+  reservado una vez): una lectura = como máximo un bloque de 512 o una cabecera; cuenta de valores publicada con release
+  y leída con acquire; consumidor con `next()` (`Value`/`Underrun`/`End`), `piece()` para `FskWave` y `startGate()`
+  (20 s de señal y 1536 valores, o tirada final); 3 reintentos por lectura, el 4.º fallo seguido falla la tirada;
+  `requestStop()`; una cabecera que ya no coincide con el índice falla la tirada.
+- Adaptado de `casFSKLoader` (PR #1773, commits 8601cef y 57ca858); fila en `docs/fuentes.md`. Cambios propios: banco
+  contiguo en vez de bloques reservados uno a uno; forma de la tirada desde `CasIndex`. El solape de 64 bytes de
+  `cassetteFSKRead` queda para la lectura de la SD (C107).
+- Cinta real: `turbo_software_zorro.cas`, 252 122 valores (927 s de señal) en 1000 lecturas; la puerta abre tras 7.
+- Controles:
+  - pruebas: `test_fsk_loader` 14/14 con `RB_CAS_SAMPLES`; RED: 12 de 13 fallos contra el esqueleto; `ctest` 72/72;
+  - sin reservas: contador de `new` alrededor de `step()`, `next()`, `piece()` y `startGate()`, con control positivo;
+  - compilación: sin avisos con `-Werror`; `check_layering` OK; `check_notices` OK;
+  - seguridad: escritura en el banco acotada por `start()` (tirada ≤ banco) y por la cabecera (≤ lo que falta);
+  - trazabilidad: AC4; `rsc risk`: tier 1 (el plan preveía 2), un revisor.
+- Revisión (1 revisor, ronda 1): sin defectos. Corregido: el presupuesto de fallos fallaba en el 3.º; el código propio
+  (`read_fault`) tolera 3 reintentos y falla en el 4.º; ahora igual, con prueba. Añadida prueba de `requestStop()`
+  tras `Final`. Anotado: `start()` borra un `requestStop()` anterior; quien llama los ordena (C104).
+
 ## Decision queue
 
 - **resuelta (2026-11-20)** — C003 falló con `international_karate.cas`. La propuesta de una cinta inventada se

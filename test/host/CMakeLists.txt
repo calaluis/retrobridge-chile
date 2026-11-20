@@ -222,6 +222,9 @@ target_link_libraries(test_cas_index PRIVATE rb_cassette)
 # The FSK signal of a run: levels and portions (cassette-cas C102).
 rb_add_host_test(test_fsk_wave cassette/test_fsk_wave.cpp)
 target_link_libraries(test_fsk_wave PRIVATE rb_cassette)
+# Loading an FSK run a block at a time, start gate, retries, no allocation (cassette-cas C103).
+rb_add_host_test(test_fsk_loader cassette/test_fsk_loader.cpp)
+target_link_libraries(test_fsk_loader PRIVATE rb_cassette)
 
 # Checking an A8CAS .cas tape and indexing its blocks (cassette-cas C001).
 rb_add_host_test(test_cas_image menu/test_cas_image.cpp ${rb_root}/host/src/cas_image.cpp)

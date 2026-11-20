@@ -1,9 +1,9 @@
 ---
 type: plan
-title: Plan — Cargar cintas .cas (nivel 1) desde el menú
-description: CÓMO se construye la spec cassette-cas: leer .cas A8CAS, una casetera virtual en el host que responde a MOTOR por NetSIO, y su integración en el menú (lista, C:, U, reinicio).
-tags: [sdd, plan, menu, cassette, cas, netsio, host]
-timestamp: 2026-11-20T21:00:00Z
+title: Plan — Cargar cintas .cas reales en el ESP32
+description: CÓMO se construye la spec cassette-cas: un componente portable rb_cassette (lectura A8CAS, señal FSK, carga progresiva, reproductor con MOTOR) adaptado del código FSK propio del responsable, y adaptadores ESP32 (MOTOR, UART, RMT) tras M3a y H4.
+tags: [sdd, plan, cassette, cas, fsk, esp32, motor]
+timestamp: 2026-11-20T23:50:00Z
 topic: sdd
 slug: cassette-cas
 spec: 02-DOCS/wiki/sdd/specs/cassette-cas.md
@@ -11,169 +11,148 @@ branch: feat/cassette-cas
 status: approved
 ---
 
-# Plan — Cargar cintas .cas (nivel 1) desde el menú
+# Plan — Cargar cintas .cas reales en el ESP32
 
 ## 0. Global constraints (literales, para cada tarea)
 
-- C++17 con `-fno-exceptions -fno-rtti -Werror` (ADR-004). Sin reservas en la ruta SIO (ADR-011): la cinta se lee y
-  se indexa al elegirla, fuera de la ruta SIO, como hoy una `.ATR` o un `.xex` de TNFS.
-- ADR-012 y su **enmienda 1**: se puede adaptar el lector A8CAS propio del responsable (cuarentena
-  `D:\rb-e0\fsk-propio`, `nuevos/pr1756/lib/media/atari/casFSK.*` y `nuevos/pr1773/lib/media/atari/casFSKLoader.*`).
-  Se adapta, no se pega: sin `global_types.h`, `fnio.h`, `debug.h`, `bus.h`, `pinmap.h` ni clases de FujiNet. Cada
-  tarea que use ese código registra en `docs/fuentes.md` el PR y commit de origen. Ningún otro código de FujiNet ni
-  de emuladores.
-- El formato A8CAS se describe con una fuente pública (documentación del proyecto A8CAS, formato `.cas`), registrada
-  en `docs/fuentes.md` en C001 antes de escribir el lector.
-- `check_layering` en verde (ADR-002): el formato `.cas` y la casetera viven en el host (`host/src`), como `.xex`. El
-  transporte NetSIO (`components/rb_netsio`) solo gana lo mínimo: avisar MOTOR y enviar velocidad y datos fuera de
-  una trama.
-- `.ATR` y `.xex` no cambian (AC10). Un solo `retrobridge_host` por hub; en Altirra, D1..D8 en Off y la casetera
-  propia de Altirra sin cinta.
-- Los requisitos se numeran M49-n. Evidencia de demos en `D:\rb-e0\m49-cas` (no versionada).
+- Código propio adaptable: solo la cuarentena `D:\rb-e0\fsk-propio` (ADR-012 enmienda 1). Se adapta, no se pega.
+  Cada archivo nuevo que nace de ella registra en `docs/fuentes.md` el PR y el commit de origen:
+  - #1756 → `6ea2070`, `5180b1d`, `947a72f` (FSK A8CAS básico: `casFSK`, `cassetteFSK`);
+  - #1773 → `8601cef`, `57ca858` (carga progresiva: `casFSKLoader`, `cassetteFSKLoader`, `cassetteFSKRead`);
+  - #1804 → `7d84b91` (parar el RMT al caer MOTOR).
+- Ningún otro código de FujiNet ni de emuladores. `bus.h`, `fnio.h`, `pinmap.h`, `debug.h`, `global_types.h` y las
+  clases `cassette`/`disk` de FujiNet se reescriben, no se traen.
+- Constantes probadas (del código propio, se conservan): 100 ticks por unidad de 1/10 ms; porción máxima 32767
+  ticks; tirada de como máximo 64 bloques `fsk `; bloques de carga de 512 bytes; margen de 20 s antes de empezar.
+- Solo `.cas` reales en pruebas de cinta completa y demos, leídos desde `D:\GitHub\Respaldos\MicroSD` (variable
+  `RB_CAS_SAMPLES`), nunca copiados al repo. Fragmentos de bytes mínimos solo para casos de formato.
+- ADR-011: sin reservas de memoria durante la reproducción. La memoria de carga se reserva una vez, antes.
+- Ningún pin SIO como salida sin H4 aprobado. MOTOR (GPIO36) no se usa sin M3a aprobado. Flash y salida GPIO:
+  aprobación del responsable antes.
+- C++17, `-fno-exceptions -fno-rtti -Werror`. `check_layering` y `check_notices` en verde.
+- Cada commit, push y PR: aprobación del responsable.
 
 ## 1. Context & constraints
 
-- Spec: 12 criterios de aceptación; 8 puntos tipados. AC1 es una **puerta**: si falla, se detiene el resto.
-- Hoy (main `b3183dc`):
-  - `NetSioSioTransport::onMessage` (`components/rb_netsio/src/netsio_sio_transport.cpp`) guarda `kSpeedChange` en
-    `stats_.lastBaud` y cuenta `kMotorOn/Off` como `ignoredMessages`. `send()` sin sync pendiente ya emite un
-    `DATA BLOCK` (`02`) de 1..512 bytes.
-  - El bucle `serve()` de `host/src/main.cpp` llama a `afterStep()` tras cada `session.step()`, también en Idle.
-  - El menú: `MenuController` (`host/src/menu_controller.cpp`) tiene `chooseXex`, `startJob(Job::Xex, …)`,
-    `View::Unmount` (`onUnmount`, 1..8) y dibuja `C: SIN CINTA` en `kMainTape` (línea 839).
-  - El catálogo local filtra por extensión (`menu_catalog.cpp`, `file_identity.cpp`); TNFS en `tnfs_folder.cpp`.
-- Formato A8CAS (fuente pública, C001): bloques de cabecera de 8 bytes (nombre de 4, longitud de 2 LE, aux de 2 LE).
-  `FUJI` abre el archivo; `baud` fija la velocidad (aux); `data` lleva bytes y su aux es la pausa previa en ms;
-  `fsk ` lleva duraciones de pulsos. Muestras analizadas en `D:\GitHub\Respaldos\MicroSD` (ver spec).
+- Spec §«Por qué no Altirra»: NetSIO no lleva la señal `fsk ` (C003). El destino es el ESP32.
+- Spec §«What it must respect»: el comportamiento probado del código propio (unión, carga progresiva, parada segura).
+- ADR-002 (capas): lo puro no incluye ESP-IDF. `tools/check_layering.py` lo vigila por componente.
+- El firmware hoy: `main/app_main.cpp` y componentes `rb_*`. La consola (`rb_console`) depende de ESP-IDF: no se
+  prueba en el host. Ya tiene `mount` y `ls` para discos.
+- Ya hecho en la rama: C001 (`host/src/cas_image.*`, 17 pruebas) y C002 (`host/src/cassette_player.*`,
+  `cassette_deck.*`, enlace NetSIO). Sin commit: C003 (`cassette_run.hpp`, `--cassette`).
 
 ## 2. Architecture
 
 ```text
- .cas (local o TNFS) ──► CasImage::index()  ──►  CasTape (bloques: velocidad, pausa, bytes | silencio)
-                              │ errores: NoValido / Pulsos
-                              ▼
- MenuController ── elegir .cas ──► CassetteDeck (C:) ◄── reinicio en frío: rebobinar
-        │  U → C:: expulsar               │
-        ▼                                 ▼ tick(now) en afterStep()
-   pantalla C: <nombre>            CassettePlayer ──► TapeLink (puerto) ──► NetSioSioTransport
-                                     MOTOR on/off ◄──────────── kMotorOn/Off
-                                     velocidad ──────────────► kSpeedChange (saliente)
-                                     bytes, a ritmo de baud ──► DATA BLOCK fuera de trama
+            ┌───────────────────────── rb_cassette (puro, rb/cassette/, solo rb/core) ─────────────────────────┐
+ SD ──read──▶ TapeSource ─▶ CasIndex ─▶ segmentos {Data | FskRun} ─▶ CassettePlayer ─▶ ByteOut  (setBaud, send)│
+            │                                  │                         ▲   │      ─▶ WaveOut  (niveles, ticks)│
+            │                        FskLoader (bloques 512, margen 20 s)│   └──────▶ MotorIn   (encendido?)    │
+            │                                               CassetteCommands (mount/status/eject/rewind)      │
+            └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+                     ▲ host: fakes en test/host/cassette                ▲ ESP32: rb_esp_cassette
+                                                                          (GPIO36, UART DATA IN, RMT DATA IN)
+            rb_console ──"cas ..."──▶ CassetteCommands
 ```
 
-- **CasImage** (host, puro): valida e indexa un `.cas` en una lista de bloques reproducibles. No toca E/S.
-- **CassetteDeck** (host): la cinta montada en `C:` (nombre, `CasTape`, posición). Montar, expulsar, rebobinar.
-- **CassettePlayer** (host, puro con reloj inyectado): máquina de estados que, con MOTOR encendido, avanza la
-  posición según el tiempo: espera la pausa, envía la velocidad si cambia, y entrega bytes a ritmo de baud
-  (10 bits por byte). Con MOTOR apagado, se congela.
-- **TapeLink** (puerto en el host, implementado sobre `NetSioSioTransport`): `motorOn()`, `setBaud(b)`,
-  `sendTapeBytes(span)`. Las pruebas usan un falso.
-- **Decisión principal: el host marca el ritmo**, no Altirra. El host envía los bytes en trozos pequeños cuando su
-  reloj dice que ya pasaron (como una cinta real que gira), en vez de volcar el bloque entero. *Por qué:* MOTOR
-  puede apagarse a mitad de un bloque (AC7) y la posición debe quedar donde iba; y el crédito NetSIO (`C6/C7`)
-  limita lo que se puede enviar por adelantado. *Alternativa:* volcar cada bloque y dejar que Altirra lo ritme —
-  más simple, pero pierde AC7 y puede chocar con el crédito. Se valida en C003.
+- **rb_cassette** (nuevo, puro): todo lo que decide. Se prueba entero en el host.
+- **rb_esp_cassette** (nuevo, plataforma): tres adaptadores finos (MOTOR, bytes por UART, señal por RMT) y la
+  lectura de la SD. Sin lógica de cinta.
+- **rb_console**: solo traduce `cas ...` a `CassetteCommands`.
+
+**Decisión principal: la lógica del código propio pasa a un componente puro, y el RMT queda detrás de un puerto.**
+En FujiNet la lógica y el RMT estaban juntos; solo se podían probar en el aparato. Separarlos permite probar en el
+host todo lo que la spec pide antes de M3a y H4 (fase 1), que es lo único que hoy se puede avanzar. Alternativa
+descartada: portar los archivos tal cual al ESP32 y probar solo en hardware: bloquea todo hasta H4 y no cumple
+«adaptar, no pegar».
 
 ## 3. Interfaces & contracts
 
 ```text
-CasImage::index(bytes) -> CasTape | CasError::NoValido | CasError::Pulsos
-  - NoValido: sin "FUJI" al inicio, o un bloque cuya longitud pasa el final del archivo
-  - Pulsos: ningún bloque "data" y al menos un "fsk " con datos (tipo B)
-  - "baud" sin datos fija la velocidad de los bloques siguientes; 600 si no hay ninguno
-  - "fsk " en una cinta de nivel 1 -> bloque de silencio con la suma de sus duraciones
-  - bloques desconocidos se saltan (A8CAS permite extensiones)
-
-CassettePlayer::tick(nowUs, link)          -- llamado en cada vuelta del bucle
-  - MOTOR apagado: no envía nada; la posición no se mueve
-  - MOTOR encendido: pausa -> (setBaud si cambia) -> bytes según el tiempo transcurrido
-  - fin de cinta: no envía nada más
-CassettePlayer::onMotor(on, nowUs)        -- desde el transporte
-CassetteDeck::mount(name, tape) / eject() / rewind() / mounted() -> nombre | vacío
-
-TapeLink (puerto): motorOn() -> bool ; setBaud(uint32) ; sendTapeBytes(span) -> Result
+TapeSource.read(offset, dst) -> bytes leídos | Error      // archivo de la SD; el host usa un archivo o memoria
+CasIndex::build(source, out) -> Ok | Invalid(razón) | Unsupported(pwm)
+  - segmentos en orden: Data{offset, length, gapMs, baud} | FskRun{offset, chunks<=64, gapMs, totalTicks}
+  - baud 0, sin FUJI, bloque cortado -> Invalid; pwm* -> Unsupported
+FskWave::next(run, cursor) -> {level, ticks<=32767} | End // niveles alternos desde el valor 0
+FskLoader.step() -> progress | done | failed | stopped    // llena bloques fijos de 512; sin reservas
+FskLoader.startGate() -> ready | wait                      // ready con 20 s de señal cargada o la tirada entera
+CassettePlayer.tick(nowUs, MotorIn, ByteOut, WaveOut)
+  - MOTOR apagado: congela; una tirada FSK se corta al final del nivel en curso (punto seguro)
+  - nunca pierde ni repite: un envío rechazado no avanza la cinta
+CassetteCommands.run(args, out) -> texto de respuesta     // mount <ruta> | status | eject | rewind
+ByteOut.setBaud(b) / send(bytes) -> Ok | Busy;  WaveOut.push(level, ticks) -> Ok | Busy;  MotorIn.on() -> bool
 ```
-
-El transporte gana: un aviso de MOTOR (estado consultable), `kSpeedChange` saliente y el envío de datos fuera de una
-trama cuando no hay sync pendiente (ya existe; se documenta como uso de cinta).
 
 ## 4. Data model & flow
 
-- La cinta se lee entera al elegirla (local: archivo; TNFS: descarga con el mecanismo y el límite de hoy) y se indexa
-  en `CasTape` (bloques con desplazamiento al búfer, longitud, pausa, velocidad). El búfer vive mientras esté
-  montada; se libera al expulsar o reemplazar, fuera de la ruta SIO.
-- Estado de `C:`: vacía | montada(nombre, posición). Reinicio en frío (`kColdReset`, ya contado en el transporte):
-  posición = 0, sigue montada (AC12).
-- Registro JSONL: `cas_mount`, `cas_eject`, `cas_motor` (on/off, posición), `cas_end`, y el rechazo con su motivo.
+- Montar: `CassetteCommands` abre la ruta, `CasIndex` recorre solo cabeceras (no copia la cinta) y guarda los
+  segmentos en una tabla fija. Un fallo deja la cinta anterior como estaba.
+- Reproducir `Data`: el player lee el registro de la SD por partes y lo pasa a `ByteOut` a su `baud`.
+- Reproducir `FskRun`: `FskLoader` lee bloques de 512 a un banco fijo (PSRAM en el ESP32); `FskWave` convierte
+  valores en porciones; `WaveOut` las encola. Empieza cuando `startGate` da `ready`.
+- Estado: segmento actual, posición dentro, MOTOR anterior. Reinicio en frío o `rewind` → posición 0.
 
 ## 5. Testing strategy
 
 | AC | Nivel | Qué afirma | Qué se finge |
 | --- | --- | --- | --- |
-| AC1 | demo (puerta) | un `.cas` estándar pequeño carga en Altirra por NetSIO | nada |
-| AC2 | unidad (`ctest`) | el catálogo local y TNFS listan `.CAS` | carpeta y TNFS falsos, como `.xex` |
-| AC3 | unidad | elegir un `.cas` válido pone su nombre en la línea `C:` | cargador falso |
-| AC4, AC5 | demo | estándar y turbo tipo A cargan y corren | nada |
-| AC6 | unidad | bloques a 600 y 800 salen a su velocidad y tras su pausa | reloj y `TapeLink` falsos |
-| AC7 | unidad | MOTOR off a mitad de bloque congela; on sigue desde ahí | reloj y `TapeLink` falsos |
-| AC8, AC9 | unidad | tipo B y archivo roto dan su mensaje; `C:` no cambia | bytes en memoria |
-| AC10 | suite | `ctest` y `tools/tests` siguen en verde | — |
-| AC11 | unidad | `U` llega a `C:` y la deja en `C: SIN CINTA` | — |
-| AC12 | unidad | reinicio en frío: `C:` conserva el nombre y la posición vuelve a 0 | transporte falso |
+| AC1, AC7 | integración host | `international_karate.cas` y todas las cintas de `RB_CAS_SAMPLES` dan sus segmentos; se salta sin la carpeta | nada (archivo real) |
+| AC2 | unidad | unión: sin pausa se une; pausa o bloque 65 abre otra tirada | fragmento de bytes |
+| AC3 | unidad + real | suma y alternancia de niveles igual al archivo; porciones ≤ 32767 | `WaveOut` que graba |
+| AC4 | unidad | lectura por bloques de 512; `startGate` no da `ready` antes de 20 s | `TapeSource` lento |
+| AC5 | unidad | MOTOR cae a mitad de `Data` y de `FskRun`: sigue sin perder ni repetir | `MotorIn`, reloj |
+| AC6 | unidad | mensajes de fallo; la cinta montada no cambia | fragmentos |
+| AC8 | unidad | `mount/status/eject/rewind` y sus respuestas | `TapeSource`, salida de texto |
+| AC9 | hardware | `cas status` sigue al MOTOR medido en M3a | nada |
+| AC10–AC12 | demo | las cintas de referencia cargan en el Atari | nada |
+| AC13 | suite | `ctest`, `tools/tests`, capas, avisos | — |
 
-`CasImage` además se prueba con las muestras reales copiadas a fixtures pequeños propios (cabeceras generadas, no
-archivos de terceros).
+Las pruebas de C001/C002 que valen se mueven con el código; las de «`fsk ` = silencio» se reescriben con AC1–AC3.
 
 ## 6. Sequencing & dependencies
 
-1. **C001** — fuente A8CAS en `fuentes.md`; `CasImage` + pruebas (AC8, AC9, partes de AC6).
-2. **C002** — `CassettePlayer`, `CassetteDeck`, `TapeLink` y los cambios mínimos del transporte; pruebas con reloj
-   falso (AC6, AC7, AC12 a nivel de deck).
-3. **C003** — **puerta de viabilidad (AC1)**: opción de host `--cassette <archivo.cas>` que monta la cinta sin menú;
-   demo en Altirra con un `.cas` estándar pequeño. Observar el orden de arranque cinta/disco con D1 sirviendo el
-   menú. **Si no carga: parar, registrar y volver al responsable.**
-4. **C004** — menú: `.CAS` en la lista (local y TNFS), elegir monta en `C:` sin pedir unidad, mensajes, línea `C:`
-   (AC2, AC3, AC8, AC9).
-5. **C005** — `U` llega a `C:` (AC11); reinicio en frío rebobina (AC12); si C003 lo pidió, D1 calla durante el
-   arranque con cinta.
-6. **C006** — demo final (AC4, AC5) y documentación: ADR-017 enmienda 12, `host/README.md`, `fuentes.md`.
-7. Cierre: `verify` y `review` de la rama.
-
-C001 y C002 son independientes entre sí salvo el tipo `CasTape` (C001 lo define primero).
+1. Limpiar lo que no sigue (C003 sin commit, enlace NetSIO de cinta).
+2. `rb_cassette`: índice → señal FSK → carga progresiva → reproductor → órdenes. Cada paso con sus pruebas.
+3. **Puerta M3a**: adaptador MOTOR y `cas status` en el ESP32.
+4. **Puerta H4**: adaptadores UART y RMT, lectura SD, consola; demo.
+5. Cierre.
 
 ## 7. Risks & open decisions
 
-1. **Altirra no entrega bytes de cinta por NetSIO, o no con el tiempo que el SO mide** (alto). *Disparador:* C003
-   no carga. *Mitigación:* la puerta C003 antes de tocar el menú; se prueban los dos ritmos (trozos con reloj, y
-   bloque entero) antes de rendirse.
-2. **Crédito NetSIO (`C6/C7`) frena el envío** (medio). *Mitigación:* trozos pequeños al ritmo de baud; C003 mira
-   los créditos en el registro.
-3. **El menú en D1 gana el arranque a la cinta** (medio). *Disparador:* con START, el Atari arranca el menú. *Mitigación:*
-   C003 lo observa; C005 hace callar D1 durante ese arranque solo si hace falta.
-4. **Cargadores turbo tipo A sensibles al ritmo** (medio). *Mitigación:* demo con dos cintas turbo; si una falla, se
-   registra como límite conocido, no bloquea AC4.
-5. **Reutilización del código propio contaminada por dependencias de FujiNet** (bajo). *Mitigación:* reescribir la
-   E/S; `check_notices` y `check_layering`; fila en `fuentes.md` por tarea.
+1. **DATA IN compartido por UART y RMT.** Bytes y señal salen por el mismo pin. *Disparador:* cambio de `data` a
+   `fsk ` en la cinta. *Mitigación:* el código propio ya lo hacía en FujiNet; el adaptador conmuta el pin entre
+   segmentos, nunca dentro. Se prueba primero con Alien Ambush (alterna los dos).
+2. **MOTOR en GPIO36 sin medir (R1).** *Impacto:* lecturas falsas, carga que no arranca. *Mitigación:* M3a antes de
+   C106; si la mitigación C cambia el cableado, solo cambia el adaptador.
+3. **Memoria de carga.** La carga progresiva necesita un banco grande (PSRAM). *Mitigación:* reservarlo una vez al
+   montar o al arrancar (ADR-011); C107 confirma la PSRAM de la placa antes de fijar el tamaño.
+4. **Adaptar sin pegar.** *Mitigación:* reescritura con otros nombres y puertos; revisión de procedencia en cada
+   tarea contra `D:\rb-e0\fsk-propio\LEEME.md`.
+5. **Lectura de la SD lenta durante la señal.** *Mitigación:* el margen de 20 s y el reintento de lectura del código
+   propio (3 intentos, 64 bytes de solape).
 
-Decisiones abiertas: ninguna que bloquee el inicio; el ritmo final (trozos o bloque) lo fija C003.
+Decisión abierta: ninguna que bloquee la fase 1.
 
 ## Tasks
 
-Rama `feat/cassette-cas` (desde main `b3183dc`). Riesgo previsto por tarea (0/1/2); `rsc risk` decide el real.
+| Id | Tarea | AC | Riesgo | Done-check | Depende | Paralelo |
+| --- | --- | --- | --- | --- | --- | --- |
+| C100 | Quitar lo que no sigue: descartar C003 sin commit; retirar `netsio_tape_link.hpp`, `sendOutsideFrame`, `sendSpeed` y `encodeSpeedChange` (se conserva `motorOn` de NetSIO) | AC13 | 1 | `ctest` verde; `git status` sin `cassette_run.hpp` | — | no |
+| C101 | `rb_cassette`: `TapeSource`, `CasIndex` con `Data`/`FskRun` y regla de unión; mover y adaptar pruebas de C001; prueba real con `RB_CAS_SAMPLES`; capa en `check_layering`; fila en `fuentes.md` (#1756) | AC1, AC2, AC6, AC7 | 1 | `test_cas_index` verde; AC7 pasa con la carpeta; capas OK | C100 | no |
+| C102 | `FskWave`: valores → porciones de nivel | AC3 | 1 | `test_fsk_wave` verde con International Karate | C101 | sí (con C103) |
+| C103 | `FskLoader`: bloques de 512 en banco fijo, `startGate` 20 s, reintento de lectura; fila #1773 | AC4 | 2 | `test_fsk_loader` verde; sin reservas en `step()` | C101 | sí (con C102) |
+| C104 | `CassettePlayer` con `Data` (lógica de C002) y `FskRun`, parada segura (#1804) | AC5 | 2 | `test_cassette_player` verde | C102, C103 | no |
+| C105 | `CassetteCommands`: mount/status/eject/rewind | AC6, AC8 | 1 | `test_cassette_commands` verde | C104 | no |
+| C106 | **[puerta M3a]** `rb_esp_cassette`: MOTOR en GPIO36 (solo entrada); `cas status` en la consola; flash con aprobación | AC9 | 2 | evidencia M3a en `D:\rb-e0\m49-cas` | C105 + M3a | no |
+| C107 | **[puerta H4]** UART y RMT en DATA IN, lectura SD, consola `cas`; demo con las cintas de referencia | AC10–AC12 | 2 | demo con evidencia | C106 + H4 | no |
+| C108 | Cierre: `verify` y `review` de la rama | AC13 | 1 | registro en `verifications/` | C107 (o C105 si las puertas siguen cerradas) | no |
 
-| # | [P] | Tarea | Done-check | Depende de | Cubre | Riesgo |
-|---|---|---|---|---|---|---|
-| C001 | [P] | Fuente pública A8CAS y fila de origen (enmienda 1) en `docs/fuentes.md`; `cas_image.{hpp,cpp}` (`CasImage::index` → `CasTape` o error) | `ctest test_cas_image`: `FUJI` ausente, bloque cortado, tipo B, `baud` 600/800, pausa de `data`, `fsk ` como silencio, bloque desconocido saltado | — | AC6 (índice), AC8, AC9 | 1 |
-| C002 |  | `cassette_player`, `cassette_deck`, puerto `TapeLink`; transporte: aviso de MOTOR, `kSpeedChange` saliente, datos fuera de trama | `ctest test_cassette_player`: pausa, velocidad, ritmo de 10 bits por byte, MOTOR off congela y on sigue, fin de cinta, rebobinar; `ctest` de NetSIO en verde | C001 (`CasTape`) | AC6, AC7, AC12 (deck) | 2 |
-| C003 |  | **Puerta de viabilidad**: opción `--cassette <archivo.cas>`; demo en Altirra con un `.cas` estándar pequeño; observar el orden de arranque cinta/disco y los créditos | carpeta `D:\rb-e0\m49-cas\c003`: `host.jsonl` con `cas_motor` y bytes enviados, `version.txt`, captura del programa corriendo. **Si no corre: parar y volver al responsable** | C002 | AC1 | 1 |
-| C004 |  | Menú: `.CAS` en catálogo local, escaneo de carpeta y TNFS; elegir monta en `C:` sin pedir unidad; mensajes `CAS DE PULSOS: AUN NO` y `CAS NO VALIDO`; línea `C:` con el nombre | `ctest` de catálogo, TNFS y menú: AC2, AC3, AC8, AC9; pruebas de hoy en verde | C003 | AC2, AC3, AC8–AC10 | 2 |
-| C005 |  | `U` recorre D1..D8 y `C:`; reinicio en frío rebobina y conserva `C:`; D1 calla en el arranque con cinta solo si C003 lo pidió | `ctest` del menú: AC11, AC12; pruebas de hoy en verde | C004 | AC11, AC12, AC10 | 1 |
-| C006 |  | Demo final en Altirra: un `.cas` estándar y uno turbo tipo A (elegidos por el responsable), tipo B y roto | carpeta `D:\rb-e0\m49-cas`: `host.jsonl`, `version.txt`, capturas; un solo host | C005 | AC4, AC5, AC8, AC9 | 0 |
-| C007 | [P] | Docs: ADR-017 enmienda 12 (casetera `C:`), `host/README.md` (`.cas`, `--cassette`), `docs/fuentes.md` completo | archivos existen y enlazan; `check_notices` OK | C005 | R: ADR-017, ADR-012 | 0 |
-
-- C003 es la puerta del plan: C004..C007 no empiezan sin su evidencia.
+Si M3a o H4 siguen cerrados al terminar C105, la fase 1 se cierra sola (C108 sobre C100–C105) y C106–C107 esperan.
 
 ## Revisions
 
-- 2026-11-20 — borrador (plan).
-- 2026-11-20 — aprobado por el responsable («Aprobado, a tasks»); tareas C001–C007.
+- 2026-11-20 — plan nivel 1 en Altirra (C001–C007), aprobado. C001 y C002 hechas; C003 falló.
+- 2026-11-20 — reescrito tras el replanteo de la spec: ESP32, `rb_cassette` puro, código FSK propio, tareas
+  C100–C108 por fases. Las tareas C004–C007 anteriores se retiran.
+- 2026-11-20 — aprobado por el responsable.

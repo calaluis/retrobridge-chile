@@ -67,6 +67,20 @@ Rama `feat/cassette-cas` (worktree `.worktrees/feat-cassette-cas`, desde main `b
   - el primer tick tras encender MOTOR contaba tiempo parado, y un reloj que retrocede contaba dos veces → corregido.
 - Pendiente para C003: que Altirra acepte `SPEED_CHANGE` desde el dispositivo y bytes fuera de una trama.
 
+## C003 — Puerta de viabilidad (detenida, 2026-11-20)
+
+- `host/src/cassette_run.hpp` y opción `--cassette <archivo.cas>` (con `--image` o `--images`); compila sin avisos.
+- Demo 1 en Altirra (evidencia `D:\rb-e0\m49-cas\c003`: `host.jsonl`, `version.txt`), `international_karate.cas`:
+  - 20:04:05 reinicio en frío con START; el host rebobina. 20:04:17 llega MOTOR ON (`21`): el menú en D1 no estorbó.
+  - 600 baudios: 9 registros de 132 bytes enviados al ritmo de la cinta; 20:04:48 la cinta pasa a 750 baudios.
+  - 20:05:19 el Atari pide `STATUS` a D1: el arranque de cinta falló. El responsable vio `BOOT ERROR` y `SELF TEST`.
+  - Nunca llegó MOTOR OFF (`20`), ni al fallar. Créditos: 1638 rechazos momentáneos, sin mover la cinta.
+- Resultado: **AC1 no se cumple todavía**. Regla de la puerta: parar y volver al responsable.
+- Hipótesis (sin verificar): la parte estándar a 600 se leyó (el SO siguió 9 registros); la falla está en el tramo a
+  750 del cargador propio del juego, o en los bloques `fsk ` (uno antes de cada registro) tratados como silencio.
+
 ## Decision queue
 
-- (vacía)
+- **resuelta (2026-11-20)** — C003 falló con `international_karate.cas`. La propuesta de una cinta inventada se
+  rechazó: «No hay que inventar cintas». Replanteo: spec y plan reescritos para el ESP32 con el código FSK propio
+  (tareas C100–C108). C003 queda como evidencia de por qué NetSIO no sirve.

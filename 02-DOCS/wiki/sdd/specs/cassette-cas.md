@@ -1,199 +1,230 @@
 ---
 type: spec
-title: Spec — Cargar cintas .cas (nivel 1) desde el menú
-description: QUÉ y POR QUÉ de que RetroBridge cargue en el Atari cintas .cas estándar y turbo tipo A (por bytes), en Altirra por NetSIO, elegidas desde el menú.
-tags: [sdd, spec, menu, cassette, cas, netsio]
-timestamp: 2026-11-20T20:00:00Z
+title: Spec — Cargar cintas .cas reales en el ESP32
+description: QUÉ y POR QUÉ de que RetroBridge cargue en un Atari real los .cas reales (estándar y turbo software, bloques data y fsk), en el ESP32, con el código FSK propio del responsable como base.
+tags: [sdd, spec, cassette, cas, fsk, esp32, motor]
+timestamp: 2026-11-20T23:30:00Z
 topic: sdd
 slug: cassette-cas
 status: approved
 ---
 
-# Spec — Cargar cintas .cas (nivel 1) desde el menú
+# Spec — Cargar cintas .cas reales en el ESP32
 
 ## Problem & why
 
 Una parte de la colección del responsable existe solo en cinta: `.cas` estándar (International Karate, Night
-Knight) y `.cas` del sistema de carga turbo software. RetroBridge hoy solo sirve discos (`.ATR`) y programas
-(`.xex`). Un `.cas` no aparece en el menú y no se puede cargar.
+Knight) y `.cas` del sistema de carga turbo software (Alien Ambush, Bruce Lee, `turbo_software_*`, `tt_*`).
+RetroBridge hoy solo sirve discos (`.ATR`) y programas (`.xex`). No carga ninguna cinta.
 
 Disparador: el responsable lo pidió el 2026-11-20: «que el firmware lea archivos .cas legacy y .cas del sistema de
-carga turbo software». Se decidió hacerlo por niveles. Esta spec es el **nivel 1**: cintas cuyos datos son bytes
-(bloques `baud` + `data` del formato A8CAS). Eso cubre los `.cas` estándar y el turbo **tipo A** (por ejemplo,
-`PAL_ALIEN_AMBUSH_TURBO_SOFTWARE`, `NTSC_BRUCE_LEE_TURBO_SOFTWARE_FUJINET`, QROS EMOSOFT).
+carga turbo software».
+
+**Todas** las cintas reales de `D:\GitHub\Respaldos\MicroSD` traen bloques `fsk ` (señal de pulsos), también las
+estándar: International Karate tiene 107 bloques `fsk ` y 106 `data`. Una cinta real solo carga si esa señal se
+reproduce tal cual.
+
+El responsable ya resolvió eso en FujiNet: PRs #1722, #1756, #1773 y #1804 (release v1.6.2-atari-fsk-beta.1). Le
+costó un mes que funcionara. Ese código reproduce los bloques `fsk ` con el RMT del ESP32, los carga de a poco desde
+la tarjeta y se detiene con el MOTOR. ADR-012 enmienda 1 permite adaptarlo. **Ese trabajo no se pierde: es la base
+de esta spec.**
+
+## Por qué no Altirra (evidencia C003)
+
+La versión anterior de esta spec cargaba las cintas en Altirra por NetSIO y trataba `fsk ` como silencio. La prueba
+de viabilidad C003 (2026-11-20, evidencia `D:\rb-e0\m49-cas\c003`) falló con `international_karate.cas`:
+
+- MOTOR ON llegó y los registros a 600 baudios salieron;
+- en el tramo a 750 baudios el arranque falló: `BOOT ERROR` y `SELF TEST`;
+- MOTOR OFF nunca llegó.
+
+NetSIO lleva bytes a una velocidad, no una señal. Por NetSIO no se puede reproducir un bloque `fsk `. Por eso esta
+spec va al ESP32.
 
 ## Cost of not building it
 
 - Los juegos que solo existen en cinta quedan fuera de RetroBridge.
-- Para usarlos hay que volver a FujiNet o a la casetera del emulador, fuera del menú y fuera del flujo de TNFS.
-- Con el ESP32 (sin PC) no habría ninguna forma de cargarlos.
+- El trabajo FSK del responsable queda solo en FujiNet.
+- Para usar esas cintas hay que volver a FujiNet.
 
 ## The cheapest alternative
 
-- **La casetera de Altirra.** Altirra carga `.cas` por sí sola. Sirve en el PC, pero no en el Atari real ni desde
-  TNFS, y no pasa por RetroBridge.
-- **Convertir la cinta a `.xex` o `.ATR`.** Funciona con algunos `.cas` estándar, a mano y archivo por archivo. No
-  funciona con el turbo: el cargador turbo es parte del programa.
+- **Seguir usando FujiNet** para las cintas. Funciona hoy, pero fuera de RetroBridge.
+- **Convertir la cinta a `.xex` o `.ATR`.** A mano, archivo por archivo. No sirve con el turbo: el cargador turbo es
+  parte del programa.
 - **No construirlo.**
 
-Ninguna carga un `.cas` desde el menú, local o TNFS, así que se construye.
+Ninguna carga un `.cas` real con RetroBridge, así que se construye.
 
 ## Objeción registrada
 
-El SO del Atari mide la velocidad de la cinta con los bytes de sincronía (`$55 $55`) y los temporizadores de POKEY.
-No está comprobado que Altirra entregue por NetSIO los bytes del cassette con el tiempo que esa medición necesita.
-Si no lo hace, este diseño no sirve. El responsable decidió (2026-11-20) que la **primera tarea sea una prueba de
-viabilidad**: si un `.cas` pequeño no carga en Altirra por NetSIO, la spec se detiene y se replantea.
+La parte que de verdad carga una cinta (señal en SIO DATA IN, MOTOR por GPIO36) **no se puede probar** hasta que el
+responsable apruebe M3a (medición del MOTOR) y H4 (pines SIO como salida). Hasta entonces solo avanza lo portable,
+con pruebas del host. El responsable lo aceptó (2026-11-20): «Medir M3a primero», «Cadena completa por fases».
 
 ## Goals
 
-- G1. El menú muestra los `.cas` de la carpeta local y de TNFS, junto a `.ATR` y `.xex`.
-- G2. Un `.cas` elegido queda montado en la casetera (`C:`) y la pantalla principal lo muestra.
-- G3. Con la cinta montada, el Atari la carga como con una casetera real: arranque con START, o `CLOAD` / `RUN"C:"`
-  desde BASIC.
-- G4. La cinta avanza solo con el MOTOR encendido, respeta las velocidades (`baud`) y las pausas de cada bloque.
-- G5. Un `.cas` que no es de nivel 1 o que está roto da un mensaje claro al elegirlo.
+- G1. Un `.cas` real de la tarjeta SD se monta en la casetera del ESP32.
+- G2. Con la cinta montada, el Atari la carga como con una casetera real: arranque con START, o `CLOAD` / `RUN"C:"`.
+- G3. Los bloques `fsk ` salen como la señal que describe el archivo. Los bloques `data` salen como bytes a su
+  `baud`, tras su pausa.
+- G4. La cinta avanza solo con el MOTOR encendido y se detiene sin cortar la señal a medias.
+- G5. Una cinta que no se puede reproducir da un mensaje claro al montarla.
 
 ## Non-goals / out of scope
 
-- Turbo **tipo B**: `.cas` de pulsos (bloques `fsk ` con datos), por ejemplo `turbo_software_*`, `tt_international`,
-  `tt_river_raid`. Spec propia (nivel 2).
-- Grabar en cinta, rebobinar, adelantar o pausar a mano.
-- Firmware ESP32 (H4) y la línea MOTOR física (pin 8). Ver *Points to clarify*.
-- Convertir `.cas` a otros formatos.
+- Grabar en cinta.
+- Rebobinar por segundos (PR #1722, `cassetteTrail`). Spec propia.
+- Elegir la cinta desde el menú del Atari. El menú vive hoy en `retrobridge_host` (PC). Spec propia cuando el menú
+  llegue al ESP32.
+- Cargar cintas en Altirra o por NetSIO (ver C003).
+- Bloques `pwm*`: ninguna cinta real de la colección los trae.
+- Inventar cintas de prueba. Las demos usan solo `.cas` reales.
 - Cambiar el comportamiento de `.ATR` y `.xex`.
 
 ## Users & context
 
-El usuario del Atari frente al menú de RetroBridge, servido por `retrobridge_host` en D1, en **Altirra** con el hub
-NetSIO (un solo host por hub; unidades servidas en Off; la casetera propia de Altirra sin cinta). Su colección mezcla
-`.atr`, `.xex` y `.cas`, en la carpeta local y en TNFS.
+El responsable, con un Atari real conectado al ESP32 (FN32ROV-1.3) por SIO, la tarjeta SD con su colección y una
+consola serie al ESP32. Hardware: MOTOR (pin 8) llega directo a GPIO36 (R1); DATA IN es un pin SIO de salida.
 
 ## What the user can do
 
-- Ver los `.cas` en la lista de una fuente, mezclados con carpetas, `.ATR` y `.xex`.
-- Elegir un `.cas`: queda montado en `C:`, sin pedir unidad.
-- Cargarlo: reinicio en frío con START pulsado (y una tecla tras el pitido), o `CLOAD` / `RUN"C:"` desde BASIC.
-- Expulsarlo con `U DESMONTAR UNIDAD`: el cursor recorre D1..D8 y después `C:`. O elegir otro `.cas`, que reemplaza
-  al anterior y queda al principio.
-- Reintentar una carga fallida con otro reinicio en frío: la cinta sigue montada y vuelve al principio.
+- Montar un `.cas` de la SD desde la consola del ESP32: `cas mount <ruta>`.
+- Ver la cinta montada y dónde va: `cas status`.
+- Expulsarla: `cas eject`. Montar otra la reemplaza y queda al principio.
+- Cargarla en el Atari: reinicio en frío con START (y una tecla tras el pitido), o `CLOAD` / `RUN"C:"`.
+- Reintentar una carga fallida con otro reinicio en frío o `cas rewind`: la cinta vuelve al principio.
 
-Condición: el host corre con `--images`. No hay permisos.
+Condición: M3a y H4 aprobados para cargar en el Atari. Antes, montar y `cas status` funcionan sin tocar los pines
+SIO.
 
 ## What result they get
 
-1. La lista muestra el `.cas` con su nombre y la extensión `.CAS` visible.
-2. La línea `C:` de la pantalla principal, que hoy dice `C: SIN CINTA` (spec `menu-principal`, Q4), muestra el
-   nombre de la cinta montada. Sin cinta, sigue diciendo `C: SIN CINTA`.
-3. Tras cargar, el programa corre. Referencias aprobadas para la demo: un `.cas` estándar (International Karate o
-   Night Knight) y un turbo tipo A (Alien Ambush o Bruce Lee turbo software), de `D:\GitHub\Respaldos\MicroSD` o de
-   TNFS, elegidos por el responsable; sus rutas quedan en el registro.
-4. Un `.cas` de tipo B: mensaje ` CAS DE PULSOS: AUN NO` al elegirlo; `C:` no cambia.
-5. Un archivo que no es un `.cas` válido: mensaje ` CAS NO VALIDO` al elegirlo; `C:` no cambia.
+1. `cas mount` responde con el nombre y el número de bloques `data` y `fsk `.
+2. Tras cargar, el programa corre. Referencias aprobadas (cintas reales de `D:\GitHub\Respaldos\MicroSD`):
+   - estándar: `international_karate.cas`, Night Knight;
+   - turbo software con `data`: Alien Ambush (el Atari muestra `PROGRAMA CARGADO`), Bruce Lee;
+   - turbo software solo `fsk `: un `turbo_software_*` o `tt_*`, elegido por el responsable.
+3. Un archivo sin cabecera `FUJI`, con un bloque cortado o con `pwm*`: mensaje claro; la cinta montada no cambia.
 
 ## What it must respect
 
-- ADR-017 (menú de arranque) y sus enmiendas: terminal delgado; el host arma las pantallas.
-- ADR-012 y su **enmienda 1**: se puede reutilizar, adaptado, el código propio del responsable de la cuarentena
-  `D:\rb-e0\fsk-propio` (PRs de FujiNet #1756 y #1773, lectura A8CAS), registrando el commit de origen. Ningún otro
-  código de FujiNet ni de emuladores. El formato A8CAS se describe con una fuente pública, registrada en
-  `docs/fuentes.md`.
-- ADR-018 (cliente TNFS): un `.cas` de TNFS se descarga como hoy una `.ATR` o un `.xex`.
-- D1 sigue sirviendo el menú; `.ATR` y `.xex` funcionan igual.
-- Un solo `retrobridge_host` por hub.
+- **ADR-012 enmienda 1**: se adapta solo el código propio del responsable de la cuarentena `D:\rb-e0\fsk-propio`
+  (PRs #1722, #1756, #1773, #1804). Se adapta, no se pega. Cada pieza registra su commit de origen en
+  `docs/fuentes.md`. Ningún otro código de FujiNet ni de emuladores. Las dependencias de FujiNet (`bus.h`,
+  `fnio.h`, `pinmap.h`, clases `cassette`/`disk`) se reescriben.
+- **El comportamiento ya probado** del código propio: la regla de unión (bloques `fsk ` sin pausa forman una sola
+  tirada, como máximo 64), la carga progresiva (bloques de 512 bytes, 20 s de margen antes de empezar) y la parada
+  segura al caer el MOTOR.
+- **ADR-011**: sin reservas de memoria en el camino de reproducción.
+- **Puertas de hardware**: ningún pin SIO es salida sin H4 aprobado; el MOTOR no se usa sin M3a aprobado
+  (`docs/hardware/mitigacion-c-motor-pin8.md` sigue siendo propuesta).
+- Capas: `check_layering` y `check_notices` en verde. C++17, `-fno-exceptions -fno-rtti -Werror`.
+- `.ATR`, `.xex` y el menú del host siguen igual.
 
 ## How it proves it
 
-- **Prueba de viabilidad primero** (tarea 1): un `.cas` estándar pequeño carga en Altirra por NetSIO, con evidencia
-  (registro del host y captura). Si falla, se detiene la spec.
-- Pruebas del host (`ctest`): el catálogo lista `.cas`; la lectura de un `.cas` produce los bloques, velocidades y
-  pausas esperados; un tipo B y un archivo roto dan su mensaje; la cinta avanza solo con MOTOR encendido.
-- Demo en Altirra con un solo host: un `.cas` estándar y uno turbo tipo A cargan y corren. Evidencia en
-  `D:\rb-e0\m49-cas` (registro, versión, capturas).
+- **Fase 1, portable (sin hardware)**: pruebas del host (`ctest`) para la lectura del `.cas`, la regla de unión, la
+  carga progresiva y el reproductor con MOTOR. Además, una prueba que lee los `.cas` reales desde
+  `D:\GitHub\Respaldos\MicroSD` (ruta fuera del repo) y se salta si no están.
+- **Fase 2, ESP32 tras M3a**: medición del MOTOR en GPIO36 con el Atari, con evidencia.
+- **Fase 3, ESP32 tras H4**: demo en el Atari real con las cintas de referencia. Evidencia en `D:\rb-e0\m49-cas`
+  (registro de la consola, versión, fotos o capturas).
 - Registro de verificación en `02-DOCS/wiki/sdd/verifications/`.
 
 ## Behaviour
 
-- **Lista.** Las fuentes muestran también `.CAS` (sin distinguir mayúsculas), en orden alfabético como hoy.
-- **Elegir.** Elegir un `.cas` lo revisa y lo monta en `C:` al principio de la cinta. No pide unidad.
-- **Clasificar.** Un `.cas` es de nivel 1 si sus datos van en bloques `data`. Un bloque `fsk ` en una cinta de nivel 1
-  se trata como silencio de la misma duración. Un `.cas` cuyos datos van solo en bloques `fsk ` es tipo B.
-- **Reproducir.** Con la cinta montada, cuando el Atari enciende el MOTOR, la cinta avanza: cada bloque `data` se
-  envía a la velocidad del último `baud` (600 si no hay), tras su pausa. Cuando el Atari apaga el MOTOR, la cinta se
-  detiene donde está y sigue desde ahí al volver a encenderse.
+- **Leer.** Un `.cas` se recorre en orden: `baud` fija la velocidad (600 si no hay); `data` es un registro de bytes
+  tras su pausa; `fsk ` es una tira de duraciones de nivel (1/10 ms, alternando 0 y 1) tras su pausa.
+- **Unir.** Bloques `fsk ` seguidos, el segundo y siguientes sin pausa, forman una sola tirada (como máximo 64).
+- **Reproducir.** Con MOTOR encendido: cada pausa es silencio; cada `data` sale como bytes a su `baud`; cada tirada
+  `fsk ` sale como señal, con sus duraciones exactas.
+- **Cargar de a poco.** Una tirada larga no se carga entera en memoria. Se lee de la SD en bloques; la señal empieza
+  cuando hay 20 s de margen leídos.
+- **MOTOR.** Al apagarse, la cinta se detiene. Una tirada `fsk ` se corta en un punto seguro, no a mitad de un nivel.
+  Al volver a encenderse, sigue desde ahí.
 - **Fin de cinta.** Tras el último bloque la cinta queda al final; un nuevo MOTOR no envía nada.
-- **Reinicio en frío.** La cinta sigue montada y vuelve al principio.
-- **Expulsar.** `U` lleva el cursor por D1..D8 y `C:`; elegir `C:` la deja en `C: SIN CINTA`.
-- **D1 durante un arranque con cinta.** Lo fija la prueba de viabilidad (AC1): si el menú en D1 estorba la carga
-  desde cinta, el host no responde en D1 solo durante ese arranque. Fuera de ese caso, D1 sirve el menú como hoy.
-- **Fallos.** Tipo B → ` CAS DE PULSOS: AUN NO`. Cabecera `FUJI` ausente o bloque cortado → ` CAS NO VALIDO`. En los
-  dos casos `C:` no cambia.
+- **Reinicio en frío o `cas rewind`.** La cinta sigue montada y vuelve al principio.
+- **Fallos.** Sin `FUJI`, bloque cortado, `baud` 0 o `pwm*` → mensaje en la consola; la cinta montada no cambia.
 
 ## Acceptance criteria
 
-- **AC1** — Dada una prueba de viabilidad, cuando se carga un `.cas` estándar pequeño en Altirra por NetSIO, entonces
-  el programa corre; si no corre, la spec se detiene (registro de la prueba).
-- **AC2** — Dada una carpeta local o TNFS con `JUEGO.CAS`, cuando se abre, entonces `JUEGO.CAS` aparece en la lista.
-- **AC3** — Dado un `.cas` de nivel 1 elegido, entonces la pantalla principal muestra `C:` con su nombre.
-- **AC4** — Dado un `.cas` estándar montado, cuando se reinicia en frío con START y se pulsa una tecla, entonces el
-  programa carga y corre (demo).
-- **AC5** — Dado un `.cas` turbo tipo A montado, cuando se carga, entonces el programa corre (demo).
-- **AC6** — Dado un `.cas` con bloques `baud` 600 y 800, cuando se reproduce, entonces cada bloque `data` sale a su
-  velocidad y tras su pausa (prueba del host).
-- **AC7** — Dada una cinta montada, cuando el MOTOR se apaga a mitad de un bloque y vuelve a encenderse, entonces la
-  cinta sigue desde donde quedó (prueba del host).
-- **AC8** — Dado un `.cas` de solo bloques `fsk `, cuando se elige, entonces se ve ` CAS DE PULSOS: AUN NO` y `C:` no
-  cambia.
-- **AC9** — Dado un archivo sin cabecera `FUJI` o con un bloque cortado, cuando se elige, entonces se ve
-  ` CAS NO VALIDO` y `C:` no cambia.
-- **AC11** — Dada una cinta montada, cuando se pulsa `U` y se elige `C:`, entonces la línea dice `C: SIN CINTA`
-  (prueba del host).
-- **AC12** — Dada una cinta montada y leída en parte, cuando hay un reinicio en frío, entonces `C:` conserva su
-  nombre y la cinta vuelve al principio (prueba del host).
-- **AC10** — Las pruebas de hoy (`ctest`, `tools/tests`) siguen en verde: `.ATR` y `.xex` funcionan igual.
+Fase 1 — portable, prueba del host:
+
+- **AC1** — Dado `international_karate.cas` real, cuando se lee, entonces salen sus bloques en orden: los `data` con
+  su `baud` y su pausa, y los `fsk ` con su pausa y sus duraciones (no silencio).
+- **AC2** — Dados bloques `fsk ` seguidos sin pausa, cuando se leen, entonces forman una sola tirada; un bloque con
+  pausa, o el número 65, empieza otra.
+- **AC3** — Dada una tirada `fsk `, cuando se reproduce, entonces la señal tiene las mismas duraciones y niveles
+  alternos que el archivo.
+- **AC4** — Dada una tirada más larga que la memoria de carga, cuando se reproduce, entonces se lee en bloques y la
+  señal no empieza antes de tener 20 s de margen.
+- **AC5** — Dada una cinta montada, cuando el MOTOR se apaga a mitad de un `data` o de una tirada `fsk ` y vuelve,
+  entonces la cinta sigue desde un punto seguro, sin perder ni repetir datos.
+- **AC6** — Dado un archivo sin `FUJI`, con un bloque cortado, con `baud` 0 o con `pwm*`, cuando se monta, entonces
+  da su mensaje y la cinta montada no cambia.
+- **AC7** — Todos los `.cas` reales de `D:\GitHub\Respaldos\MicroSD` se leen sin error (prueba que se salta sin la
+  carpeta).
+- **AC8** — La consola del ESP32 acepta `cas mount`, `cas status`, `cas eject` y `cas rewind` (prueba del host sobre
+  el componente de consola).
+
+Fase 2 — ESP32, tras M3a:
+
+- **AC9** — Con el Atari encendido, `cas status` muestra el MOTOR tal como lo mide el responsable en M3a (encendido
+  con `CLOAD`, apagado al terminar).
+
+Fase 3 — ESP32, tras H4 (demo en el Atari real):
+
+- **AC10** — `international_karate.cas` carga con START y corre.
+- **AC11** — Alien Ambush carga y el Atari muestra `PROGRAMA CARGADO`.
+- **AC12** — Una cinta turbo software solo `fsk ` carga y corre.
+
+Siempre:
+
+- **AC13** — `ctest`, `tools/tests`, `check_layering` y `check_notices` siguen en verde; `.ATR` y `.xex` funcionan
+  igual.
 
 ## Enfoques considerados
 
-1. **Casetera virtual en el host, por NetSIO** (recomendado). El host reacciona a MOTOR y envía los bytes con cambio
-   de velocidad. Usa mensajes que NetSIO ya tiene (`MOTOR_ON/OFF`, `SPEED_CHANGE`, datos). El ESP32 heredará la lógica.
-2. **Convertir la cinta a disco.** Descartado: no sirve para el turbo.
-3. **Dejarlo a la casetera de Altirra.** Descartado: no pasa por RetroBridge ni por TNFS.
+1. **Casetera en el ESP32 con el código FSK propio** (recomendado y elegido). Es lo único probado con cintas reales.
+2. **Casetera en el host por NetSIO.** Descartado: C003 mostró que NetSIO no lleva la señal `fsk `.
+3. **Convertir la cinta a disco.** Descartado: no sirve para el turbo.
 
 ## Points to clarify
 
-- **suposición tomada** — los requisitos se numeran M49-n. *Base:* la última spec usó M48. *Riesgo:* ninguno.
-- **suposición tomada** (validada en clarify) — D1 no debe estorbar el arranque desde cinta; la prueba de
-  viabilidad decide si el host calla en D1 durante ese arranque.
-- **suposición tomada** (validada en clarify) — la cinta sigue montada tras un reinicio en frío, al principio.
-- **suposición tomada** — las pausas del `.cas` se respetan tal cual (responsable, 2026-11-20).
-- **suposición tomada** — los mensajes ` CAS DE PULSOS: AUN NO` y ` CAS NO VALIDO` van en la fila de mensajes de la
-  lista, como los de `.xex`. *Base:* spec `menu-presentacion`, AC9. *Riesgo:* ninguno.
-- **decisión diferida** — turbo tipo B (pulsos): nivel 2, spec propia; antes hay que saber si NetSIO puede llevar
-  pulsos.
-- **decisión diferida** — ESP32 y la línea MOTOR física: se decide entre MOTOR y la mitigación C
-  (`docs/hardware/mitigacion-c-motor-pin8.md`) **antes** de cualquier trabajo de cassette en el ESP32
-  (responsable, 2026-11-20).
-- **área no formulable** — compatibilidad de cada cargador turbo tipo A con el tiempo de NetSIO: se medirá en la demo.
+- **suposición tomada** — la cinta se elige desde la consola del ESP32 (`cas mount <ruta>`), no desde el menú.
+  *Base:* el menú vive hoy solo en el host del PC; la consola (`rb_console`) ya tiene `mount` y `ls` para discos.
+  *Riesgo:* si el responsable quiere el menú, esa parte espera a una spec de menú en el ESP32.
+- **suposición tomada** — las pruebas de formato usan fragmentos mínimos de bytes (cabecera, bloque cortado); las
+  cintas completas son siempre las reales, leídas desde su carpeta y nunca copiadas al repo. *Base:* «no hay que
+  inventar cintas». *Riesgo:* ninguno.
+- **suposición tomada** — de C001 se conserva la lectura A8CAS, sin la regla «`fsk ` = silencio»; de C002 se conserva
+  la lógica de MOTOR, pausa y `baud` para `data`, con otra salida (UART del ESP32 en lugar de NetSIO). *Base:* el
+  código y sus pruebas ya pasan revisión. *Riesgo:* el plan decide qué queda del enlace NetSIO.
+- **suposición tomada** — los cambios de C003 sin commit (`cassette_run.hpp`, opción `--cassette`) no se suben; la
+  evidencia queda en `D:\rb-e0\m49-cas\c003` y en el progreso. *Base:* el camino Altirra se descartó.
+- **suposición tomada** — los requisitos siguen numerados M49-n.
+- **decisión diferida** — rebobinar por segundos (PR #1722): spec propia.
+- **decisión diferida** — menú del Atari para cintas en el ESP32: spec propia.
+- **área no formulable** — si la mitigación C (quitar el pin 8) cambia cómo se lee el MOTOR: depende de M3a.
 
 ## Clarifications
 
-- 2026-11-20 — ¿Plataforma? → Altirra primero → probar sin hardware y sin abrir el riesgo de MOTOR.
-- 2026-11-20 — ¿Alcance? → solo cargar → grabar y rebobinar no son necesarios ahora.
-- 2026-11-20 — ¿Nivel? → nivel 1 (estándar y turbo tipo A) primero → por bytes, lo más directo.
-- 2026-11-20 — ¿Cómo se elige y arranca? → desde el menú, START o `CLOAD` → como una casetera real.
+- 2026-11-20 — ¿Plataforma? → Altirra primero (luego revertido, ver abajo).
+- 2026-11-20 — ¿Alcance? → solo cargar → grabar no es necesario ahora.
 - 2026-11-20 — ¿Pausas? → tal cual → algunos juegos las necesitan.
-- 2026-11-20 — ¿Viabilidad? → prueba primero; si falla, se detiene.
-- 2026-11-20 — ¿Dónde se trabaja? → rama `spec/cassette-cas` desde main, PR solo con la spec.
-
-- 2026-11-20 (clarify) — ¿Cómo se expulsa? → `U` recorre D1..D8 y después `C:` → sin tecla nueva y sin cambiar el
-  pie (AC11).
-- 2026-11-20 (clarify) — ¿Tras un reinicio en frío? → la cinta sigue montada, al principio → se reintenta una carga
-  sin volver al menú (AC12).
-- 2026-11-20 (clarify) — ¿D1 con cinta y START? → lo decide la prueba de viabilidad → depende del orden de arranque
-  del SO, que se observa, no se supone.
+- 2026-11-20 — ¿Tras un reinicio en frío? → la cinta sigue montada, al principio.
+- 2026-11-20 (replanteo) — C003 falló en Altirra. «No hay que inventar cintas. Se tienen que ocupar los .cas reales…
+  el código fuente que aporté a fujinet nos demoramos 1 mes a que funcione. Ese trabajo no debe perderse.» → se
+  replantea hacia el ESP32 con el código FSK propio.
+- 2026-11-20 (replanteo) — ¿MOTOR? → «Medir M3a primero» → las tareas de hardware esperan M3a.
+- 2026-11-20 (replanteo) — ¿Alcance? → «Cadena completa por fases» → portable primero, ESP32 tras M3a y H4.
+- 2026-11-20 (replanteo) — ¿Dónde? → «Esta rama» → `feat/cassette-cas`.
 
 ## Revisions
 
-- 2026-11-20 — borrador (specify).
-- 2026-11-20 — clarify: 3 preguntas resueltas, AC11 y AC12 nuevos.
-- 2026-11-20 — aprobada por el responsable.
+- 2026-11-20 — borrador (specify), nivel 1 en Altirra.
+- 2026-11-20 — clarify: 3 preguntas resueltas. Aprobada.
+- 2026-11-20 — C003 falló. Replanteo: ESP32, código FSK propio, cintas reales, fases tras M3a y H4. Vuelve a
+  borrador.
+- 2026-11-20 — aprobada por el responsable («Aprobada, a plan»).

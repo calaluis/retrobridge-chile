@@ -25,6 +25,7 @@ add_subdirectory(${rb_root}/components/rb_board rb_board)
 add_subdirectory(${rb_root}/components/rb_hw_diag rb_hw_diag)
 add_subdirectory(${rb_root}/components/rb_netsio rb_netsio)
 add_subdirectory(${rb_root}/components/rb_net_tnfs rb_net_tnfs)
+add_subdirectory(${rb_root}/components/rb_cassette rb_cassette)
 
 # Unity v2.7.0, vendored (D-9). Third-party code: built with its own defaults.
 add_library(unity STATIC unity/src/unity.c)
@@ -213,6 +214,11 @@ target_compile_definitions(test_create_atr PRIVATE RB_TEST_CREATE_DIR="${CMAKE_C
 # Checking a .xex and wrapping it with the 6502 loader (menu-xex X002).
 rb_add_host_test(test_xex_image menu/test_xex_image.cpp ${rb_root}/host/src/xex_image.cpp)
 target_include_directories(test_xex_image PRIVATE ${rb_root}/host/src)
+
+# rb_cassette (cassette-cas C101): records and FSK runs of a .cas. Real tapes come from
+# RB_CAS_SAMPLES (outside the repo); without it those two cases are ignored.
+rb_add_host_test(test_cas_index cassette/test_cas_index.cpp)
+target_link_libraries(test_cas_index PRIVATE rb_cassette)
 
 # Checking an A8CAS .cas tape and indexing its blocks (cassette-cas C001).
 rb_add_host_test(test_cas_image menu/test_cas_image.cpp ${rb_root}/host/src/cas_image.cpp)

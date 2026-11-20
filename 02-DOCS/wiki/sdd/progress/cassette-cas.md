@@ -93,6 +93,27 @@ Rama `feat/cassette-cas` (worktree `.worktrees/feat-cassette-cas`, desde main `b
   - trazabilidad: AC13; `rsc risk`: tier 1, un revisor.
 - Revisión (1 revisor, ronda 1): sin hallazgos; 1 detalle corregido (comentario huérfano en `test/host/CMakeLists.txt`).
 
+## C101 — rb_cassette: TapeSource y CasIndex (hecha, 2026-11-20)
+
+- `components/rb_cassette` (puro, capa en `check_layering`): `TapeSource` (lectura posicional; `MemoryTapeSource`) y
+  `CasIndex::build` → segmentos `Data` (`baud`, pausa) y `Fsk` (tirada, pausa, bloques), en una tabla del llamador, sin
+  reservas. Estados: `Ok`, `Invalid`, `Unsupported` (`pwm*`), `Full`, `ReadError`.
+- Regla de unión adaptada de `casFSK` (`fsk_scan_run`, PR #1756, commit 6ea2070); fila en `docs/fuentes.md`.
+- Desviaciones (menores):
+  - `fsktest/fsk_mem_513.cas` y `fsk_mem_65535.cas` (pruebas de memoria de FujiNet, un `fsk ` de longitud impar) dan
+    `Invalid`, igual que `fsk_scan_run`; la prueba AC7 lo espera así.
+  - 1 a 7 bytes sobrantes al final hacen `Invalid` todo el archivo (AC6, bloque cortado). `fsk_scan_run` solo cierra
+    la tirada; ninguna cinta real tiene ese caso. Decisión propia, señalada por el revisor.
+  - `host/src/cas_image.*` y el reproductor de C002 siguen hasta C104, que los reemplaza.
+- Controles:
+  - pruebas: `test_cas_index` 21/21 con `RB_CAS_SAMPLES` (16 cintas reales Ok, 2 de memoria `Invalid`); sin la variable,
+    19 pasan y 2 se ignoran; RED: 14 fallos contra el esqueleto; `ctest` 70/70;
+  - compilación: sin avisos con `-Werror`; `check_layering` OK; `check_notices` OK;
+  - seguridad: límites comprobados antes de cada lectura y suma; sin E/S propia;
+  - trazabilidad: AC1 (International Karate: 106 `data` a 600/750, 107 `fsk ` en tiradas), AC2 (unión, otro bloque
+    corta, 64+1), AC6 (fallos), AC7 (todas las cintas reales); `rsc risk`: tier 1, un revisor.
+- Revisión (1 revisor, ronda 1): sin hallazgos que corregir; 2 preguntas anotadas arriba.
+
 ## Decision queue
 
 - **resuelta (2026-11-20)** — C003 falló con `international_karate.cas`. La propuesta de una cinta inventada se

@@ -88,13 +88,13 @@ ejemplo `FUENTE 2: /ATARI_CHILE/OMS_ATR`; una ruta larga se recorta por la izqui
 | arriba, abajo | lista o carpeta | mueve una fila; en el borde pasa a la página siguiente o anterior |
 | izquierda, derecha | lista o carpeta | cambia de página (20 filas) y deja el cursor en la primera fila |
 | arriba, abajo | elegir unidad | mueve el cursor por D1 a D8; RETURN o el botón rojo eligen la marcada |
-| `1` | principal | abre la fuente local: la lista de `.atr` de la carpeta (como máximo 999, en páginas de 20) |
+| `1` | principal | abre la fuente local: la lista de `.atr` y `.xex` de la carpeta (como máximo 999, en páginas de 20) |
 | `A`..`T` | lista | elige una imagen de la página visible; después se elige la unidad (`1`..`8` o el cursor), Esc vuelve a la lista |
 | `A` | principal | arranca la imagen asignada a D1 |
 | `U` | principal | pide una unidad (`1`..`8`) y la desmonta; Esc cancela |
 | `N` | principal | crea una ATR vacía en la carpeta: nombre, `S` simple o `M` media, unidad `2`..`8`; Esc cancela |
 | `2`..`8` | principal | abre la raíz del servidor TNFS de esa fuente, de solo lectura (`FUENTE n SIN CONFIGURAR` si no hay) |
-| `A`..`T` | carpeta TNFS | entra en una carpeta (`/`) o elige una `.ATR` de la página visible; después se elige la unidad |
+| `A`..`T` | carpeta TNFS | entra en una carpeta (`/`) o elige una `.ATR` o un `.XEX` de la página visible; después se elige la unidad |
 | Esc | carpeta TNFS | vuelve a la carpeta anterior, en la página y fila desde donde se entró; en la raíz, a la principal; durante «CARGANDO nn%», cancela |
 | `E` | principal | edita el servidor de la fuente marcada por la barra (2..8); en una fila vacía, agrega una |
 | letras, `0`..`9`, `.`, `-` | edición | escriben en la fila, hasta 32; minúsculas, y con Shift mayúsculas |
@@ -136,7 +136,22 @@ Formatear y crear (spec `menu-formatear-disco`, [ADR-019](../docs/adr/0019-escri
 disco nuevo, `N` en la pantalla principal: se escribe el nombre (1 a 25 de A-Z, 0-9 y `-`), se elige `S` o `M` y la
 unidad. El host crea `<NOMBRE>.ATR`, la agrega a la lista y la monta; nunca sobrescribe un archivo existente. Después
 se formatea desde el DOS. El formateo queda en `sio_write` como `cmd=F` o `cmd=FM`; la creación, en `menu_create`.
-La carpeta necesita al menos una ATR para que el host arranque: el primer disco se copia desde el PC.
+La carpeta necesita al menos una ATR o un XEX para que el host arranque: el primer disco se copia desde el PC.
+
+Programas `.xex` (spec `menu-xex`, [ADR-017](../docs/adr/0017-menu-de-arranque.md) enmienda 11): la carpeta y
+las carpetas TNFS listan también los `.xex`. Un `.xex` solo va en D1 (en D2..D8: ` UN XEX SOLO VA EN D1`). El host lo
+lee entero y arma una ATR de arranque con un cargador propio de 3 sectores; D1 la sirve al pulsar `A`. El cargador
+apaga el BASIC (bit 1 de `PORTB`), carga los segmentos, llama a `INITAD` tras cada uno y salta a `RUNAD`; sin `RUNAD`, la pantalla queda quieta. Se
+rechazan al elegirlos: un archivo mal formado (` XEX NO VALIDO`) y uno con un segmento en `$0100`-`$01FF` o en
+`$0700`-`$08FF` (` XEX NO COMPATIBLE`). Un `.xex` rellenado por XMODEM hasta un múltiplo de 128 se acepta. Sin DOS:
+un programa que use archivos falla después de cargar. Un `.xex` que no se puede leer o que no cabe en una ATR da
+` ERROR: NO SE PUDO ABRIR`. En un Atari 400 u 800, el BASIC en cartucho se quita a mano.
+
+Un `.xex` de prueba propio, que muestra ` RETROBRIDGE XEX OK` y si el BASIC quedó apagado:
+
+```bash
+python -I tools/make_xex_demo.py --out build/menu-demo/RBPRUEBA.XEX
+```
 
 Pendiente (no implementado): casete (sin soporte).
 
@@ -168,10 +183,13 @@ aplicado a una unidad (`menu_mount`), cada desmontaje (`menu_unmount`), cada arr
 pendientes (`menu_pending`), cada vuelta al menú (`menu_return`), cada carpeta TNFS abierta (`menu_open`), cada
 imagen traída con su SHA-256 (`menu_fetch`), cada error TNFS con su causa (`menu_tnfs`) y cada orden enviada al
 servidor, con los indicadores de cada OPEN (`tnfs_request`). `--log` no puede nombrar ninguna imagen de la
-carpeta ni el archivo de fuentes. Una carpeta sin `.atr` o un archivo de fuentes inválido termina con código 2.
+carpeta ni el archivo de fuentes. Una carpeta sin `.atr` ni `.xex`, o un archivo de fuentes inválido, termina con
+código 2. Un `.xex` asignado o rechazado como inválido o incompatible lleva en `menu_select` `xex=1`, `segments=n` y
+`bytes=m` (el tamaño del `.xex`, no el del disco armado).
 
-El programa 6502 del menú se genera con `python -I tools/make_menu.py --out host/src/menu_program.inc`; las
-pruebas de `tools/` fallan si el archivo versionado no coincide.
+El programa 6502 del menú se genera con `python -I tools/make_menu.py --out host/src/menu_program.inc`, y el
+cargador de `.xex` con `python -I tools/make_xex_loader.py --out host/src/xex_loader.inc`; las pruebas de `tools/`
+fallan si un archivo versionado no coincide.
 
 El socket se enlaza a `127.0.0.1` y solo acepta datagramas del puerto del hub. El hub, en cambio, escucha en
 `0.0.0.0:9997`: limitarlo con el firewall del laboratorio.

@@ -250,3 +250,23 @@ Rama `feat/menu-xex` (worktree `.worktrees/feat-menu-xex`, desde main `ff9ff63`)
 - No hay capturas en la carpeta: lo visual queda como observación del responsable.
 - Evidencia en `D:b-e0\m48-xex`: `host.jsonl`, `host-relleno.jsonl` (primera regla, V1 aún rechazado),
   `host-regla-a.jsonl`, sus `.out`, `version.txt`, `retrobridge_host.exe` (regla A acotada), `images`.
+
+## X007 — Documentación (hecha, 2026-11-20, pendiente de commit)
+
+- `docs/adr/0017-menu-de-arranque.md`: enmienda 11. Listar `.xex`, solo D1, la envoltura, el cargador, los rechazos,
+  el relleno XMODEM (desviación 3) y sus consecuencias: sin DOS, sin `RAMTOP`, el BASIC en cartucho de un 400/800.
+- `host/README.md`: el párrafo de programas `.xex`, las filas `1` y `A`..`T` de TNFS, el `.xex` de prueba, los campos
+  del registro, el mensaje de salida y el generador del cargador.
+- `docs/fuentes.md`: una fila que dice que el relleno XMODEM no tiene fuente.
+- Controles:
+  - sin emoji en las líneas nuevas; `check_notices` y `check_layering`: OK;
+  - los enlaces apuntan a archivos que existen;
+  - `make_xex_loader.py --check`: al día; `tools/tests` 167 de 167.
+- Riesgo: `rsc risk` nivel 1, un revisor que contrasta cada afirmación con el código.
+- Revisión: sin fallas obligatorias en el código; 1 dato viejo y 2 detalles, corregidos:
+  - el README decía que la carpeta necesita una ATR: ahora «una ATR o un XEX», como `main.cpp`;
+  - sin `RUNAD`, el cargador salta a un bucle propio: dicho en el ADR y el README;
+  - los campos del registro: cuándo van `xex=1`, `segments` y `bytes`, y que `bytes` es el tamaño del `.xex`.
+  - Hueco señalado y cubierto: un `.xex` ilegible o demasiado grande da ` ERROR: NO SE PUDO ABRIR`.
+  - Sin rastrear: el hueco de memoria de solo lectura, `CARGANDO` en una lectura local y el orden de la lista.
+    La demo (X006) mostró la lista local en orden alfabético con `.atr` y `.xex` mezclados.

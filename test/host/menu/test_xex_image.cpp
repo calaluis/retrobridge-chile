@@ -153,6 +153,80 @@ void test_cut_data_or_a_cut_header_is_invalid(void)
     assert_rejected(segment(0x3000, {1}) + Bytes{0xFF}, XexResult::Invalid);
 }
 
+// Deviation 3 (owner, 2026-11-20, rule A): an XMODEM transfer fills the last 128-byte block. After the last
+// complete segment, less than 128 bytes are padding when the file is a whole number of blocks and its last byte
+// is $1A (the CP/M end-of-file mark). The loader gets the length without them. BACTERION V1 ends in $20 + 29 x $1A.
+Bytes padTo128(const Bytes& program, const Bytes& head = {})
+{
+    Bytes fill = head;
+    fill.resize(128 - program.size() % 128, 0x1A);
+    return program + fill;
+}
+
+void assert_padded(const Bytes& program, const Bytes& padded, uint32_t segments)
+{
+    TEST_ASSERT_EQUAL_UINT32(0, padded.size() % 128);
+    ImageBuffer out;
+    const XexWrap result = wrap(padded, out);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(XexResult::Ok), static_cast<uint8_t>(result.result));
+    TEST_ASSERT_EQUAL_UINT32(segments, result.segments);
+    const uint8_t* length = out.data() + 16 + kXexLoaderLengthOffset;
+    TEST_ASSERT_EQUAL_UINT32(program.size(), length[0] | (length[1] << 8) | (length[2] << 16));
+    const uint8_t* data = out.data() + 16 + sizeof kXexLoaderBlock;
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(program.data(), data, program.size());
+    const std::size_t sectors = (program.size() + 127) / 128;
+    TEST_ASSERT_EACH_EQUAL_UINT8(0, data + program.size(), sectors * 128 - program.size());
+    TEST_ASSERT_EQUAL_UINT32(16 + (kXexLoaderSectors + sectors) * 128, out.size());
+}
+
+void test_trailing_xmodem_padding_is_ignored(void)
+{
+    const Bytes program = segment(0x3000, {1, 2}) + segment(0x02E0, {0x00, 0x30});
+    assert_padded(program, padTo128(program), 2);
+}
+
+void test_padding_may_start_with_another_byte(void)  // the BACTERION V1 case
+{
+    const Bytes program = segment(0x3000, {1, 2});
+    assert_padded(program, padTo128(program, {0x20}), 1);
+}
+
+void test_padding_of_1_and_127_bytes(void)
+{
+    const Bytes one = segment(0x3000, Bytes(121, 0x55));  // 127 bytes
+    assert_padded(one, padTo128(one), 1);
+    const Bytes many = segment(0x3000, Bytes(123, 0x55));  // 129 bytes
+    assert_padded(many, padTo128(many), 1);
+}
+
+void test_padding_does_not_hide_an_incompatible_segment(void)
+{
+    assert_rejected(padTo128(segment(0x0780, {1})), XexResult::Incompatible);
+}
+
+void test_without_the_xmodem_shape_the_rest_is_invalid(void)
+{
+    const Bytes program = segment(0x3000, {1, 2});
+    assert_rejected(program + Bytes(29, 0x1A), XexResult::Invalid);              // not a whole block
+    assert_rejected(program + Bytes(118, 0x1A) + Bytes{0x00, 0x00}, XexResult::Invalid);  // last byte not $1A
+    // The XMODEM shape (128 bytes, last byte $1A), but a real header with cut data after the stray bytes.
+    const Bytes stray = program + Bytes{0x1A, 0x1A, 0x1A} + segment(0x4000, Bytes(111, 0x1A));
+    TEST_ASSERT_EQUAL_UINT32(128, stray.size());
+    assert_rejected(stray, XexResult::Invalid);
+}
+
+void test_a_file_cut_at_a_block_edge_is_still_invalid(void)
+{
+    Bytes cut = segment(0x3000, Bytes(300, 0x55));
+    cut.resize(256);
+    assert_rejected(cut, XexResult::Invalid);
+    // A RUNAD cut inside its data at a block edge, last byte $1A: the shape of fill, but it is a cut segment.
+    Bytes runad = segment(0x3000, Bytes(115, 0x55)) + segment(0x02E0, {0x1A, 0x30});
+    runad.pop_back();
+    TEST_ASSERT_EQUAL_UINT32(128, runad.size());
+    assert_rejected(runad, XexResult::Invalid);
+}
+
 void test_a_segment_on_the_loader_is_incompatible(void)
 {
     assert_rejected(segment(kXexLoaderLow, {0}), XexResult::Incompatible);
@@ -212,6 +286,12 @@ int main(void)
     RUN_TEST(test_without_ffff_at_the_start_is_invalid);
     RUN_TEST(test_start_after_end_is_invalid);
     RUN_TEST(test_cut_data_or_a_cut_header_is_invalid);
+    RUN_TEST(test_trailing_xmodem_padding_is_ignored);
+    RUN_TEST(test_padding_may_start_with_another_byte);
+    RUN_TEST(test_padding_of_1_and_127_bytes);
+    RUN_TEST(test_padding_does_not_hide_an_incompatible_segment);
+    RUN_TEST(test_without_the_xmodem_shape_the_rest_is_invalid);
+    RUN_TEST(test_a_file_cut_at_a_block_edge_is_still_invalid);
     RUN_TEST(test_a_segment_on_the_loader_is_incompatible);
     RUN_TEST(test_a_segment_on_page_one_is_incompatible);
     RUN_TEST(test_segments_next_to_the_loader_are_compatible);

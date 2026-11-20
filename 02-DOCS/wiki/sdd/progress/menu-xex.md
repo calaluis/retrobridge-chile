@@ -186,7 +186,7 @@ Rama `feat/menu-xex` (worktree `.worktrees/feat-menu-xex`, desde main `ff9ff63`)
 
 ## X005 — el `.xex` de prueba de RetroBridge
 
-- Estado: hecho, pendiente de commit.
+- Estado: hecho (06e2bdf).
 - Archivos:
   - `tools/make_xex_demo.py` (nuevo): programa 6502 propio en `$2000`, más INITAD y RUNAD. `--out` escribe el archivo.
   - `tools/tests/test_xex_demo.py` (nuevo): 6 pruebas.
@@ -212,3 +212,41 @@ Rama `feat/menu-xex` (worktree `.worktrees/feat-menu-xex`, desde main `ff9ff63`)
   - 3, cada prueba sin INITAD o con BASIC mira una sola línea: aceptado; la prueba con el cargador cubre el resto.
   - 4, `BASIC_OFF` repetido: ahora se importa de `make_xex_loader`.
   - 5, no fija colores ni apaga el modo de atracción: aceptado; no cambia la prueba de "OK".
+
+## X006 — Demo en Altirra (hecha, 2026-11-20)
+
+- Montaje: Altirra con D1..D8 en **Off**; hub `netsiohub` en 9997; un solo `retrobridge_host` (06e2bdf) con
+  `--images D:b-e0\m48-xex\images --sources D:b-e0\m48-xex\sources.txt --peer netsiohub --log ...`.
+- Imágenes locales: `RBPRUEBA.XEX` (de `make_xex_demo.py`), `ROTO.XEX` (sin `$FFFF`), `CHOCA.XEX` (un segmento en
+  `$0780`, sobre el cargador) y `DOS25D1D2D3.ATR`.
+- Registro (`host.jsonl`, 16:16-16:23 UTC), 976 `tnfs_request` sin error:
+  - AC1, AC2 y AC3: la lista local muestra los 4 archivos; TNFS lista `.xex` en
+    `/Juegos_Calaluis/__GAMES/__Executables/B/BA` (136 entradas, paginadas).
+  - AC4: `menu_select D2 name=RBPRUEBA.XEX refused: xex only on D1`.
+  - AC5, AC6 y AC7 con el `.xex` de prueba: `assigned xex=1 segments=3 bytes=252`, `menu_boot D1 name=RBPRUEBA.XEX`,
+    `D1=image` (16:22:16 y 16:23:01). En pantalla, según el responsable: ` RETROBRIDGE XEX OK` y ` BASIC APAGADO`.
+  - AC5 con un juego de TNFS: `BACTERION! (V2).XEX`, 4962 bytes, 2 segmentos, `menu_boot` y `D1=image`. El
+    responsable lo vio arrancar.
+  - AC8: `ROTO.XEX refused: result=invalid`.
+  - AC9: `CHOCA.XEX refused: result=incompatible`.
+  - AC10: `DOS25D1D2D3.ATR` en D2, `accepted: 1040 sectors`, `D2=mounted`.
+- Un primer intento con `RBPRUEBA.XEX` (16:18) no tuvo `menu_boot`: hubo un reinicio en frío sin `A`. Se repitió.
+- Hallazgo de compatibilidad: `BACTERION! (V1).XEX` (4992 bytes) daba ` XEX NO VALIDO`. Leído por TNFS (script
+  de solo lectura): son los 4962 bytes de V2 más `$20` y 29 bytes `$1A`. Un primer informe dijo «30 bytes `$1A`»:
+  fue una mala lectura del volcado, corregida.
+  - Decisiones del responsable: «Acepta el relleno ya»; tras ver que la primera regla (solo `$1A`) no cubría V1,
+    «A: múltiplo de 128» (desviación 3 del plan).
+  - Regla A: ver el plan. La primera versión se comía un RUNAD real antes del relleno; una prueba lo detectó. La
+    revisión (nivel 1) mostró que un RUNAD cortado en un borde de bloque pasaba: la regla se acotó (un resto que
+    empieza con `$FFFF`, o con cabecera válida y datos cortados, no es relleno).
+  - Pruebas: `test_xex_image` 19 (relleno XMODEM, el caso de V1, 1 y 127 bytes, incompatible con relleno, forma
+    XMODEM sin relleno, archivo cortado en borde de bloque, RUNAD cortado); rojo visto; `ctest` 67 de 67.
+  - Mutantes, 7 de 7 muertos: sin múltiplo de 128, sin último byte `$1A`, límite 127, sin la guarda de `$FFFF`,
+    sin inicio mayor que fin, solo resto todo `$1A`, la longitud con el relleno.
+  - Revisión, detalles aceptados: `TooLarge` mide el archivo con el relleno (puede rechazar por un sector en el
+    límite; mantiene `TooLarge` antes de `Invalid`); los dos huecos que anota el plan.
+  - Demo con la regla final (`host-regla-a.jsonl`, 17:02 UTC): `menu_fetch` de V1, 4992 bytes,
+    `assigned xex=1 segments=2`, `menu_boot` y `D1=image`. El responsable lo vio arrancar («Arrancó»).
+- No hay capturas en la carpeta: lo visual queda como observación del responsable.
+- Evidencia en `D:b-e0\m48-xex`: `host.jsonl`, `host-relleno.jsonl` (primera regla, V1 aún rechazado),
+  `host-regla-a.jsonl`, sus `.out`, `version.txt`, `retrobridge_host.exe` (regla A acotada), `images`.

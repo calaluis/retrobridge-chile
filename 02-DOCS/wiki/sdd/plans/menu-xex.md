@@ -130,6 +130,16 @@ las tres. X005 (`.xex` de prueba) puede ir con X001. X006 (demo) y X007 (docs) a
   `CARGANDO` mientras se lee.
 - **Página 1 (2026-11-20, X004, decidida por el responsable).** Un segmento en `$0100`-`$01FF` (la pila) también da
   ` XEX NO COMPATIBLE`.
+- **Desviación 3 (2026-11-20, X006, decidida por el responsable: «Acepta el relleno ya» y «A: múltiplo de
+  128»).** La demo mostró `BACTERION! (V1).XEX`: los 4962 bytes de V2 más `$20` y 29 bytes `$1A` (4992, 39
+  bloques de 128): el relleno de una transferencia XMODEM, con la marca de fin de archivo de CP/M. `XexImage::wrap`
+  toma como relleno el resto tras el último segmento completo cuando: mide de 1 a 127 bytes, el archivo es
+  múltiplo de 128, su último byte es `$1A`, y el resto no es un segmento (todo `$1A`, o una cabecera cortada o
+  con inicio mayor que fin que no empieza con `$FFFF`). El cargador recibe la longitud sin el relleno. Un
+  segmento cortado dentro de sus datos, como un RUNAD cortado, sigue siendo ` XEX NO VALIDO`. Sin fuente citada:
+  es una tolerancia propia, no parte del formato. Huecos aceptados: un último segmento real de 1 byte en `$1A1A`
+  con valor `$1A` se toma por relleno; un archivo cortado dentro de una cabecera, en un borde de bloque y con
+  último byte `$1A`, pasa como bueno.
 
 ## Tasks
 

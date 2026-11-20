@@ -186,6 +186,13 @@ Evidencia en `D:\rb-e0\m45-escritura`: `host.jsonl` (2 corridas; `host-run1.json
 - Controles: `check_notices` OK; `check_layering` OK; sin emoji; `rsc risk` tier 1, un revisor (refuter-correctness): 1 hallazgo menor (faltaba la causa `no_drive` en ADR-019), corregido.
 - **NO-APLICA** — tests y build: solo cambian documentos.
 
+## Cierre (2026-11-19)
+
+- Verificación: `02-DOCS/wiki/sdd/verifications/menu-escritura-disco-2026-11-19.md`.
+- Prueba nueva de AC8 (reintento). Corrección del re-montaje de la misma ATR (opción A, aprobada): desmontar y
+  después montar; prueba `test_remounting_the_same_atr_keeps_it_writable` en rojo antes y en verde después.
+- Desviación anotada: sector fuera de rango en `W`/`P` = NAK al comando (spec línea 106 dice ERROR).
+
 ## Pendiente
 
-Cierre ASDD (verify y review del branch), push y PR con aprobación del responsable.
+Push y PR con aprobación del responsable; el CI cubre AC10 (firmware) y los sanitizers.

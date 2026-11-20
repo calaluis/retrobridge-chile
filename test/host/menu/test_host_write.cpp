@@ -286,6 +286,45 @@ static void test_put_and_write_are_read_back_and_survive_a_restart(void)
     TEST_ASSERT_EQUAL_UINT8_ARRAY(written.data(), again.inner.sent(1).bytes.data() + 1, size);
 }
 
+// AC8: a SIOV retry of the same write leaves the file as one write does.
+static void test_retried_write_leaves_the_file_as_one_write(void)
+{
+    const std::string file = path_of(RB_TEST_WRITE_DIR, "demo-uno.atr");
+    const uint16_t size = header_sector_size(file_bytes(file));
+    const auto data = data_frame(size, 0x3C);
+    {
+        WriteRig rig;
+        rig.keys({K1, KB, K2});
+        TEST_ASSERT_TRUE(rig.write(2, kWrite, 10, data, size) == StepOutcome::Completed);
+    }
+    const std::vector<uint8_t> once = file_bytes(file);
+    fresh_copies();
+    {
+        WriteRig rig;
+        rig.keys({K1, KB, K2});
+        TEST_ASSERT_TRUE(rig.write(2, kWrite, 10, data, size) == StepOutcome::Completed);
+        TEST_ASSERT_TRUE(rig.write(2, kWrite, 10, data, size) == StepOutcome::Completed);
+        TEST_ASSERT_EQUAL_UINT(2, rig.writes.count);
+    }
+    TEST_ASSERT_TRUE(once == file_bytes(file));
+}
+
+// AC1: mounting the same ATR again on the same drive keeps it writable (closing review, option A).
+static void test_remounting_the_same_atr_keeps_it_writable(void)
+{
+    const std::string file = path_of(RB_TEST_WRITE_DIR, "demo-uno.atr");
+    const uint16_t size = header_sector_size(file_bytes(file));
+    const auto data = data_frame(size, 0x5A);
+    WriteRig rig;
+    rig.keys({K1, KB, K2});
+    rig.keys({K1, KB, K2});
+    rig.step();  // the remount is an unmount, then a mount
+    TEST_ASSERT_EQUAL_STRING("demo-uno.atr", rig.bay.mountedLocation(DriveNumber::from(2).value())->c_str());
+    assert_drive_line(rig, 2, "D2 DEMO-UNO.ATR");  // no " SL"
+    TEST_ASSERT_TRUE(rig.write(2, kWrite, 10, data, size) == StepOutcome::Completed);
+    TEST_ASSERT_EQUAL('C', rig.writes.last.result);
+}
+
 // AC4, AC7: a read-only file is protected in STATUS, refuses writes, keeps its bytes.
 static void test_read_only_file_is_protected_marked_and_unchanged(void)
 {
@@ -412,6 +451,8 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_put_and_write_are_read_back_and_survive_a_restart);
+    RUN_TEST(test_retried_write_leaves_the_file_as_one_write);
+    RUN_TEST(test_remounting_the_same_atr_keeps_it_writable);
     RUN_TEST(test_read_only_file_is_protected_marked_and_unchanged);
     RUN_TEST(test_same_atr_on_two_drives_only_the_first_writes);
     RUN_TEST(test_menu_on_d1_refuses_writes);

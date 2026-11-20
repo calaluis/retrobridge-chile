@@ -228,10 +228,17 @@ void MenuController::collect()
                                                           : "empty";
         std::snprintf(detail, sizeof detail, "D%u=%s", number, what);
     }
+    const bool remount = inFlight_ == InFlight::Unmount && !outcome->error && remountDrive_ == number;
+    const EntryIndex remountEntry = remountEntry_;
     inFlight_ = InFlight::None;
     previous_ = Shown{};
     incoming_ = Shown{};
+    remountDrive_ = 0;
+    remountEntry_ = kNoEntry;
     event("menu_mount", detail);
+    if (remount) {
+        mountOn(number, remountEntry);  // the old source is closed now
+    }
 }
 
 void MenuController::service()
@@ -612,6 +619,18 @@ void MenuController::assignD1(EntryIndex entry)
 
 void MenuController::mountOn(unsigned number, EntryIndex entry)
 {
+    const Shown& current = shown_[number - 1];
+    if (current.kind == Shown::Kind::Local && current.entry == entry && remountDrive_ == 0) {
+        // The same file again: a new source opened beside the old writer would be read-only.
+        remountDrive_ = number;
+        remountEntry_ = entry;
+        emptyDrive(number);
+        if (inFlight_ != InFlight::Unmount) {  // refused: nothing to wait for
+            remountDrive_ = 0;
+            remountEntry_ = kNoEntry;
+        }
+        return;
+    }
     const char* name = catalog_.name(entry);
     const auto location = rb::app::ImageLocation::from(name);
     const rb::core::Result<rb::app::MountReport> mounted =

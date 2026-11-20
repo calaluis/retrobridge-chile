@@ -243,3 +243,31 @@ en el menú qué unidades no aceptan escrituras.
 
 Consecuencias: solo cambia el host; el programa 6502 no cambia. La marca dice lo que el host sabe al montar; si el
 atributo cambia después, la marca no se actualiza hasta el siguiente montaje.
+
+## Enmienda 9 (2026-11-20, spec `menu-formatear-disco`): crear una ATR con N
+
+Contexto: para formatear un disco nuevo, el usuario necesita un archivo ATR vacío en la carpeta local. Hasta ahora
+había que crearlo en el PC.
+
+1. La tecla `N` de la pantalla principal crea una ATR en la carpeta `--images`, en tres pasos:
+   1. **Nombre.** El 6502 lo edita en la fila de mensajes, después de `NOMBRE:`. Usa la acción 3, igual que el
+      editor de servidores (Enmienda 6). El nombre tiene de 1 a 25 caracteres de A-Z, 0-9, `-` y `_` (M46-3). Las
+      minúsculas valen como mayúsculas. Se rechazan los nombres de dispositivo de Windows (CON, NUL, COM1...).
+   2. **Densidad.** `S` simple (720 x 128) o `M` media (1040 x 128).
+   3. **Unidad.** `2`..`8` o RETURN sobre la barra. D1 no se ofrece, porque sirve el menú.
+   Esc cancela en cualquier paso.
+2. El archivo `<NOMBRE>.ATR` se crea con apertura exclusiva: un archivo existente nunca se sobrescribe. Lleva la
+   cabecera de 16 bytes y todos los sectores en `$00`, sin formatear; el DOS lo formatea después.
+3. El archivo entra en la lista en su lugar alfabético y se monta en la unidad elegida. Las posiciones guardadas de
+   las demás unidades se corren, así que cada unidad conserva su nombre.
+4. Mensajes:
+   - ` NOMBRE NO VALIDO: LETRAS, 0-9 Y -`
+   - ` YA EXISTE <NOMBRE>.ATR`
+   - ` LISTA LLENA: 999 IMAGENES` (antes de pedir el nombre)
+   - ` SIN CARPETA LOCAL`
+   - ` ERROR: NO SE PUDO CREAR`
+5. Evento `menu_create` con nombre, densidad, unidad y resultado
+   (`created`, `exists`, `invalid_name`, `io`, `full`, `no_folder`, `not_listed`).
+
+Consecuencias: solo cambia el host; el programa 6502 no cambia. El editor del 6502 no tiene `_`, así que el
+mensaje no lo anuncia, aunque la regla lo acepta. Una ATR creada queda en la carpeta aunque el montaje falle.

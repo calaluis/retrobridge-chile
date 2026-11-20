@@ -55,6 +55,9 @@ enum class ErrorCode : uint8_t {
 
     // Disk writes (menu-escritura-disco)
     WriteProtected,
+
+    // Formatting (menu-formatear-disco): the requested density is not the disk's
+    DensityMismatch,
 };
 
 }  // namespace rb::core

@@ -46,7 +46,7 @@ public:
         if (!writable_) {
             return rb::core::Failure{rb::core::ErrorCode::WriteProtected};
         }
-        if (fail_writes_) {
+        if (fail_writes_ || (fail_after_ != 0 && writes_ > fail_after_)) {
             return rb::core::Failure{rb::core::ErrorCode::IoError};
         }
         for (uint32_t i = 0; i < in.size(); ++i) {
@@ -56,6 +56,8 @@ public:
     }
 
     void fail_writes(bool fail) { fail_writes_ = fail; }
+    // Every write after the first `count` fails with IoError (0: never).
+    void fail_writes_after(unsigned count) { fail_after_ = count; }
     unsigned writes() const { return writes_; }
     const std::vector<uint8_t>& bytes() const { return bytes_; }
 
@@ -63,6 +65,7 @@ private:
     std::vector<uint8_t> bytes_;
     bool writable_;
     bool fail_writes_ = false;
+    unsigned fail_after_ = 0;
     unsigned writes_ = 0;
 };
 

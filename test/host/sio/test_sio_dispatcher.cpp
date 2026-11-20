@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <utility>
+#include <vector>
 
 #include "fakes/fake_byte_source.hpp"
 #include "fakes/memory_byte_source.hpp"
@@ -526,6 +527,142 @@ static void test_repeated_write_gives_the_same_result(void)
     TEST_ASSERT_TRUE(once == source.bytes());
 }
 
+// --- Formatting (menu-formatear-disco, F002): $21 single, $22 enhanced -----------------
+
+constexpr uint8_t kFormat = 0x21;
+constexpr uint8_t kFormatMedium = 0x22;
+
+rb::test::MemoryByteSource ed_memory(bool writable)
+{
+    return rb::test::MemoryByteSource{make_atr_header(sd_data_size(1040), 128),
+                                      kAtrHeaderSize + sd_data_size(1040), writable};
+}
+
+bool data_is_zero(const rb::test::MemoryByteSource& source)
+{
+    for (std::size_t i = kAtrHeaderSize; i < source.bytes().size(); ++i) {
+        if (source.bytes()[i] != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The answer to a format: no bad sectors ($FFFF ends the list), $FF after it (M46-4).
+void assert_empty_bad_sector_list(const Buffer& out, uint16_t length)
+{
+    for (uint16_t i = 0; i < length; ++i) {
+        TEST_ASSERT_EQUAL_HEX8(0xFF, out[i]);
+    }
+    TEST_ASSERT_EQUAL_HEX8(sio_checksum(Span<const uint8_t>{out.data(), length}), out[length]);
+}
+
+static void test_format_is_nacked_without_allow_writes(void)
+{
+    DriveBay bay{1};
+    rb::test::MemoryByteSource source = sd_memory(true);
+    mount_memory(bay, source);
+    SioCommandDispatcher dispatcher{bay};
+    TEST_ASSERT_TRUE(accept(dispatcher, frame(kD1, kFormat)) == Acceptance::Nak);
+    TEST_ASSERT_TRUE(accept(dispatcher, frame(kD1, kFormatMedium)) == Acceptance::Nak);
+    TEST_ASSERT_FALSE(dispatcher.hasPendingCommand());
+    TEST_ASSERT_EQUAL_UINT(0, source.writes());
+}
+
+static void test_format_single_density_zeroes_the_disk(void)
+{
+    DriveBay bay{1};
+    rb::test::MemoryByteSource source = sd_memory(true);
+    mount_memory(bay, source);
+    SioCommandDispatcher dispatcher{bay, true};
+    TEST_ASSERT_TRUE(accept(dispatcher, frame(kD1, kFormat)) == Acceptance::Accepted);
+    TEST_ASSERT_EQUAL_UINT(0, source.writes());  // accept does no I/O
+    TEST_ASSERT_EQUAL_size_t(0, dispatcher.incomingFrame().size());  // no data frame from the Atari
+    Buffer out{};
+    const Completion done = dispatcher.execute(Span<uint8_t>{out});
+    TEST_ASSERT_EQUAL_HEX8(code::kComplete, done.code);
+    TEST_ASSERT_EQUAL_UINT16(129, done.frameLength);
+    assert_empty_bad_sector_list(out, 128);
+    TEST_ASSERT_TRUE(data_is_zero(source));
+    assert_status(dispatcher, {0x00, 0xFF, 0xE0, 0x00, 0xE0});
+}
+
+static void test_format_medium_density_zeroes_the_disk(void)
+{
+    DriveBay bay{1};
+    rb::test::MemoryByteSource source = ed_memory(true);
+    mount_memory(bay, source);
+    SioCommandDispatcher dispatcher{bay, true};
+    Buffer out{};
+    const Completion done = run(dispatcher, frame(kD1, kFormatMedium), out);
+    TEST_ASSERT_EQUAL_HEX8(code::kComplete, done.code);
+    TEST_ASSERT_EQUAL_UINT16(129, done.frameLength);
+    assert_empty_bad_sector_list(out, 128);
+    TEST_ASSERT_TRUE(data_is_zero(source));
+}
+
+static void test_format_ignores_aux_bytes(void)
+{
+    DriveBay bay{1};
+    rb::test::MemoryByteSource source = sd_memory(true);
+    mount_memory(bay, source);
+    SioCommandDispatcher dispatcher{bay, true};
+    Buffer out{};
+    TEST_ASSERT_EQUAL_HEX8(code::kComplete, run(dispatcher, frame(kD1, kFormat, 0x10, 0x50), out).code);
+}
+
+static void test_format_with_another_density_errors_and_sets_d2(void)
+{
+    DriveBay bay{1};
+    rb::test::MemoryByteSource source = sd_memory(true);
+    mount_memory(bay, source);
+    SioCommandDispatcher dispatcher{bay, true};
+    const std::vector<uint8_t> before = source.bytes();
+    Buffer out{};
+    const Completion done = run(dispatcher, frame(kD1, kFormatMedium), out);
+    TEST_ASSERT_EQUAL_HEX8(code::kError, done.code);
+    TEST_ASSERT_EQUAL_UINT16(129, done.frameLength);  // ERROR is still followed by the buffer
+    assert_empty_bad_sector_list(out, 128);
+    TEST_ASSERT_TRUE(before == source.bytes());
+    assert_status(dispatcher, {0x04, 0xEF, 0xE0, 0x00, 0xD4});
+}
+
+static void test_format_of_a_protected_disk_errors_and_sets_d3(void)
+{
+    DriveBay bay{1};
+    rb::test::MemoryByteSource source = sd_memory(false);
+    mount_memory(bay, source);
+    SioCommandDispatcher dispatcher{bay, true};
+    const std::vector<uint8_t> before = source.bytes();
+    Buffer out{};
+    TEST_ASSERT_EQUAL_HEX8(code::kError, run(dispatcher, frame(kD1, kFormat), out).code);
+    TEST_ASSERT_TRUE(before == source.bytes());
+    assert_status(dispatcher, {0x08, 0xBF, 0xE0, 0x00, 0xA8});
+}
+
+static void test_format_of_a_double_density_disk_errors_with_a_256_byte_buffer(void)
+{
+    DriveBay bay{1};
+    FakeByteSource source = dd_source();
+    mount(bay, source);
+    SioCommandDispatcher dispatcher{bay, true};
+    Buffer out{};
+    const Completion done = run(dispatcher, frame(kD1, kFormat), out);
+    TEST_ASSERT_EQUAL_HEX8(code::kError, done.code);
+    TEST_ASSERT_EQUAL_UINT16(257, done.frameLength);
+    assert_empty_bad_sector_list(out, 256);
+}
+
+static void test_format_of_an_empty_drive_errors(void)
+{
+    DriveBay bay{1};
+    SioCommandDispatcher dispatcher{bay, true};
+    Buffer out{};
+    const Completion done = run(dispatcher, frame(kD1, kFormat), out);
+    TEST_ASSERT_EQUAL_HEX8(code::kError, done.code);
+    TEST_ASSERT_EQUAL_UINT16(129, done.frameLength);
+}
+
 int main(int argc, char** argv)
 {
     if (argc > 1 && std::strcmp(argv[1], "--execute-without-accept") == 0) {
@@ -557,5 +694,13 @@ int main(int argc, char** argv)
     RUN_TEST(test_io_failure_answers_error_and_sets_d2);
     RUN_TEST(test_write_to_an_empty_drive_takes_the_frame_then_errors);
     RUN_TEST(test_repeated_write_gives_the_same_result);
+    RUN_TEST(test_format_is_nacked_without_allow_writes);
+    RUN_TEST(test_format_single_density_zeroes_the_disk);
+    RUN_TEST(test_format_medium_density_zeroes_the_disk);
+    RUN_TEST(test_format_ignores_aux_bytes);
+    RUN_TEST(test_format_with_another_density_errors_and_sets_d2);
+    RUN_TEST(test_format_of_a_protected_disk_errors_and_sets_d3);
+    RUN_TEST(test_format_of_a_double_density_disk_errors_with_a_256_byte_buffer);
+    RUN_TEST(test_format_of_an_empty_drive_errors);
     return UNITY_END();
 }

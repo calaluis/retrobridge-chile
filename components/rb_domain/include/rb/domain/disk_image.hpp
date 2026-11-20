@@ -49,6 +49,12 @@ public:
     // write nothing; IoError comes from the source.
     rb::core::Result<uint16_t> writeSector(SectorNumber sector, rb::core::Span<const uint8_t> data);
 
+    // Writes $00 to every sector, like a drive's format command (menu-formatear-disco,
+    // F001). `density` must be the disk's own, Single or Enhanced: anything else is
+    // DensityMismatch. WriteProtected and DensityMismatch write nothing; the first
+    // IoError from the source stops it (sectors before it are already zero).
+    rb::core::Result<void> format(Density density);
+
 private:
     DiskImage(ImageByteSource& source, const AtrLayout& layout) noexcept;
     void detach() noexcept;

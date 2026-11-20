@@ -30,6 +30,13 @@ constexpr uint8_t kLetterCodes[kListMaxEntries] = {
 constexpr uint8_t kKeyA = 0x3F;
 constexpr uint8_t kKeyE = 0x2A;
 constexpr uint8_t kKeyU = 0x0B;
+constexpr uint8_t kKeyN = 0x23;
+constexpr uint8_t kKeyS = 0x3E;
+constexpr uint8_t kKeyM = 0x25;
+// The new name's field in the message row, after "NOMBRE:" (menu-formatear-disco). The
+// 6502 keeps its cursor one column past the text: 7 + 32 ends on the row's last column.
+constexpr unsigned kCreateLabel = 7;
+constexpr const char* kCreateInvalid = " NOMBRE NO VALIDO: LETRAS, 0-9 Y -";
 constexpr uint8_t kKeyEsc = 0x1C;
 constexpr uint8_t kKeyReturn = 0x0C;
 constexpr std::size_t kPageRows = TnfsFolder::kPageRows;
@@ -279,6 +286,10 @@ MenuReply MenuController::key(uint8_t code, uint8_t row)
         onEdit(code);
         return render(kMenuActionShow);
     }
+    if (editing()) {  // the name of a new ATR, the same way
+        onCreateName(code);
+        return render(kMenuActionShow);
+    }
     // The bar may have moved on the Atari since the host drew it: start from the row it
     // shows. A row not on the screen changes nothing.
     if (row != kMenuNoRow) {
@@ -336,6 +347,9 @@ MenuReply MenuController::key(uint8_t code, uint8_t row)
         break;
     case View::Edit:
         break;  // answered above
+    case View::Create:
+        onCreate(key, digit);  // density or drive; the name was answered above
+        break;
     }
     if (job_ != Job::None) {
         return advance();  // the key started a TNFS job
@@ -402,6 +416,8 @@ void MenuController::onMain(int digit, uint8_t key)
         view_ = View::Unmount;
         driveLine_ = 0;
         say(" DESMONTAR: PULSA 1-8, ESC CANCELA");
+    } else if (key == kKeyN) {
+        startCreate();
     }
 }
 
@@ -531,6 +547,12 @@ bool MenuController::selectRow(unsigned row) noexcept
         return true;
     case View::Edit:
         return false;  // the 6502 has no bar while it edits
+    case View::Create:
+        if (createStep_ != CreateStep::Drive || row >= kDrives) {
+            return false;  // no bar while the name or the density is asked
+        }
+        driveLine_ = static_cast<uint8_t>(row);
+        return true;
     }
     return false;
 }
@@ -718,8 +740,8 @@ bool MenuController::boot()
 
 MenuReply MenuController::render(uint8_t action) const noexcept
 {
-    if (view_ == View::Edit && action == kMenuActionShow) {
-        action = kMenuActionEdit;  // the 6502 edits the row (menu-editar-servidor)
+    if (editing() && action == kMenuActionShow) {
+        action = kMenuActionEdit;  // the 6502 edits the row (menu-editar-servidor, menu-formatear-disco)
     }
     MenuReply reply;
     reply.bytes[0] = action;
@@ -766,7 +788,7 @@ MenuReply MenuController::render(uint8_t action) const noexcept
     std::memcpy(screen, kMenuMainTemplate, kMenuScreenSize);
     put(screen, kMainSources, kMenuLineWidth, "1  SD", false);
     char edited[kMenuEditWidth + 1];
-    const std::size_t editedLength = view_ == View::Edit ? editedText(edited) : 0;
+    const std::size_t editedLength = editing() ? editedText(edited) : 0;
     for (unsigned n = 2; n <= kDrives; ++n) {
         const char* name = view_ == View::Edit && n == editSource_ ? edited : sources_.name(n);
         std::snprintf(text, sizeof text, "%u  %.*s", n, static_cast<int>(kLabelColumns), name != nullptr ? name : "");
@@ -792,6 +814,15 @@ MenuReply MenuController::render(uint8_t action) const noexcept
         screen[kMenuEdit] = static_cast<uint8_t>(field & 0xFF);
         screen[kMenuEdit + 1] = static_cast<uint8_t>(field >> 8);
         screen[kMenuEdit + 2] = static_cast<uint8_t>(editedLength);
+    } else if (editing()) {
+        // The new name: the 6502 edits kMenuEditWidth columns after "NOMBRE:".
+        cursorBlock(screen, kMainSources, 0, 0, 0);
+        const unsigned field = kMainMessage + kCreateLabel;
+        screen[kMenuEdit] = static_cast<uint8_t>(field & 0xFF);
+        screen[kMenuEdit + 1] = static_cast<uint8_t>(field >> 8);
+        screen[kMenuEdit + 2] = static_cast<uint8_t>(editedLength);
+    } else if (view_ == View::Create && createStep_ == CreateStep::Density) {
+        cursorBlock(screen, kMainSources, 0, 0, 0);  // no bar: S or M
     } else if (view_ == View::Main) {
         invert(screen, kMainSources + sourceLine_ * kMenuLineWidth);
         cursorBlock(screen, kMainSources, local ? kDrives : 0, sourceLine_, 0);
@@ -802,6 +833,10 @@ MenuReply MenuController::render(uint8_t action) const noexcept
     if (job_ != Job::None) {
         std::snprintf(text, sizeof text, " CARGANDO %u%%", static_cast<unsigned>(percent_));
         put(screen, kMainMessage, kMenuLineWidth, text, true);
+    } else if (editing() && view_ == View::Create) {
+        static_assert(kCreateLabel + kMenuEditWidth < kMenuLineWidth, "the field and its cursor fit the row");
+        std::snprintf(text, sizeof text, "NOMBRE:%s", edited);
+        put(screen, kMainMessage, kMenuLineWidth, text, false);  // as typed: the 6502 shows it so
     } else {
         put(screen, kMainMessage, kMenuLineWidth, message_.data(), true);
     }
@@ -836,7 +871,7 @@ void MenuController::startEdit()
 
 void MenuController::text(uint8_t position, uint8_t ascii) noexcept
 {
-    if (view_ == View::Edit && position < editText_.size()) {
+    if (editing() && position < editText_.size()) {
         editText_[position] = static_cast<char>(ascii);
     }
 }
@@ -933,6 +968,158 @@ void MenuController::deleteSource()
     say(" FUENTE %u BORRADA", editSource_);
     std::snprintf(detail, sizeof detail, "source=%u name=%s", editSource_, name);
     event("menu_source_deleted", detail);
+}
+
+// ---------------------------------------------------------------------------
+// Creating a blank ATR (menu-formatear-disco, M46-2, M46-3, M46-5).
+
+void MenuController::createEvent(const char* result, unsigned drive)
+{
+    const bool chosen = createStep_ != CreateStep::Name;
+    char detail[96];
+    std::snprintf(detail, sizeof detail, "name=%s density=%s drive=%u result=%s",
+                  createName_[0] != '\0' ? createName_ : "-",
+                  !chosen ? "-" : createSingle_ ? "single" : "medium", drive, result);
+    event("menu_create", detail);
+}
+
+void MenuController::startCreate()
+{
+    createName_[0] = '\0';
+    createStep_ = CreateStep::Name;
+    if (imagesFolder_ == nullptr || writableCatalog_ == nullptr) {
+        say(" SIN CARPETA LOCAL");
+        createEvent("no_folder", 0);
+        return;
+    }
+    if (writableCatalog_->full()) {
+        say(" LISTA LLENA: %u IMAGENES", static_cast<unsigned>(MenuCatalog::kMaxEntries));
+        createEvent("full", 0);
+        return;
+    }
+    view_ = View::Create;
+    editText_.fill(' ');
+    message_[0] = '\0';
+}
+
+void MenuController::onCreateName(uint8_t code)
+{
+    if ((code & kMenuKeyMask) == kKeyEsc && code != kMenuEditSave) {
+        view_ = View::Main;
+        message_[0] = '\0';
+        return;
+    }
+    if (code != kMenuEditSave) {
+        return;  // the 6502 sends only those two while it edits
+    }
+    char name[kMenuEditWidth + 1];
+    editedText(name);
+    view_ = View::Main;
+    // Without Shift the 6502 sends lower case: the file name is the same in capitals.
+    for (char* c = name; *c != '\0'; ++c) {
+        if (*c >= 'a' && *c <= 'z') {
+            *c = static_cast<char>(*c - 'a' + 'A');
+        }
+    }
+    if (!isNewAtrName(name)) {
+        say("%s", kCreateInvalid);
+        createEvent("invalid_name", 0);
+        return;
+    }
+    // isNewAtrName allows at most kMaxNewAtrName characters; the precision says so to the compiler.
+    std::snprintf(createName_, sizeof createName_, "%.*s.ATR", static_cast<int>(kMaxNewAtrName), name);
+    for (std::size_t i = 0; i < catalog_.count(); ++i) {
+        if (compareNames(catalog_.name(i), createName_) == 0) {
+            say(" YA EXISTE %s", createName_);
+            createEvent("exists", 0);
+            return;
+        }
+    }
+    view_ = View::Create;
+    createStep_ = CreateStep::Density;
+    say(" S SIMPLE  M MEDIA  ESC CANCELA");
+}
+
+void MenuController::onCreate(uint8_t key, int digit)
+{
+    if (key == kKeyEsc) {
+        view_ = View::Main;
+        message_[0] = '\0';
+        return;
+    }
+    if (createStep_ == CreateStep::Density) {
+        if (key == kKeyS || key == kKeyM) {
+            createSingle_ = key == kKeyS;
+            createStep_ = CreateStep::Drive;
+            driveLine_ = 1;  // D2: D1 serves the menu
+            say(" UNIDAD 2-8, ESC CANCELA");
+        }
+        return;
+    }
+    if (moveLine(driveLine_, key)) {
+        return;
+    }
+    const int drive = driveDigit(key, digit);
+    if (drive >= 2) {
+        createOn(static_cast<unsigned>(drive));
+    }
+    // 1 (or RETURN on D1): the menu's drive is not offered; the step stays.
+}
+
+void MenuController::createOn(unsigned drive)
+{
+    view_ = View::Main;
+    char name[kMaxNewAtrName + 1];
+    std::snprintf(name, sizeof name, "%.*s", static_cast<int>(std::strlen(createName_) - 4), createName_);
+    const CreateAtrResult result = createAtr(imagesFolder_, name,
+                                             createSingle_ ? rb::domain::Density::Single : rb::domain::Density::Enhanced);
+    if (result == CreateAtrResult::AlreadyExists) {
+        say(" YA EXISTE %s", createName_);
+        createEvent("exists", drive);
+        return;
+    }
+    if (result != CreateAtrResult::Created) {
+        say(" ERROR: NO SE PUDO CREAR");
+        createEvent("io", drive);
+        return;
+    }
+    const std::size_t position = writableCatalog_->insert(createName_);
+    if (position == MenuCatalog::kNotInserted) {
+        say(" ERROR: NO CABE EN LA LISTA");  // created, but the menu cannot show it
+        createEvent("not_listed", drive);
+        return;
+    }
+    shiftEntries(static_cast<EntryIndex>(position));
+    createEvent("created", drive);
+    mountOn(drive, static_cast<EntryIndex>(position));
+}
+
+void MenuController::shiftEntries(EntryIndex from) noexcept
+{
+    const auto move = [from](EntryIndex& entry) {
+        if (entry != kNoEntry && entry >= from) {
+            ++entry;
+        }
+    };
+    for (Shown& shown : shown_) {
+        if (shown.kind == Shown::Kind::Local) {
+            move(shown.entry);
+        }
+    }
+    if (previous_.kind == Shown::Kind::Local) {
+        move(previous_.entry);
+    }
+    if (incoming_.kind == Shown::Kind::Local) {
+        move(incoming_.entry);
+    }
+    move(remountEntry_);
+    // The list's marked row follows the entry it was on.
+    EntryIndex marked = static_cast<EntryIndex>(listCursor_.page * kPageRows + listCursor_.row);
+    if (catalog_.count() > 1 && marked >= from) {
+        ++marked;
+        listCursor_.page = static_cast<uint16_t>(marked / kPageRows);
+        listCursor_.row = static_cast<uint8_t>(marked % kPageRows);
+    }
 }
 
 // ---------------------------------------------------------------------------

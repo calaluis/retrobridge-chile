@@ -21,6 +21,7 @@
 #include <sys/types.h>
 #endif
 
+#include "create_atr.hpp"
 #include "fakes/fake_clock.hpp"
 #include "fakes/memory_byte_source.hpp"
 #include "fakes/scripted_sio_transport.hpp"
@@ -57,8 +58,12 @@ using rb::sio::StepOutcome;
 
 namespace {
 
-constexpr uint8_t K1 = 0x1F, K2 = 0x1E, K3 = 0x1A, KB = 0x15;
+constexpr uint8_t K1 = 0x1F, K2 = 0x1E, K3 = 0x1A, K4 = 0x18, K5 = 0x1D, KB = 0x15;
 constexpr uint8_t kWrite = 0x57, kPut = 0x50, kRead = 0x52, kStatus = 0x53;
+constexpr uint8_t kFormat = 0x21, kFormatMedium = 0x22;
+constexpr uint8_t KN = 0x23, KS = 0x3E, KM = 0x25, KEsc = 0x1C;
+// Files the create tests make; setUp removes them.
+const char* const kCreated[] = {"NUEVO.ATR", "MEDIA.ATR", "DEMO-T.ATR", "AAA.ATR", "DISCO-1.ATR"};
 
 std::string path_of(const char* folder, const char* name)
 {
@@ -108,6 +113,18 @@ void fresh_copies()
         (void)set_writable(copy, true);  // a previous run may have left it read-only
         write_file(copy, file_bytes(path_of(RB_TEST_MENU_DIR, name)));
     }
+    for (const char* name : kCreated) {
+        (void)std::remove(path_of(RB_TEST_WRITE_DIR, name).c_str());
+    }
+}
+
+bool file_exists(const std::string& path)
+{
+    std::FILE* file = std::fopen(path.c_str(), "rb");
+    if (file != nullptr) {
+        std::fclose(file);
+    }
+    return file != nullptr;
 }
 
 uint16_t header_sector_size(const std::vector<uint8_t>& atr)
@@ -164,8 +181,22 @@ private:
     rb::app::DriveBay& bay_;
 };
 
+class RecordingEvents final : public rb::host::MenuEvents {
+public:
+    void menuEvent(const char* name, const char* detail) override
+    {
+        if (std::strcmp(name, "menu_create") == 0) {
+            ++creates;
+            std::snprintf(create, sizeof create, "%s", detail);
+        }
+    }
+    unsigned creates = 0;
+    char create[128] = {};
+};
+
 struct WriteRig {
     rb::host::MenuCatalog catalog;
+    RecordingEvents events;
     rb::host::MenuSources sources;
     rb::host::MenuImage menu;
     std::optional<rb::host::HostImageRepository> repository;
@@ -180,12 +211,15 @@ struct WriteRig {
     rb::sio::SioCommandDispatcher dispatcher{bay, true};
     std::optional<rb::sio::SioSession> session;
 
-    WriteRig()
+    explicit WriteRig(bool images = true)
     {
         TEST_ASSERT_TRUE(rb::host::readCatalog(RB_TEST_WRITE_DIR, catalog));
         TEST_ASSERT_TRUE(readSources(sources, "tnfs.example.cl\n"));
         repository.emplace(RB_TEST_WRITE_DIR, menu);
-        controller.emplace(catalog, sources, *repository, mailbox, nullptr);
+        controller.emplace(catalog, sources, *repository, mailbox, &events);
+        if (images) {
+            controller->setImagesFolder(RB_TEST_WRITE_DIR, catalog);
+        }
         controller->onColdReset();
         controller->service();
         step();
@@ -216,6 +250,20 @@ struct WriteRig {
         return session->step();
     }
 
+    // N, the name typed by the 6502 ('T' then kMenuEditSave), then the given keys.
+    MenuReply create(const char* name, std::initializer_list<uint8_t> after)
+    {
+        keys({KN});
+        for (uint8_t i = 0; name[i] != '\0'; ++i) {
+            controller->text(i, static_cast<uint8_t>(name[i]));
+        }
+        MenuReply last = keys({static_cast<uint8_t>(rb::host::kMenuEditSave)});
+        if (after.size() != 0) {
+            last = keys(after);
+        }
+        return last;
+    }
+
     StepOutcome write(uint8_t drive, uint8_t command, uint16_t sector, const std::array<uint8_t, 257>& data,
                       std::size_t length)
     {
@@ -230,6 +278,25 @@ void assert_drive_line(WriteRig& rig, unsigned n, const char* expected)
     rb::host::screenLine(expected, Span<uint8_t>{line});
     const MenuReply reply = rig.controller->key(rb::host::kMenuNoKey);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(line.data(), reply.screen() + rb::host::kMainDrives + (n - 1) * 40, 40);
+}
+
+void assert_message(WriteRig& rig, const char* expected)
+{
+    std::array<uint8_t, 40> line{};
+    rb::host::screenLine(expected, Span<uint8_t>{line});
+    const MenuReply reply = rig.controller->key(rb::host::kMenuNoKey);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(line.data(), reply.screen() + rb::host::kMainMessage, 40);
+}
+
+// Every data byte of an ATR (after the 16-byte header) is zero.
+bool all_zero_after_header(const std::vector<uint8_t>& bytes)
+{
+    for (std::size_t i = 16; i < bytes.size(); ++i) {
+        if (bytes[i] != 0) {
+            return false;
+        }
+    }
+    return bytes.size() > 16;
 }
 
 // A protected drive's line: the name cut to 29 columns, then " SL".
@@ -441,6 +508,190 @@ static void test_lost_completion_is_still_logged(void)
     TEST_ASSERT_NOT_NULL(std::strstr(rig.writes.detail, " reply=lost"));
 }
 
+// ---------------------------------------------------------------------------
+// menu-formatear-disco F004: N creates an ATR; $21/$22 format it; sio_write logs F/FM.
+
+// AC5: N, a name, S and 2: NUEVO.ATR (720 x 128, zeros) is created, listed and mounted on D2.
+static void test_create_mounts_a_new_single_density_atr(void)
+{
+    WriteRig rig;
+    const MenuReply naming = rig.keys({KN});
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionEdit, naming.action());
+    const unsigned field = rb::host::kMainMessage + 7;  // after "NOMBRE:"
+    TEST_ASSERT_EQUAL_UINT8(field & 0xFF, naming.screen()[rb::host::kMenuEdit]);
+    TEST_ASSERT_EQUAL_UINT8(field >> 8, naming.screen()[rb::host::kMenuEdit + 1]);
+    TEST_ASSERT_EQUAL_UINT8(0, naming.screen()[rb::host::kMenuEdit + 2]);
+    rig.keys({KEsc});
+    TEST_ASSERT_EQUAL_UINT(0, rig.events.creates);
+
+    rig.create("NUEVO", {});
+    assert_message(rig, " S SIMPLE  M MEDIA  ESC CANCELA");
+    rig.keys({KS});
+    assert_message(rig, " UNIDAD 2-8, ESC CANCELA");
+    rig.keys({K2});
+    const std::vector<uint8_t> bytes = file_bytes(path_of(RB_TEST_WRITE_DIR, "NUEVO.ATR"));
+    TEST_ASSERT_EQUAL_size_t(16u + 720u * 128u, bytes.size());
+    TEST_ASSERT_TRUE(all_zero_after_header(bytes));
+    TEST_ASSERT_EQUAL_STRING("NUEVO.ATR", rig.bay.mountedLocation(DriveNumber::from(2).value())->c_str());
+    assert_drive_line(rig, 2, "D2 NUEVO.ATR");  // writable
+    TEST_ASSERT_EQUAL_size_t(3, rig.catalog.count());
+    TEST_ASSERT_EQUAL_STRING("name=NUEVO.ATR density=single drive=2 result=created", rig.events.create);
+}
+
+// AC1, AC2: $21 on a single density ATR and $22 on a medium one write zeros; F and FM are logged.
+static void test_format_single_and_medium_write_zeros_and_are_logged(void)
+{
+    WriteRig rig;
+    rig.create("NUEVO", {KS, K2});
+    rig.create("MEDIA", {KM, K3});
+    TEST_ASSERT_EQUAL_STRING("name=MEDIA.ATR density=medium drive=3 result=created", rig.events.create);
+    TEST_ASSERT_EQUAL_size_t(16u + 1040u * 128u, file_bytes(path_of(RB_TEST_WRITE_DIR, "MEDIA.ATR")).size());
+
+    TEST_ASSERT_TRUE(rig.write(2, kWrite, 10, data_frame(128, 0x41), 128) == StepOutcome::Completed);
+    TEST_ASSERT_FALSE(all_zero_after_header(file_bytes(path_of(RB_TEST_WRITE_DIR, "NUEVO.ATR"))));
+    TEST_ASSERT_TRUE(rig.sio(2, kFormat, 0) == StepOutcome::Completed);
+    TEST_ASSERT_EQUAL_HEX8(0x43, rig.inner.sent(rig.inner.sends() - 1).bytes[0]);  // COMPLETE + frame
+    TEST_ASSERT_EQUAL_STRING("drive=2 cmd=F result=complete", rig.writes.detail);
+    TEST_ASSERT_TRUE(all_zero_after_header(file_bytes(path_of(RB_TEST_WRITE_DIR, "NUEVO.ATR"))));
+
+    TEST_ASSERT_TRUE(rig.write(3, kPut, 900, data_frame(128, 0x42), 128) == StepOutcome::Completed);
+    TEST_ASSERT_TRUE(rig.sio(3, kFormatMedium, 0) == StepOutcome::Completed);
+    TEST_ASSERT_EQUAL_STRING("drive=3 cmd=FM result=complete", rig.writes.detail);
+    TEST_ASSERT_TRUE(all_zero_after_header(file_bytes(path_of(RB_TEST_WRITE_DIR, "MEDIA.ATR"))));
+}
+
+// AC3: $22 on a 720-sector ATR answers ERROR, logs cause=density and leaves the file alone.
+static void test_format_with_the_other_density_is_an_error(void)
+{
+    WriteRig rig;
+    rig.create("NUEVO", {KS, K2});
+    TEST_ASSERT_TRUE(rig.write(2, kWrite, 10, data_frame(128, 0x43), 128) == StepOutcome::Completed);
+    const std::vector<uint8_t> before = file_bytes(path_of(RB_TEST_WRITE_DIR, "NUEVO.ATR"));
+    TEST_ASSERT_TRUE(rig.sio(2, kFormatMedium, 0) == StepOutcome::Completed);
+    TEST_ASSERT_EQUAL_HEX8(0x45, rig.inner.sent(rig.inner.sends() - 1).bytes[0]);  // ERROR + frame
+    TEST_ASSERT_EQUAL_STRING("drive=2 cmd=FM result=error cause=density", rig.writes.detail);
+    TEST_ASSERT_TRUE(before == file_bytes(path_of(RB_TEST_WRITE_DIR, "NUEVO.ATR")));
+}
+
+// AC4: the menu on D1 and a read-only file refuse to format; an empty drive answers ERROR.
+static void test_format_refused_on_protected_and_empty_drives(void)
+{
+    const std::string file = path_of(RB_TEST_WRITE_DIR, "demo-uno.atr");
+    TEST_ASSERT_EQUAL_INT(0, set_writable(file, false));
+    const std::vector<uint8_t> before = file_bytes(file);
+    WriteRig rig;
+    TEST_ASSERT_TRUE(rig.sio(1, kFormat, 0) == StepOutcome::Completed);
+    TEST_ASSERT_EQUAL_STRING("drive=1 cmd=F result=error cause=protected", rig.writes.detail);
+    rig.keys({K1, KB, K2});
+    TEST_ASSERT_TRUE(rig.sio(2, kFormat, 0) == StepOutcome::Completed);
+    TEST_ASSERT_EQUAL_STRING("drive=2 cmd=F result=error cause=protected", rig.writes.detail);
+    TEST_ASSERT_TRUE(before == file_bytes(file));
+    TEST_ASSERT_TRUE(rig.sio(5, kFormat, 0) == StepOutcome::Completed);
+    TEST_ASSERT_EQUAL_STRING("drive=5 cmd=F result=error cause=no_disk", rig.writes.detail);
+}
+
+// AC6: a name already there (listed, or a file made after the list was read) changes nothing.
+static void test_create_refuses_an_existing_name(void)
+{
+    write_file(path_of(RB_TEST_WRITE_DIR, "NUEVO.ATR"), {1, 2, 3});
+    WriteRig rig;  // NUEVO.ATR is listed
+    rig.create("NUEVO", {});
+    assert_message(rig, " YA EXISTE NUEVO.ATR");
+    TEST_ASSERT_EQUAL_STRING("name=NUEVO.ATR density=- drive=0 result=exists", rig.events.create);
+
+    write_file(path_of(RB_TEST_WRITE_DIR, "MEDIA.ATR"), {4, 5});  // not listed
+    rig.create("MEDIA", {KM, K2});
+    assert_message(rig, " YA EXISTE MEDIA.ATR");
+    TEST_ASSERT_EQUAL_STRING("name=MEDIA.ATR density=medium drive=2 result=exists", rig.events.create);
+    TEST_ASSERT_TRUE(std::vector<uint8_t>({1, 2, 3}) == file_bytes(path_of(RB_TEST_WRITE_DIR, "NUEVO.ATR")));
+    TEST_ASSERT_TRUE(std::vector<uint8_t>({4, 5}) == file_bytes(path_of(RB_TEST_WRITE_DIR, "MEDIA.ATR")));
+    TEST_ASSERT_NULL(rig.bay.mountedLocation(DriveNumber::from(2).value()));
+}
+
+// AC7: an empty name, 26 characters, a space, a dot or a device name create nothing.
+static void test_create_refuses_an_invalid_name(void)
+{
+    WriteRig rig;
+    for (const char* name : {"", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "NUE VO", "A.B", "nul", "N.ATR"}) {
+        rig.create(name, {});
+        assert_message(rig, " NOMBRE NO VALIDO: LETRAS, 0-9 Y -");
+        TEST_ASSERT_NOT_NULL(std::strstr(rig.events.create, "result=invalid_name"));
+    }
+    TEST_ASSERT_EQUAL_UINT(6, rig.events.creates);
+    TEST_ASSERT_EQUAL_size_t(2, rig.catalog.count());
+    TEST_ASSERT_FALSE(file_exists(path_of(RB_TEST_WRITE_DIR, "NUE VO.ATR")));
+}
+
+// M46-3: typed without Shift, the 6502 sends lower case; the file is named in capitals.
+static void test_create_takes_lower_case_as_capitals(void)
+{
+    WriteRig rig;
+    rig.create("disco-1", {KS, K2});
+    TEST_ASSERT_EQUAL_STRING("name=DISCO-1.ATR density=single drive=2 result=created", rig.events.create);
+    TEST_ASSERT_TRUE(file_exists(path_of(RB_TEST_WRITE_DIR, "DISCO-1.ATR")));
+    assert_drive_line(rig, 2, "D2 DISCO-1.ATR");
+}
+
+// Esc at each step cancels; D1 is not offered (it serves the menu); without a folder N says so.
+static void test_create_cancels_and_refuses_d1(void)
+{
+    WriteRig rig;
+    rig.create("NUEVO", {KEsc});
+    rig.create("NUEVO", {KS, KEsc});
+    TEST_ASSERT_FALSE(file_exists(path_of(RB_TEST_WRITE_DIR, "NUEVO.ATR")));
+    rig.create("NUEVO", {KS, K1});
+    assert_message(rig, " UNIDAD 2-8, ESC CANCELA");
+    TEST_ASSERT_FALSE(file_exists(path_of(RB_TEST_WRITE_DIR, "NUEVO.ATR")));
+    rig.keys({KEsc});
+    TEST_ASSERT_EQUAL_UINT(0, rig.events.creates);
+
+    WriteRig bare{false};
+    bare.keys({KN});
+    assert_message(bare, " SIN CARPETA LOCAL");
+    TEST_ASSERT_EQUAL_STRING("name=- density=- drive=0 result=no_folder", bare.events.create);
+}
+
+// AC8: with 999 images listed, N refuses before asking for a name.
+static void test_create_refuses_a_full_list(void)
+{
+    rb::host::MenuCatalog catalog;
+    char name[32];
+    for (int i = 0; i < 999; ++i) {
+        std::snprintf(name, sizeof name, "G%04d.ATR", i);
+        TEST_ASSERT_TRUE(catalog.offer(name));
+    }
+    rb::host::MenuSources sources;
+    rb::host::MenuImage menu;
+    rb::host::HostImageRepository repository{RB_TEST_WRITE_DIR, menu};
+    rb::app::InlineDriveMailbox mailbox;
+    RecordingEvents events;
+    rb::host::MenuController controller{catalog, sources, repository, mailbox, &events};
+    controller.setImagesFolder(RB_TEST_WRITE_DIR, catalog);
+    const MenuReply reply = controller.key(KN);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, reply.action());
+    std::array<uint8_t, 40> line{};
+    rb::host::screenLine(" LISTA LLENA: 999 IMAGENES", Span<uint8_t>{line});
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(line.data(), reply.screen() + rb::host::kMainMessage, 40);
+    TEST_ASSERT_EQUAL_STRING("name=- density=- drive=0 result=full", events.create);
+}
+
+// A name inserted before mounted images moves their positions: every drive keeps its name.
+static void test_create_keeps_the_names_of_mounted_images(void)
+{
+    WriteRig rig;
+    rig.keys({K1, KB, K3});            // demo-uno.atr, the second entry, on D3
+    rig.create("DEMO-T", {KS, K2});    // between demo-dos and demo-uno
+    rig.create("AAA", {KM, K4});       // before every entry
+    assert_drive_line(rig, 2, "D2 DEMO-T.ATR");
+    assert_drive_line(rig, 3, "D3 DEMO-UNO.ATR");
+    assert_drive_line(rig, 4, "D4 AAA.ATR");
+    TEST_ASSERT_EQUAL_STRING("AAA.ATR", rig.catalog.name(0));
+    TEST_ASSERT_EQUAL_STRING("DEMO-T.ATR", rig.catalog.name(2));
+    TEST_ASSERT_EQUAL_STRING("demo-uno.atr", rig.catalog.name(3));
+    rig.keys({K1, KB, K5});            // B is now demo-dos.atr (A is AAA.ATR)
+    assert_drive_line(rig, 5, "D5 DEMO-DOS.ATR");
+}
+
 static void test_crc32_is_the_ieee_one(void)
 {
     const char* text = "123456789";
@@ -460,6 +711,16 @@ int main(void)
     RUN_TEST(test_failed_save_answers_error_with_cause_io);
     RUN_TEST(test_naks_are_logged);
     RUN_TEST(test_lost_completion_is_still_logged);
+    RUN_TEST(test_create_mounts_a_new_single_density_atr);
+    RUN_TEST(test_format_single_and_medium_write_zeros_and_are_logged);
+    RUN_TEST(test_format_with_the_other_density_is_an_error);
+    RUN_TEST(test_format_refused_on_protected_and_empty_drives);
+    RUN_TEST(test_create_refuses_an_existing_name);
+    RUN_TEST(test_create_refuses_an_invalid_name);
+    RUN_TEST(test_create_takes_lower_case_as_capitals);
+    RUN_TEST(test_create_cancels_and_refuses_d1);
+    RUN_TEST(test_create_refuses_a_full_list);
+    RUN_TEST(test_create_keeps_the_names_of_mounted_images);
     RUN_TEST(test_crc32_is_the_ieee_one);
     return UNITY_END();
 }

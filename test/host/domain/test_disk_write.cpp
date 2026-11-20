@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <utility>
+#include <vector>
 
 #include "fakes/fake_byte_source.hpp"
 #include "fakes/memory_byte_source.hpp"
@@ -225,6 +226,97 @@ static void test_rewriting_the_same_sector_is_idempotent(void)
     TEST_ASSERT_TRUE(once == source.bytes());
 }
 
+// --- Formatting (menu-formatear-disco, F001): $21 single, $22 enhanced; every sector to $00 ---
+
+MemoryByteSource ed_memory(bool writable)
+{
+    return MemoryByteSource{make_atr_header(sd_data_size(1040), 128), kAtrHeaderSize + sd_data_size(1040), writable};
+}
+
+bool data_is_zero(const MemoryByteSource& source)
+{
+    for (std::size_t i = kAtrHeaderSize; i < source.bytes().size(); ++i) {
+        if (source.bytes()[i] != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void test_format_single_density_zeroes_every_sector(void)
+{
+    MemoryByteSource source = sd_memory(true);
+    const std::vector<uint8_t> header(source.bytes().begin(), source.bytes().begin() + kAtrHeaderSize);
+    DiskImage image = open_ok(source);
+    TEST_ASSERT_TRUE(image.format(rb::domain::Density::Single).ok());
+    TEST_ASSERT_TRUE(data_is_zero(source));
+    TEST_ASSERT_EQUAL_UINT(kAtrHeaderSize + sd_data_size(720), source.bytes().size());
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(header.data(), source.bytes().data(), kAtrHeaderSize);
+}
+
+static void test_format_enhanced_density_zeroes_every_sector(void)
+{
+    MemoryByteSource source = ed_memory(true);
+    DiskImage image = open_ok(source);
+    TEST_ASSERT_TRUE(image.format(rb::domain::Density::Enhanced).ok());
+    TEST_ASSERT_TRUE(data_is_zero(source));
+}
+
+static void test_format_with_another_density_changes_nothing(void)
+{
+    MemoryByteSource single = sd_memory(true);
+    MemoryByteSource dd = dd_memory(true);
+    const std::vector<uint8_t> before = single.bytes();
+    {
+        DiskImage image = open_ok(single);
+        TEST_ASSERT_EQUAL(static_cast<int>(ErrorCode::DensityMismatch),
+                          static_cast<int>(image.format(rb::domain::Density::Enhanced).error()));
+    }
+    {
+        DiskImage image = open_ok(dd);  // double density is out of scope (spec)
+        TEST_ASSERT_EQUAL(static_cast<int>(ErrorCode::DensityMismatch),
+                          static_cast<int>(image.format(rb::domain::Density::Single).error()));
+    }
+    TEST_ASSERT_TRUE(before == single.bytes());
+    TEST_ASSERT_EQUAL_UINT(0, single.writes());
+    TEST_ASSERT_EQUAL_UINT(0, dd.writes());
+}
+
+static void test_format_of_a_protected_disk_changes_nothing(void)
+{
+    MemoryByteSource source = sd_memory(false);
+    const std::vector<uint8_t> before = source.bytes();
+    DiskImage image = open_ok(source);
+    TEST_ASSERT_EQUAL(static_cast<int>(ErrorCode::WriteProtected),
+                      static_cast<int>(image.format(rb::domain::Density::Single).error()));
+    TEST_ASSERT_TRUE(before == source.bytes());
+    TEST_ASSERT_EQUAL_UINT(0, source.writes());
+}
+
+static void test_format_stops_at_the_first_io_error(void)
+{
+    MemoryByteSource source = sd_memory(true);
+    source.fail_writes_after(10);
+    DiskImage image = open_ok(source);
+    TEST_ASSERT_EQUAL(static_cast<int>(ErrorCode::IoError),
+                      static_cast<int>(image.format(rb::domain::Density::Single).error()));
+    TEST_ASSERT_EQUAL_UINT(11, source.writes());  // ten written, the eleventh failed, no more tried
+}
+
+static void test_drive_format_tracks_failure(void)
+{
+    VirtualDrive drive{d2()};
+    TEST_ASSERT_EQUAL(static_cast<int>(ErrorCode::NoDiskMounted),
+                      static_cast<int>(drive.format(rb::domain::Density::Single).error()));
+    TEST_ASSERT_TRUE(drive.status().lastOperationFailed());
+
+    MemoryByteSource source = sd_memory(true);
+    TEST_ASSERT_TRUE(drive.mount(open_ok(source)).ok());
+    TEST_ASSERT_TRUE(drive.format(rb::domain::Density::Single).ok());
+    TEST_ASSERT_FALSE(drive.status().lastOperationFailed());
+    TEST_ASSERT_TRUE(data_is_zero(source));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -241,5 +333,11 @@ int main(void)
     RUN_TEST(test_drive_status_reports_protection_of_the_disk);
     RUN_TEST(test_drive_write_tracks_failure_like_a_read);
     RUN_TEST(test_rewriting_the_same_sector_is_idempotent);
+    RUN_TEST(test_format_single_density_zeroes_every_sector);
+    RUN_TEST(test_format_enhanced_density_zeroes_every_sector);
+    RUN_TEST(test_format_with_another_density_changes_nothing);
+    RUN_TEST(test_format_of_a_protected_disk_changes_nothing);
+    RUN_TEST(test_format_stops_at_the_first_io_error);
+    RUN_TEST(test_drive_format_tracks_failure);
     return UNITY_END();
 }

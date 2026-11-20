@@ -119,4 +119,35 @@ Result<uint16_t> DiskImage::writeSector(SectorNumber sector, Span<const uint8_t>
     return range.length;
 }
 
+Result<void> DiskImage::format(Density density)
+{
+    if (source_ == nullptr) {
+        return Failure{ErrorCode::InvalidDiskImage};
+    }
+    if (readOnly()) {
+        return Failure{ErrorCode::WriteProtected};
+    }
+    const DiskGeometry& geometry = layout_.geometry();
+    if ((density != Density::Single && density != Density::Enhanced) || geometry.density() != density) {
+        return Failure{ErrorCode::DensityMismatch};
+    }
+    static constexpr std::array<uint8_t, 128> kZeros{};  // Single and Enhanced: 128-byte sectors
+    const uint32_t size = source_->size();
+    for (uint32_t n = 1; n <= geometry.sectorCount(); ++n) {
+        const Result<ByteRange> located = layout_.locate(SectorNumber::from(static_cast<uint16_t>(n)).value());
+        if (!located.ok()) {
+            return Failure{located.error()};
+        }
+        const ByteRange range = located.value();
+        if (range.length > kZeros.size() || range.offset > size || range.length > size - range.offset) {
+            return Failure{ErrorCode::OutOfBounds};
+        }
+        const Result<void> written = source_->writeAt(range.offset, Span<const uint8_t>{kZeros.data(), range.length});
+        if (!written.ok()) {
+            return Failure{written.error()};
+        }
+    }
+    return {};
+}
+
 }  // namespace rb::domain

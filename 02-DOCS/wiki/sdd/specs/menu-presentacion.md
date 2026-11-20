@@ -50,7 +50,8 @@ acortar los textos. El responsable decidió seguir (2026-11-20): el barrido es v
 - G1. Al cambiar de pantalla, el usuario nunca ve una pantalla a medio dibujar.
 - G2. Mientras llega la pantalla nueva, el usuario ve un aviso ` CARGANDO...`.
 - G3. El pie de la pantalla principal muestra todas sus teclas: `1-8`, `E`, `N`, `A`, `U`.
-- G4. El comportamiento del menú (qué hace cada tecla) no cambia.
+- G4. El comportamiento del menú (qué hace cada tecla) no cambia. Cada respuesta del host se muestra un cuadro
+  después (la espera del borrado vertical): ver Revisions.
 
 ## Non-goals / out of scope
 
@@ -181,3 +182,6 @@ Condición: el menú arrancó en D1. Cualquier usuario del Atari puede hacerlo; 
 - 2026-11-20 — clarify: 2 preguntas resueltas, AC3 precisado, AC9 nuevo.
 - 2026-11-20 — aprobada por el responsable.
 - 2026-11-20 — precisión de AC6 y de Behaviour (plan §1): quien reintenta es SIOV, no el 6502.
+- 2026-11-20 — consecuencias medidas en implement (P002), en ADR-017 enmienda 10: (1) la repetición del joystick
+  que va al host pasa de 30/9 a 31/10 cuadros; el cursor local no cambia; (2) tras ` ERROR: EL HOST NO RESPONDE`,
+  el layout visible vuelve a la principal, para que el aviso siguiente salga en una fila que se ve.

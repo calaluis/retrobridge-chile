@@ -6,7 +6,7 @@ tags: [sdd, progress, menu, 6502]
 timestamp: 2026-11-20T07:00:00Z
 topic: sdd
 slug: menu-presentacion
-status: in-progress
+status: done
 ---
 
 # Progreso — menu-presentacion
@@ -96,6 +96,15 @@ Evidencia en `D:\rb-e0\m47-presentacion`: `host.jsonl`, `host-sin-hub.jsonl`, `v
 - Spec: AC6 y Behaviour precisados (quien reintenta es SIOV; si falla, el error de hoy). Revisión anotada.
 - Controles: `python -I tools/check_notices.py` OK; `rsc spec gate` PASS; sin emoji en los 4 archivos.
 
+## Cierre (2026-11-20)
+
+- Verify de cierre: PASS sobre `22d569b`
+  ([registro](../verifications/menu-presentacion-2026-11-20.md)). Gate: `ctest` 65 de 65 desde cero, `tools` 148 de
+  148, `--check`, capas, avisos y `spec gate` en verde.
+- Review de cierre (tier 1, un revisor): sin bloqueos. Corregido: el cambio de tiempo del joystick y la vuelta a la
+  principal tras un error quedan en la spec (G4, Revisions) y en ADR-017 enmienda 3. Desviación aprobada por el
+  responsable: sin capturas, vale su observación en pantalla.
+
 ## Pendiente
 
-Cierre: verify de cierre y review de la rama; después push y PR (con aprobación).
+Push y PR (con aprobación).

@@ -118,7 +118,7 @@ pantalla: el 6502 solo traduce entradas a códigos.
    (`STICK0` `$0278`, `STRIG0` `$0284`), y se lee en la espera de tecla de la acción 0 y en la espera de la
    acción 2.
 2. **Repetición y fuego.** Una dirección nueva se envía al instante. Si se mantiene, se repite a los 30 cuadros y
-   después cada 9. La cuenta solo avanza en los cuadros que el 6502 ve, así que una respuesta lenta solo la
+   después cada 9 (31 y 10 cuando cada paso va al host, desde la Enmienda 10). La cuenta solo avanza en los cuadros que el 6502 ve, así que una respuesta lenta solo la
    pausa. Una diagonal no envía nada. El fuego envía `$44` una vez por pulsación, al pasar de suelto a pulsado.
    Un botón ya pulsado al arrancar no cuenta.
 3. **El host reconoce `$40`-`$44` antes de la máscara (M42-2).** RETURN (`$0C`) y `$44` confirman lo marcado,

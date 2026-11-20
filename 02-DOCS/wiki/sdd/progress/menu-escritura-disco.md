@@ -151,6 +151,31 @@ nombres (`plus1-intento1..5.jsonl`).
   - **SUSTITUIDA** — sanitizadores: solo en el CI.
   - **HERRAMIENTA-AUSENTE** — firmware ESP-IDF: sin `idf.py`; lo compila el CI.
 
+## W006 — Demo en Altirra (hecha, 2026-11-19)
+
+Montaje: Altirra 4.31 con todas las unidades D en **Off**; hub `netsiohub` en 9997; un solo `retrobridge_host`
+(04af098) con `--images D:b-e0\m45-escritura\images --peer netsiohub`. Todo por el host: menú en D1, DOS 2.5
+chileno (`DOS25D1D2D3.ATR`) en D1, ATR de datos en D2. Carpeta `D:b-e0\m45-escritura` (no `m45`: esa carpeta
+ya tiene la demo de otra función).
+
+1. Copia `D1:` → `D2:PRUEBA.BAS` con `escritura-d2.atr` (escribible): 8 `sio_write` `result=complete`
+   (datos, VTOC 360, directorio 361). SHA-256 de la ATR: `93641c15…` → `1dc6b9f8…` (AC1, AC2).
+2. Host cerrado y relanzado; reset en frío, D1 y D2 montadas otra vez desde el menú: el directorio de D2 muestra
+   `TORRES BAS 032` y `PRUEBA BAS 004`, 671 libres (AC3). Antes de volver a montar, `D2:` daba ERROR 144: la
+   unidad estaba vacía tras relanzar (comportamiento correcto, captura conservada).
+3. `escritura-ro.atr` con atributo de solo lectura en D2: STATUS de D2 = `02 43 00 BF E0 00 A0` (byte 1 `$BF`);
+   la copia da error en el DOS; 8 `sio_write` `result=error cause=protected` (VTOC); SHA-256 sin cambio
+   `93641c15…` (AC4). Luego el DOS manda 112 `W` al sector 0, todos NAK (`result=nak`): basura del DOS tras el
+   error, igual que en W001; nada escrito.
+4. El menú en D1 también contesta STATUS con `$BF` (protegido).
+
+Evidencia en `D:b-e0\m45-escritura`: `host.jsonl` (2 corridas; `host-run1.jsonl` = la primera),
+`sha256-antes.txt`, `sha256-despues-escritura.txt`, `sha256-despues.txt`, `2-sin-montar-error144.png`,
+`3-relanzado-prueba-bas.png`, `version.txt`.
+
+- **HERRAMIENTA-AUSENTE** — firmware ESP-IDF (AC10): sin `idf.py` en este PC; lo compila el CI.
+- No anotado: el número de error que mostró el DOS en el paso 3.
+
 ## Pendiente
 
-W006 (demo con el responsable) y W007 (docs).
+W007 (docs).

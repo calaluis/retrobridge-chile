@@ -153,7 +153,34 @@ Rama `feat/cassette-cas` (worktree `.worktrees/feat-cassette-cas`, desde main `b
   (`read_fault`) tolera 3 reintentos y falla en el 4.º; ahora igual, con prueba. Añadida prueba de `requestStop()`
   tras `Final`. Anotado: `start()` borra un `requestStop()` anterior; quien llama los ordena (C104).
 
+## C104 — CassettePlayer: la cinta como una casetera (hecha, 2026-11-20)
+
+- `components/rb_cassette`: `CassettePlayer` recorre los segmentos de `CasIndex` por tres puertos (`MotorIn`, `ByteOut`,
+  `WaveOut`). Cada segmento espera su pausa. Registros: velocidad cuando cambia, bytes al ritmo del reloj (10 bits por
+  byte, como máximo 512 por envío); MOTOR apagado congela. Tiradas `fsk `: el cargador arranca con la pausa, la señal
+  espera la puerta de arranque y luego empuja porciones a `WaveOut`.
+- MOTOR cae con la señal ya en marcha: la señal para, DATA IN vuelve a marca, el cargador para, y al volver MOTOR la
+  misma tirada suena otra vez desde su pausa. Adaptado del código propio (PR #1804, commit 7d84b91; PR #1756); fila en
+  `docs/fuentes.md`. Si la tirada ya había sonado entera, no se repite: pasa al segmento siguiente.
+- Retirados `host/src/cas_image.*`, `cassette_player.*`, `cassette_deck.*` y sus pruebas del menú (eran de C001/C002).
+- Cinta real: `Alien Ambush` (PAL), 100 segmentos, 49 tiradas, 8190 bytes de registros, recorrida entera.
+- Controles:
+  - pruebas: `test_rb_cassette_player` 25/25 con `RB_CAS_SAMPLES`; RED antes de GREEN; `ctest` 71/71 (se quitan 2
+    pruebas viejas, entra 1);
+  - compilación: sin avisos con `-Werror`; `check_layering` OK; `check_notices` OK;
+  - seguridad: `tick()` sin reservas (ADR-011); lecturas acotadas por el segmento y el búfer de 512;
+  - trazabilidad: AC5; `rsc risk`: tier 1, un revisor.
+- Revisión (1 revisor, ronda 1). Corregido, con prueba cada uno:
+  - el cargador fallaba a media tirada y la señal quedaba esperando: ahora la tirada se reinicia desde su pausa;
+  - tras un corte, `start()` podía llamarse con el productor aún dentro de `step()`: ahora espera a que salga de
+    `Loading`, y la pausa sigue contando mientras;
+  - una caída de MOTOR con la tirada ya sonada la repetía: ahora avanza.
+
 ## Decision queue
+
+- **review-after (2026-11-20)** — AC5 dice «sin perder ni repetir». Para tiradas FSK, si MOTOR cae con la señal en
+  marcha, la tirada se repite desde su pausa. Así lo hace el código propio (PR #1804/#1756), que funciona con cintas
+  reales. Seguí el código propio. Para registros sí vale «sin perder ni repetir». Decide: ¿ajusto el texto de AC5?
 
 - **resuelta (2026-11-20)** — C003 falló con `international_karate.cas`. La propuesta de una cinta inventada se
   rechazó: «No hay que inventar cintas». Replanteo: spec y plan reescritos para el ESP32 con el código FSK propio

@@ -225,15 +225,10 @@ target_link_libraries(test_fsk_wave PRIVATE rb_cassette)
 # Loading an FSK run a block at a time, start gate, retries, no allocation (cassette-cas C103).
 rb_add_host_test(test_fsk_loader cassette/test_fsk_loader.cpp)
 target_link_libraries(test_fsk_loader PRIVATE rb_cassette)
+# The player: records with MOTOR, FSK runs through the loader, MOTOR drop in a run (cassette-cas C104).
+rb_add_host_test(test_rb_cassette_player cassette/test_cassette_player.cpp)
+target_link_libraries(test_rb_cassette_player PRIVATE rb_cassette)
 
-# Checking an A8CAS .cas tape and indexing its blocks (cassette-cas C001).
-rb_add_host_test(test_cas_image menu/test_cas_image.cpp ${rb_root}/host/src/cas_image.cpp)
-target_include_directories(test_cas_image PRIVATE ${rb_root}/host/src)
-
-# The virtual cassette: MOTOR, gaps, rate and paced bytes (cassette-cas C002).
-rb_add_host_test(test_cassette_player menu/test_cassette_player.cpp ${rb_root}/host/src/cas_image.cpp
-                 ${rb_root}/host/src/cassette_player.cpp ${rb_root}/host/src/cassette_deck.cpp)
-target_include_directories(test_cassette_player PRIVATE ${rb_root}/host/src)
 
 rb_add_host_test(test_tnfs_folder menu/test_tnfs_folder.cpp ${rb_root}/host/src/tnfs_folder.cpp
                  ${rb_root}/host/src/menu_catalog.cpp)

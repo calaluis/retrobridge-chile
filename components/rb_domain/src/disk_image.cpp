@@ -92,4 +92,31 @@ Result<uint16_t> DiskImage::readSector(SectorNumber sector, Span<uint8_t> out)
     return range.length;
 }
 
+Result<uint16_t> DiskImage::writeSector(SectorNumber sector, Span<const uint8_t> data)
+{
+    if (source_ == nullptr) {
+        return Failure{ErrorCode::InvalidDiskImage};
+    }
+    const Result<ByteRange> located = layout_.locate(sector);
+    if (!located.ok()) {
+        return Failure{located.error()};
+    }
+    const ByteRange range = located.value();
+    if (data.size() < range.length) {
+        return Failure{ErrorCode::BufferTooSmall};
+    }
+    if (readOnly()) {
+        return Failure{ErrorCode::WriteProtected};
+    }
+    const uint32_t size = source_->size();
+    if (range.offset > size || range.length > size - range.offset) {
+        return Failure{ErrorCode::OutOfBounds};
+    }
+    const Result<void> written = source_->writeAt(range.offset, data.first(range.length));
+    if (!written.ok()) {
+        return Failure{written.error()};
+    }
+    return range.length;
+}
+
 }  // namespace rb::domain

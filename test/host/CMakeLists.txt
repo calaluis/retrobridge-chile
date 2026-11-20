@@ -60,6 +60,7 @@ rb_add_host_test(test_value_objects domain/test_value_objects.cpp)
 rb_add_host_test(test_atr_layout domain/test_atr_layout.cpp)
 rb_add_host_test(test_disk_image domain/test_disk_image.cpp)
 rb_add_host_test(test_virtual_drive domain/test_virtual_drive.cpp)
+rb_add_host_test(test_disk_write domain/test_disk_write.cpp)
 
 # rb_application
 rb_add_host_test(test_image_location application/test_image_location.cpp)

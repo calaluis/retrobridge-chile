@@ -41,6 +41,9 @@ public:
     // Reads a sector of the current disk and records whether it failed.
     rb::core::Result<uint16_t> readSector(SectorNumber sector, rb::core::Span<uint8_t> out);
 
+    // Writes a sector of the current disk and records whether it failed.
+    rb::core::Result<uint16_t> writeSector(SectorNumber sector, rb::core::Span<const uint8_t> data);
+
     DriveStatus status() const noexcept;
 
     // In-memory queries for the SIO dispatcher's first phase (ADR-005): no I/O,
@@ -48,6 +51,9 @@ public:
     // validateRead: size of `sector` on the current disk, or NoDiskMounted /
     // SectorOutOfRange. geometry: nullptr when the drive is empty.
     rb::core::Result<uint16_t> validateRead(SectorNumber sector) const noexcept;
+    // validateWrite: the same check for a write. Protection is not checked here:
+    // a protected drive takes the data frame and then reports the error.
+    rb::core::Result<uint16_t> validateWrite(SectorNumber sector) const noexcept { return validateRead(sector); }
     const DiskGeometry* geometry() const noexcept { return disk_ ? &disk_->geometry() : nullptr; }
 
 private:

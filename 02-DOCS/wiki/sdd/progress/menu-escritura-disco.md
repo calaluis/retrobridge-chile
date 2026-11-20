@@ -39,6 +39,31 @@ Hallazgos del laboratorio:
 Evidencia: `D:\rb-e0\m45-w001\plus1.jsonl` (intento 6) y `sonda-d2-red.atr`; intentos 1 a 5 conservados con sus
 nombres (`plus1-intento1..5.jsonl`).
 
+## W002 — Dominio, archivos y puerto (hecha, 2026-11-19)
+
+- `ErrorCode::WriteProtected`; `ImageByteSource::writable`/`writeAt` (por defecto: no escribible);
+  `DiskImage::readOnly` sigue a la fuente y `writeSector`; `VirtualDrive::writeSector`/`validateWrite`;
+  `SioTransport::receiveAfterAck` declarado (por defecto TransportError).
+- `StdioByteSource::open(path, Access)`: `r+b` si se puede, si no `rb` (protegida). `writeAt`: fseek,
+  fwrite y fflush. `StdioImageRepository(base, writes = false)`: un solo escritor por ruta (sin distinguir
+  mayúsculas). Desvío del plan: la identidad es la ruta, no `file_identity` del host (`rb_file_storage` no puede
+  depender del host); `build_image_path` ya rechaza rutas alternativas.
+- Pruebas: `test_disk_write` (13 casos nuevos) y 4 casos nuevos en `test_stdio_storage`. 63 de 63 en verde;
+  `check_layering` y `check_notices` OK. Firmware ESP-IDF: lo compila el CI.
+- Riesgo `rsc risk`: tier 1. Un revisor (correctitud): sin defectos que bloqueen; 4 detalles menores, uno
+  arreglado (comentario largo), tres aceptados (comparación sin mayúsculas también en Linux, conservadora; sin
+  prueba de lectura-escritura-lectura intercaladas; `receiveAfterAck` se prueba en W004).
+- Controles (verify por tarea, corrida nueva sobre aaec76f + cambios):
+  - pruebas: PASS, 63 de 63 (`ctest --test-dir build/host`).
+  - compilación: PASS, MinGW ucrt64, `-Werror`, 0 avisos.
+  - seguridad: PASS por lectura dirigida. Solo `stdio_byte_source.cpp` abre para escribir, y solo con
+    `ReadWriteIfAllowed`; la ruta la arma `build_image_path`, que rechaza `..`, `/` inicial, `\` y `:`.
+  - trazabilidad: PASS. Escribir en la ATR = M45-1 (AC1-AC3); protección por atributo = M45-3 (AC4); un
+    escritor por archivo = suposición de la spec; `writes = false` por defecto = firmware de solo lectura (AC10).
+  - **SUSTITUIDA** — sanitizadores: el CI compila con `-DRB_SANITIZE=ON`; aquí no (MinGW). No detecta
+    errores de memoria hasta que corra el CI.
+  - **HERRAMIENTA-AUSENTE** — firmware ESP-IDF: sin `idf.py` en este PC; lo compila el CI.
+
 ## Pendiente
 
-W002 a W007.
+W003 a W007.

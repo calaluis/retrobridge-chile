@@ -51,6 +51,7 @@ const char* error_name(ErrorCode error)
     case ErrorCode::BoardNotConfirmed: return "BoardNotConfirmed";
     case ErrorCode::InvalidPinAssignment: return "InvalidPinAssignment";
     case ErrorCode::StorageNotMounted: return "StorageNotMounted";
+    case ErrorCode::WriteProtected: return "WriteProtected";
     default: return "Error";
     }
 }

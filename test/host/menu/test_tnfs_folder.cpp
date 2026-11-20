@@ -203,6 +203,20 @@ static void test_folders_first_marked_with_a_slash_then_images_without_case(void
     TEST_ASSERT_EQUAL_STRING("", notice(folder).c_str());
 }
 
+// menu-xex X003 (AC2): a TNFS folder lists its .xex files with the .atr ones.
+static void test_xex_files_are_listed_with_the_atr_files(void)
+{
+    const TnfsFolder folder =
+        TnfsFolder::build("/j", {file("zeta.xex"), file("Alfa.ATR"), dir("sub"), file("beta.XEX"), file("x.xexx")});
+    TEST_ASSERT_EQUAL_size_t(4, folder.total());
+    const char* expected[] = {"SUB/", "ALFA.ATR", "BETA.XEX", "ZETA.XEX"};
+    const char* paths[] = {"/j/sub", "/j/Alfa.ATR", "/j/beta.XEX", "/j/zeta.xex"};
+    for (std::size_t i = 0; i < 4; ++i) {
+        TEST_ASSERT_EQUAL_STRING(expected[i], folder.entry(i).display);
+        TEST_ASSERT_EQUAL_STRING(paths[i], pathOf(folder, i).c_str());
+    }
+}
+
 static void test_a_folder_is_kept_whatever_its_name(void)
 {
     const TnfsFolder folder = TnfsFolder::build("/a", {dir("0- Prueba"), dir("ATR"), file("notas.txt")});
@@ -222,7 +236,7 @@ static void test_no_entry_starting_with_a_dot(void)
 
 static void test_a_folder_without_folders_or_images_says_carpeta_vacia(void)
 {
-    const TnfsFolder folder = TnfsFolder::build("/vacia", {file("leeme.txt"), file("a.xex"), dir(".x")});
+    const TnfsFolder folder = TnfsFolder::build("/vacia", {file("leeme.txt"), file("a.com"), dir(".x")});
     TEST_ASSERT_EQUAL_size_t(0, folder.total());
     TEST_ASSERT_EQUAL_size_t(0, folder.count());
     TEST_ASSERT_EQUAL_STRING("CARPETA VACIA", notice(folder).c_str());
@@ -303,6 +317,7 @@ int main(void)
     RUN_TEST(test_without_memory_the_folder_is_not_ready_and_keeps_nothing);
     RUN_TEST(test_page_line_at_the_edges_of_a_page);
     RUN_TEST(test_folders_first_marked_with_a_slash_then_images_without_case);
+    RUN_TEST(test_xex_files_are_listed_with_the_atr_files);
     RUN_TEST(test_a_folder_is_kept_whatever_its_name);
     RUN_TEST(test_no_entry_starting_with_a_dot);
     RUN_TEST(test_a_folder_without_folders_or_images_says_carpeta_vacia);

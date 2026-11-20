@@ -98,3 +98,37 @@ Rama `feat/menu-xex` (worktree `.worktrees/feat-menu-xex`, desde main `ff9ff63`)
 - Pendiente para X004:
   - decidir la página 1 (la pila; hallazgo 5 de X001);
   - el límite de tamaño de un `.xex` que llega por TNFS.
+
+## X003 — Listar `.XEX` en local y en TNFS (hecha, 2026-11-20)
+
+- Una regla común en `host/src/menu_catalog.{hpp,cpp}`: `hasXexExtension` y `hasImageExtension` (`.atr` o `.xex`,
+  sin distinguir mayúsculas).
+  - `isCatalogName` (carpeta local) y `kept()` de `tnfs_folder.cpp` (TNFS) la usan.
+  - Ya no queda ningún otro usuario de `hasAtrExtension`.
+  - La lista no marca los `.xex`: basta la extensión visible (spec, *Clarifications*).
+- La protección de `--log` (`file_identity.cpp`, `endsWithImage`) también cubre los `.xex` de la carpeta.
+  - El mensaje de carpeta vacía ahora dice `no .atr or .xex images`.
+  - Se actualizaron los comentarios de `main.cpp` y `file_identity.hpp`.
+- Pruebas:
+  - nuevas: `test_menu_catalog` (orden mezclado, `x.xexx`, `.xex` solo), `test_tnfs_folder` (`.XEX` junto a `.ATR` y
+    carpetas) y `test_log_collision.py` (un `--log` que nombra un `.xex` de la carpeta se rechaza);
+  - se escribieron primero, y la compilación falló porque `hasXexExtension` no existía; después, en verde;
+  - la prueba vieja de carpeta vacía en TNFS usaba `a.xex` como «no imagen»; ahora usa `a.com`.
+- Mutantes:
+  - filtro TNFS solo `.atr`: muerto;
+  - protección de `--log` sin `.xex`: muerto. El primer intento no compiló por `-Werror`, se repitió con
+    `(void)xex` para que compilara y la prueba lo detectó.
+- Controles:
+  - pruebas: PASS. `ctest` 66 de 66; `ctest` del ejecutable 1 de 1; `tools/tests` 161 de 161.
+  - compilación: PASS. `-Werror`; el ejecutable enlaza.
+  - seguridad: PASS. El `--log` sigue sin poder escribir sobre ninguna imagen de la carpeta, ahora tampoco sobre un
+    `.xex`.
+  - trazabilidad: PASS. AC1 (local), AC2 (TNFS), AC10 (las pruebas de `.ATR` siguen en verde).
+  - `check_layering` y `check_notices`: OK.
+- Riesgo `rsc risk`: nivel 1, un revisor (correctitud). No encontró nada obligatorio; dejó 3 detalles menores:
+  - 1, mensajes y comentarios que solo decían `.atr`: corregido.
+  - 2, el contador `atrSeen` ahora cuenta también los `.xex`: el nombre queda igual (se usa como total de la lista);
+    el comentario del encabezado ya lo dice.
+  - 3, la prueba del registro solo usa mayúsculas en Windows: aceptado. La regla de extensión con mayúsculas y
+    minúsculas mezcladas ya la prueba `test_menu_catalog`.
+- Estado intermedio conocido: elegir un `.xex` hoy da «ATR INVALIDA» (`DiskImage::open` falla). X004 lo resuelve.

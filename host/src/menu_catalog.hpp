@@ -1,6 +1,6 @@
 #pragma once
 
-// Catalog of the boot menu (Issue #38): the .atr files of the --images folder,
+// Catalog of the boot menu (Issue #38): the .atr and .xex (menu-xex) files of the --images folder,
 // in case-insensitive alphabetical order, at most kMaxEntries (999,
 // menu-navegacion M42-3; the list shows them a page at a time). Fixed
 // storage; names longer than an ImageLocation or with characters outside
@@ -33,7 +33,7 @@ public:
     std::size_t count() const noexcept { return count_; }
     const char* name(std::size_t index) const noexcept { return names_[index].data(); }
 
-    // Number of .atr names offered, including those beyond kMaxEntries.
+    // Number of image names (.atr or .xex) offered, including those beyond kMaxEntries.
     std::size_t atrSeen() const noexcept { return atrSeen_; }
 
 private:
@@ -45,7 +45,13 @@ private:
 // True if the name ends in ".atr" (any case), whatever else it contains.
 bool hasAtrExtension(const char* fileName) noexcept;
 
-// True if the name ends in ".atr" (any case) and is a valid ImageLocation.
+// True if the name ends in ".xex" (any case), whatever else it contains (menu-xex).
+bool hasXexExtension(const char* fileName) noexcept;
+
+// The names the menu lists: ".atr" or ".xex" (menu-xex X003, M48).
+bool hasImageExtension(const char* fileName) noexcept;
+
+// True if the name ends in ".atr" or ".xex" (any case) and is a valid ImageLocation.
 bool isCatalogName(const char* fileName) noexcept;
 
 // Calls visit for every regular file of the directory (any name, no limit).

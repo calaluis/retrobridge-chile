@@ -340,6 +340,47 @@ void test_changed_file_fails_the_run()
     TEST_ASSERT_EQUAL_UINT32(4, loader.published());
 }
 
+// The file changed under the index: a joined chunk now longer than the run, or with a gap,
+// fails the run instead of writing past it or joining what is now a separate run.
+void test_changed_chunk_length_or_gap_fails_the_run()
+{
+    Bytes file = fuji() + chunk("fsk ", 0, values(4, 9)) + chunk("fsk ", 0, values(4, 9)) +
+                 chunk("data", 0, Bytes(16, 0));
+    MemoryTapeSource indexSource(Span<const uint8_t>(file.data(), file.size()));
+    const CasSegment run = firstRun(indexSource);
+    TEST_ASSERT_EQUAL_UINT32(16, run.length);
+    for (int which = 0; which < 2; ++which) {
+        Bytes changed = file;
+        if (which == 0) {
+            changed[8 + 16 + 4] = 16;  // second chunk: 16 bytes, the run has 8 left
+        } else {
+            changed[8 + 16 + 6] = 100;  // second chunk: a 100 ms gap
+        }
+        MemoryTapeSource source(Span<const uint8_t>(changed.data(), changed.size()));
+        FskLoader loader;
+        loader.bind(Span<uint8_t>(g_bank, sizeof g_bank));
+        TEST_ASSERT_TRUE(loader.start(source, run));
+        TEST_ASSERT_EQUAL(static_cast<int>(LoaderStep::Failed), static_cast<int>(runToEnd(loader)));
+        TEST_ASSERT_EQUAL_UINT32(4, loader.published());
+    }
+}
+
+// A run that fills the bank exactly fits; one byte less does not.
+void test_run_filling_the_bank_exactly_fits()
+{
+    const Bytes file = fuji() + chunk("fsk ", 0, values(600, 9));
+    LoggingSource source(file);
+    const CasSegment run = firstRun(source);
+    FskLoader loader;
+    loader.bind(Span<uint8_t>(g_bank, 1200));
+    TEST_ASSERT_TRUE(loader.start(source, run));
+    TEST_ASSERT_EQUAL(static_cast<int>(LoaderStep::Done), static_cast<int>(runToEnd(loader)));
+    TEST_ASSERT_EQUAL_UINT32(600, loader.published());
+    FskLoader tight;
+    tight.bind(Span<uint8_t>(g_bank, 1199));
+    TEST_ASSERT_FALSE(tight.start(source, run));
+}
+
 void test_stop_request_stops_the_producer()
 {
     const Bytes file = fuji() + chunk("fsk ", 0, values(2000, 1000));
@@ -478,6 +519,8 @@ int main(void)
     RUN_TEST(test_three_retries_then_the_run_fails);
     RUN_TEST(test_stop_after_final_changes_nothing);
     RUN_TEST(test_changed_file_fails_the_run);
+    RUN_TEST(test_changed_chunk_length_or_gap_fails_the_run);
+    RUN_TEST(test_run_filling_the_bank_exactly_fits);
     RUN_TEST(test_stop_request_stops_the_producer);
     RUN_TEST(test_start_refuses_what_does_not_fit);
     RUN_TEST(test_no_allocation_while_loading_and_playing);

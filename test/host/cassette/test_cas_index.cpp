@@ -209,6 +209,21 @@ void test_empty_record_keeps_its_gap()
 }
 
 // AC6: broken files.
+// A last chunk with no payload ends exactly at the end of the file: still a good tape.
+void test_header_ending_at_eof_is_ok()
+{
+    const CasIndexResult result = index(fuji() + data(0, record(1)) + baud(600));
+    assertStatus(CasStatus::Ok, result);
+    TEST_ASSERT_EQUAL_UINT32(1, result.count);
+}
+
+// Only the exact `FUJI` type opens a tape.
+void test_other_first_type_is_invalid()
+{
+    assertStatus(CasStatus::Invalid, index(chunk("FUJX", 0, {}) + data(0, record(1))));
+    assertStatus(CasStatus::Invalid, index(chunk("Fuji", 0, {}) + data(0, record(1))));
+}
+
 void test_missing_fuji_is_invalid() { assertStatus(CasStatus::Invalid, index(data(0, record(1)))); }
 void test_cut_header_is_invalid() { assertStatus(CasStatus::Invalid, index(fuji() + data(0, record(1)) + Bytes{'d', 'a'})); }
 
@@ -333,6 +348,8 @@ int main(void)
     RUN_TEST(test_cut_chunk_is_invalid);
     RUN_TEST(test_odd_fsk_length_is_invalid);
     RUN_TEST(test_baud_zero_is_invalid);
+    RUN_TEST(test_header_ending_at_eof_is_ok);
+    RUN_TEST(test_other_first_type_is_invalid);
     RUN_TEST(test_nothing_to_play_is_invalid);
     RUN_TEST(test_empty_file_is_invalid);
     RUN_TEST(test_pwm_chunk_is_unsupported);

@@ -201,6 +201,15 @@ b-e0\m49-cas\c003`.
   la cinta vieja suena entera con sus segmentos. Anotado para C106: la cinta retirada se cierra en el siguiente `cas`;
   el adaptador del ESP32 puede llamar a `run` sin texto o cerrar en su bucle.
 
+## C108 — Cierre de la fase 1 (hecha, 2026-11-20)
+
+- Registro: `02-DOCS/wiki/sdd/verifications/cassette-cas-2026-11-20.md`. Veredicto: PASS para la fase 1, AC8 parcial
+  (enganche a la consola en C106). AC9–AC12 esperan M3a y H4.
+- Gate nuevo (`build/host-c108`, `build/exe-c108`): `ctest` 72/72, ejecutable 1/1, `tools/tests` 167/167, capas y
+  avisos OK. `idf.py build` y sanitizadores no corren aquí: los corre el CI.
+- Revisión de cierre (1 revisor, pruebas como evidencia): sin defectos; 6 huecos de prueba cerrados con pruebas, cada
+  mutante comprobado.
+
 ## Decision queue
 
 - **review-after (2026-11-20)** — AC5 dice «sin perder ni repetir». Para tiradas FSK, si MOTOR cae con la señal en

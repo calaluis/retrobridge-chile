@@ -579,6 +579,21 @@ void test_motor_drop_after_the_run_played_does_not_replay()
     TEST_ASSERT_EQUAL_UINT32(1, rig.player.segment());
 }
 
+// Time between a MOTOR-off tick and the next MOTOR-on tick never counts, however long.
+void test_time_after_a_motor_off_tick_does_not_count()
+{
+    Rig rig(fuji() + chunk("data", 500, {7}));
+    rig.motor.motor = false;
+    rig.advance(10);
+    rig.motor.motor = true;
+    rig.advance(10000000);  // 10 s with MOTOR off at the start
+    TEST_ASSERT_EQUAL(static_cast<int>(PlayerPhase::Gap), static_cast<int>(rig.player.phase()));
+    rig.advance(499000);
+    TEST_ASSERT_EQUAL(static_cast<int>(PlayerPhase::Gap), static_cast<int>(rig.player.phase()));
+    rig.advance(1000);
+    TEST_ASSERT_EQUAL(static_cast<int>(PlayerPhase::Bytes), static_cast<int>(rig.player.phase()));
+}
+
 // A run that does not fit the bank stops the tape there: nothing pushed, nothing skipped.
 void test_run_too_big_for_the_bank_stops_the_tape()
 {
@@ -693,6 +708,7 @@ int main()
     RUN_TEST(test_loader_failure_mid_run_replays_the_run);
     RUN_TEST(test_restart_waits_for_the_producer_to_stop);
     RUN_TEST(test_motor_drop_after_the_run_played_does_not_replay);
+    RUN_TEST(test_time_after_a_motor_off_tick_does_not_count);
     RUN_TEST(test_run_too_big_for_the_bank_stops_the_tape);
     RUN_TEST(test_rewind_during_a_run_stops_the_signal);
     RUN_TEST(test_no_allocation_while_playing);

@@ -106,12 +106,6 @@ public:
     uint8_t credit() const noexcept { return credit_; }
     // MOTOR line as the last 20/21 from the Atari left it (cassette-cas C002); off after connect.
     bool motorOn() const noexcept { return motor_; }
-    // Sends SPEED_CHANGE with the cassette's rate. No credit needed: it carries no data.
-    rb::core::Result<void> sendSpeed(uint32_t baud);
-    // Sends one DATA BLOCK (1..512 bytes) outside any command, for the cassette. Never waits: it
-    // fails while a command frame, a sync or a write data frame is in progress, and with no credit
-    // it asks for credit once (C6) and fails until the hub's C7 arrives.
-    rb::core::Result<void> sendOutsideFrame(rb::core::Span<const uint8_t> bytes);
     const NetSioStats& stats() const noexcept { return stats_; }
 
 private:
@@ -147,7 +141,6 @@ private:
     std::optional<uint8_t> lastTrailer_;
     uint8_t credit_ = 0;
     bool motor_ = false;
-    bool creditAsked_ = false;  // a C6 from sendOutsideFrame() waits for its C7
     bool connected_ = false;
     bool pingAnswered_ = false;
     uint64_t nextAliveUs_ = 0;

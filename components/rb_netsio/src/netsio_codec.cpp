@@ -138,17 +138,6 @@ std::size_t encodeCreditStatus(Span<uint8_t> out, uint8_t remainingCredit) noexc
     return 2;
 }
 
-std::size_t encodeSpeedChange(Span<uint8_t> out, uint32_t baud) noexcept
-{
-    RB_ASSERT(out.size() >= 5);
-    out[0] = id::kSpeedChange;
-    out[1] = static_cast<uint8_t>(baud & 0xFF);
-    out[2] = static_cast<uint8_t>((baud >> 8) & 0xFF);
-    out[3] = static_cast<uint8_t>((baud >> 16) & 0xFF);
-    out[4] = static_cast<uint8_t>((baud >> 24) & 0xFF);
-    return 5;
-}
-
 std::size_t encodeSignal(Span<uint8_t> out, uint8_t messageId) noexcept
 {
     RB_ASSERT(out.size() >= 1 && parameterLength(messageId) == 0);

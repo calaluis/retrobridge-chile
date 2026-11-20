@@ -93,10 +93,6 @@ rb_add_host_test(test_netsio_transport netsio/test_netsio_transport.cpp)
 target_link_libraries(test_netsio_transport PRIVATE rb_netsio)
 rb_add_host_test(test_netsio_transport_allocations netsio/test_netsio_transport_allocations.cpp)
 target_link_libraries(test_netsio_transport_allocations PRIVATE rb_netsio)
-# The cassette's link over NetSIO (cassette-cas C002).
-rb_add_host_test(test_netsio_tape_link netsio/test_netsio_tape_link.cpp)
-target_link_libraries(test_netsio_tape_link PRIVATE rb_netsio)
-target_include_directories(test_netsio_tape_link PRIVATE ${rb_root}/host/src)
 
 # rb_net_tnfs (menu-tnfs, ADR-012): read-only TNFS codec
 rb_add_host_test(test_tnfs_codec net_tnfs/test_tnfs_codec.cpp)

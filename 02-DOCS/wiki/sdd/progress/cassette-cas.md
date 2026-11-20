@@ -79,6 +79,20 @@ Rama `feat/cassette-cas` (worktree `.worktrees/feat-cassette-cas`, desde main `b
 - Hipótesis (sin verificar): la parte estándar a 600 se leyó (el SO siguió 9 registros); la falla está en el tramo a
   750 del cargador propio del juego, o en los bloques `fsk ` (uno antes de cada registro) tratados como silencio.
 
+## C100 — Quitar lo que no sigue (hecha, 2026-11-20)
+
+- C003 sin commit descartado: `host/src/cassette_run.hpp` borrado; `host/src/main.cpp` y `host/CMakeLists.txt` vuelven
+  al commit. La evidencia sigue en `D:b-e0\m49-cas\c003`.
+- Retirado el envío de cinta por NetSIO: `encodeSpeedChange`, `sendSpeed`, `sendOutsideFrame`, `creditAsked_`,
+  `host/src/netsio_tape_link.hpp` y `test_netsio_tape_link`, más sus pruebas de códec y transporte.
+- Se conserva: `motorOn()`, `motorChanges` y sus dos pruebas (MOTOR de NetSIO).
+- Controles:
+  - pruebas: `ctest` 69/69 (70 menos `test_netsio_tape_link`); `retrobridge_host` compila;
+  - compilación: sin avisos con `-Werror`; `check_layering` OK; `check_notices` OK;
+  - seguridad: solo borrado; ninguna entrada nueva;
+  - trazabilidad: AC13; `rsc risk`: tier 1, un revisor.
+- Revisión (1 revisor, ronda 1): sin hallazgos; 1 detalle corregido (comentario huérfano en `test/host/CMakeLists.txt`).
+
 ## Decision queue
 
 - **resuelta (2026-11-20)** — C003 falló con `international_karate.cas`. La propuesta de una cinta inventada se

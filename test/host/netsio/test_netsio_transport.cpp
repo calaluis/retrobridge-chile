@@ -319,16 +319,6 @@ static void test_motor_messages_set_the_motor_state(void)
     TEST_ASSERT_EQUAL_UINT32(0, h.transport.stats().ignoredMessages);
 }
 
-// cassette-cas C002: the cassette's rate goes out as SPEED_CHANGE, without asking for credit.
-static void test_send_speed_sends_speed_change(void)
-{
-    NetSioHarness h;
-    h.connect(0);
-    TEST_ASSERT_TRUE(h.transport.sendSpeed(600).ok());
-    h.assert_sent(0, {0x80, 0x58, 0x02, 0x00, 0x00});
-    TEST_ASSERT_EQUAL_UINT32(0, h.transport.stats().creditRequests);
-}
-
 // cassette-cas C002: a cold reset and a reconnection leave the motor off.
 static void test_motor_is_off_after_reset_and_reconnect(void)
 {
@@ -343,34 +333,6 @@ static void test_motor_is_off_after_reset_and_reconnect(void)
     (void)h.session.step();
     h.transport.disconnect();
     TEST_ASSERT_FALSE(h.transport.motorOn());
-}
-
-// cassette-cas C002: with no credit, a tape send asks once (C6) and fails at once; after C7 it goes.
-static void test_send_outside_frame_never_waits_for_credit(void)
-{
-    NetSioHarness h;
-    h.connect(0);
-    const uint8_t bytes[] = {0x55, 0x55};
-    TEST_ASSERT_FALSE(h.transport.sendOutsideFrame(Span<const uint8_t>{bytes}).ok());
-    TEST_ASSERT_FALSE(h.transport.sendOutsideFrame(Span<const uint8_t>{bytes}).ok());
-    TEST_ASSERT_EQUAL_size_t(1, h.port.sent_count());
-    h.assert_sent(0, {0xC6, 0x00});
-    h.port.push({0xC7, 2});
-    (void)h.session.step();
-    TEST_ASSERT_TRUE(h.transport.sendOutsideFrame(Span<const uint8_t>{bytes}).ok());
-    h.assert_sent(1, {0x02, 0x55, 0x55});
-}
-
-// cassette-cas C002: no tape bytes in the middle of a command frame.
-static void test_send_outside_frame_refuses_inside_a_frame(void)
-{
-    NetSioHarness h;
-    h.connect();
-    (void)h.session.step();  // takes the credit
-    h.from_atari({0x11});    // COMMAND ON, frame not finished
-    (void)h.session.step();
-    const uint8_t bytes[] = {0x55};
-    TEST_ASSERT_FALSE(h.transport.sendOutsideFrame(Span<const uint8_t>{bytes}).ok());
 }
 
 static void test_sync_without_frame_is_released_at_once(void)
@@ -743,9 +705,6 @@ int main(void)
     RUN_TEST(test_answering_a_sync_with_more_than_one_byte_is_refused);
     RUN_TEST(test_command_bytes_carry_pc_clock_edges);
     RUN_TEST(test_motor_messages_set_the_motor_state);
-    RUN_TEST(test_send_speed_sends_speed_change);
     RUN_TEST(test_motor_is_off_after_reset_and_reconnect);
-    RUN_TEST(test_send_outside_frame_never_waits_for_credit);
-    RUN_TEST(test_send_outside_frame_refuses_inside_a_frame);
     return UNITY_END();
 }

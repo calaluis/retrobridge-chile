@@ -126,34 +126,6 @@ Result<void> NetSioSioTransport::send(Span<const uint8_t> bytes)
     return sent;
 }
 
-Result<void> NetSioSioTransport::sendOutsideFrame(Span<const uint8_t> bytes)
-{
-    if (pendingSync_.has_value() || inFrame_ || receiving_ || bytes.empty() || bytes.size() > kMaxDataBlock) {
-        return Failure{ErrorCode::TransportError};  // a disk command owns the line, or a bad size
-    }
-    if (credit_ == 0) {
-        if (!creditAsked_) {
-            const Result<void> asked = transmit(encodeCreditStatus(Span<uint8_t>{tx_}, 0));
-            if (!asked.ok()) {
-                return asked;
-            }
-            creditAsked_ = true;
-            ++stats_.creditRequests;
-        }
-        return Failure{ErrorCode::Timeout};  // never waits: the C7 arrives with the next receive
-    }
-    const Result<void> sent = transmit(encodeDataBlock(Span<uint8_t>{tx_}, bytes));
-    if (sent.ok()) {
-        --credit_;
-    }
-    return sent;
-}
-
-Result<void> NetSioSioTransport::sendSpeed(uint32_t baud)
-{
-    return transmit(encodeSpeedChange(Span<uint8_t>{tx_}, baud));
-}
-
 void NetSioSioTransport::releaseDataLine()
 {
     answerEmpty();
@@ -371,7 +343,6 @@ bool NetSioSioTransport::process(std::size_t length)
         return false;
     case id::kCreditUpdate:
         credit_ = message.payload[0];
-        creditAsked_ = false;
         return false;
     case id::kPingResponse:
         pingAnswered_ = true;

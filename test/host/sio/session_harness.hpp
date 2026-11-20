@@ -39,6 +39,18 @@ inline std::array<uint8_t, 5> status_frame()
     return sio_frame(kD1, kStatusCommand);
 }
 
+// A data frame of `length` bytes (value seed + i) plus its checksum.
+inline std::array<uint8_t, 257> data_frame(std::size_t length, uint8_t seed, bool good = true)
+{
+    std::array<uint8_t, 257> bytes{};
+    for (std::size_t i = 0; i < length; ++i) {
+        bytes[i] = static_cast<uint8_t>(seed + i);
+    }
+    bytes[length] = static_cast<uint8_t>(rb::sio::sio_checksum(rb::core::Span<const uint8_t>{bytes.data(), length}) ^
+                                         (good ? 0 : 1));
+    return bytes;
+}
+
 struct SessionHarness {
     FakeClock clock;
     ScriptedSioTransport transport{clock};

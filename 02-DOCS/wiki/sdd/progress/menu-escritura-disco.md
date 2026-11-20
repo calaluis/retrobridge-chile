@@ -89,6 +89,35 @@ nombres (`plus1-intento1..5.jsonl`).
   - **SUSTITUIDA** — sanitizadores: solo en el CI (`-DRB_SANITIZE=ON`). No detecta errores de memoria aquí.
   - **HERRAMIENTA-AUSENTE** — firmware ESP-IDF: sin `idf.py`; lo compila el CI.
 
+## W004 — Escritura en el despachador SIO (hecha, 2026-11-19)
+
+- `command::kWriteSector` (0x57) y `kPutSector` (0x50). `SioCommandDispatcher(bay, allowWrites = false)`: apagado,
+  `W`/`P` reciben NAK y D0 como antes. Encendido: sector 0 o fuera de rango, NAK; si no, Accepted con una trama de
+  datos del tamaño del sector + 1 (`incomingFrame()`), también con unidad vacía (luego ERROR).
+- `acceptData()`: checksum malo, NAK de datos, nada escrito, D1. `execute()`: COMPLETE; protegida, ERROR y D3;
+  otro fallo, ERROR y D2. Caso de uso nuevo `WriteSector` (rb_application).
+- `SioSession`: con datos, `receiveAfterAck` en lugar de `send(ACK)`; luego ACK/NAK de datos; t5 desde el ACK de
+  datos; COMPLETE o ERROR solo. Cualquier fallo de transporte abandona el comando sin escribir.
+- STATUS (`StatusFrameEncoder`): con escrituras activas, disco protegido = byte 1 `$BF`. D1-D3 describen la última
+  lectura o escritura, como el byte 1: STATUS no los borra; los borra el siguiente R/W/P aceptado. Un rechazo por
+  protección deja `$BF`, no `$EF`. Desvío menor del plan: el plan no decía cuándo se borran D1-D3; si se borraban
+  al informar, el segundo STATUS mostraba `$AF`.
+- `ScriptedSioTransport::receiveAfterAck`: registra el ACK como un envío y entrega la trama encolada; sin trama o
+  con otro largo, TransportError.
+- Pruebas: `test_sio_dispatcher` +9 (24), `test_sio_session` +6 (22), `test_status_frame_encoder` +2 (11),
+  `test_sio_session_allocations` +1 (5, 0 asignaciones en W completa, NAK de datos y trama ausente). 63 de 63.
+- Controles negativos: sin el control de checksum fallan 2 casos; sin `allowWrites`, 3 casos.
+- Riesgo `rsc risk`: tier 1. Un revisor (correctitud): sin defectos. Aceptados: `abandon()` redundante tras un
+  NAK fallido; un fallo de transporte antes de los datos no marca D1 (el Atari reintenta).
+- Controles (verify por tarea, corrida nueva tras el último cambio):
+  - pruebas: PASS, 63 de 63.
+  - compilación: PASS, MinGW ucrt64, `-Werror`, 0 avisos; `check_layering` y `check_notices` OK.
+  - seguridad: PASS por lectura dirigida. La trama de datos va a un búfer fijo de 257 bytes; su largo sale de
+    `validateWrite`, no del Atari.
+  - trazabilidad: PASS. W/P completos = AC1-AC2; protegida = ERROR y `$BF` = AC4; `allowWrites` apagado = AC8.
+  - **SUSTITUIDA** — sanitizadores: solo en el CI.
+  - **HERRAMIENTA-AUSENTE** — firmware ESP-IDF: sin `idf.py`; lo compila el CI.
+
 ## Pendiente
 
-W004 a W007.
+W005 a W007.

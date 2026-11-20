@@ -17,6 +17,7 @@
 #include <new>
 
 #include "fakes/fake_byte_source.hpp"
+#include "fakes/memory_byte_source.hpp"
 #include "fakes/memory_image_repository.hpp"
 #include "rb/app/image_location.hpp"
 #include "rb/app/usecases/mount_disk_image.hpp"
@@ -156,6 +157,36 @@ static void test_errors_and_recovery_do_not_allocate(void)
     TEST_ASSERT_TRUE(step_without_allocation(h) == StepOutcome::Completed);
 }
 
+static void test_writes_do_not_allocate(void)
+{
+    // Built before measuring: the source's vector allocates, a write does not.
+    rb::test::MemoryByteSource source{make_atr_header(sd_data_size(720), 128), kAtrHeaderSize + sd_data_size(720),
+                                      true};
+    rb::test::FakeClock clock;
+    rb::test::ScriptedSioTransport transport{clock};
+    rb::app::DriveBay bay{1};
+    rb::test::FakeDriveMailbox mailbox;
+    rb::sio::SioCommandDispatcher dispatcher{bay, true};
+    rb::app::ApplyDriveRequest apply{bay, mailbox};
+    rb::sio::SioSession session{transport, clock, dispatcher, apply};
+    TEST_ASSERT_TRUE(bay.mount(DriveNumber::from(1).value(), DiskImage::open(source).value(),
+                               rb::app::ImageLocation::from("w.atr").value())
+                         .ok());
+    const auto good = rb::test::data_frame(128, 0x10);
+    const auto bad = rb::test::data_frame(128, 0x20, false);
+    transport.push_frame(rb::test::sio_frame(rb::test::kD1, 0x57, 4, 0));
+    transport.push_data(good.data(), 129);
+    transport.push_frame(rb::test::sio_frame(rb::test::kD1, 0x50, 5, 0));
+    transport.push_data(bad.data(), 129);
+    transport.push_frame(rb::test::sio_frame(rb::test::kD1, 0x57, 6, 0));  // no data: dropped
+
+    const unsigned long before = g_allocations;
+    TEST_ASSERT_TRUE(session.step() == StepOutcome::Completed);
+    TEST_ASSERT_TRUE(session.step() == StepOutcome::Nacked);
+    TEST_ASSERT_TRUE(session.step() == StepOutcome::TransportFailed);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, g_allocations - before, "a write transaction allocated");
+}
+
 static void test_applying_a_mailbox_request_does_not_allocate(void)
 {
     SessionHarness h;
@@ -174,6 +205,7 @@ int main(void)
     RUN_TEST(test_counter_detects_allocations);
     RUN_TEST(test_transactions_do_not_allocate);
     RUN_TEST(test_errors_and_recovery_do_not_allocate);
+    RUN_TEST(test_writes_do_not_allocate);
     RUN_TEST(test_applying_a_mailbox_request_does_not_allocate);
     return UNITY_END();
 }

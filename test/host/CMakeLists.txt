@@ -214,6 +214,10 @@ target_compile_definitions(test_create_atr PRIVATE RB_TEST_CREATE_DIR="${CMAKE_C
 rb_add_host_test(test_xex_image menu/test_xex_image.cpp ${rb_root}/host/src/xex_image.cpp)
 target_include_directories(test_xex_image PRIVATE ${rb_root}/host/src)
 
+# Checking an A8CAS .cas tape and indexing its blocks (cassette-cas C001).
+rb_add_host_test(test_cas_image menu/test_cas_image.cpp ${rb_root}/host/src/cas_image.cpp)
+target_include_directories(test_cas_image PRIVATE ${rb_root}/host/src)
+
 rb_add_host_test(test_tnfs_folder menu/test_tnfs_folder.cpp ${rb_root}/host/src/tnfs_folder.cpp
                  ${rb_root}/host/src/menu_catalog.cpp)
 target_include_directories(test_tnfs_folder PRIVATE ${rb_root}/host/src)

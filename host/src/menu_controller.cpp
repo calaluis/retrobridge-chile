@@ -1026,7 +1026,8 @@ void MenuController::onCreateName(uint8_t code)
         createEvent("invalid_name", 0);
         return;
     }
-    std::snprintf(createName_, sizeof createName_, "%s.ATR", name);
+    // isNewAtrName allows at most kMaxNewAtrName characters; the precision says so to the compiler.
+    std::snprintf(createName_, sizeof createName_, "%.*s.ATR", static_cast<int>(kMaxNewAtrName), name);
     for (std::size_t i = 0; i < catalog_.count(); ++i) {
         if (compareNames(catalog_.name(i), createName_) == 0) {
             say(" YA EXISTE %s", createName_);

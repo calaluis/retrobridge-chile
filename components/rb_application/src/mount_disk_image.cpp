@@ -27,7 +27,8 @@ Result<MountReport> MountDiskImage::execute(DriveNumber drive, const ImageLocati
     }
 
     const rb::domain::AtrLayout& layout = image.value().layout();
-    const MountReport report{layout.geometry(), layout.headerSizeMismatch(), layout.ignoredTrailingBytes()};
+    const MountReport report{layout.geometry(), layout.headerSizeMismatch(), layout.ignoredTrailingBytes(),
+                             image.value().readOnly()};
 
     DriveRequest request = DriveRequest::mount(drive, std::move(image).value(), location);
     const Result<void> submitted = mailbox_.submit(request);

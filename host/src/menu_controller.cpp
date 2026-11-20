@@ -57,6 +57,8 @@ void invert(uint8_t* screen, unsigned offset) noexcept
 
 constexpr std::size_t kNameColumns = 30;   // list entries: " A  " + 30
 constexpr std::size_t kLabelColumns = 32;  // sources and drives: "D1 " + 32 (the reference's 35 columns)
+constexpr const char* kLockedMark = " SL";  // read-only drive, after its name (ADR-017 amendment 8)
+constexpr std::size_t kLockedColumns = kLabelColumns - 3;  // the name, cut to leave room for the mark
 
 int digitOf(uint8_t code) noexcept
 {
@@ -577,10 +579,12 @@ void MenuController::assignD1(EntryIndex entry)
     // D1 keeps serving the menu: validate now (open the file, read its header),
     // mount when A is pressed.
     std::optional<ErrorCode> error;
+    bool locked = true;
     const auto opened = repository_.open(location.value());
     if (!opened.ok()) {
         error = opened.error();
     } else {
+        locked = !opened.value()->writable();  // confirmed when A mounts it
         {
             const auto image = rb::domain::DiskImage::open(*opened.value());  // detaches when it goes
             if (!image.ok()) {
@@ -597,6 +601,7 @@ void MenuController::assignD1(EntryIndex entry)
         Shown local;
         local.kind = Shown::Kind::Local;
         local.entry = entry;
+        local.locked = locked;
         recycle(shown_[0]);  // D1 is assigned, not mounted: nothing holds its slot
         shown_[0] = local;
         say(" D1: %s (A ARRANCA)", name);
@@ -622,6 +627,7 @@ void MenuController::mountOn(unsigned number, EntryIndex entry)
         incoming_ = Shown{};
         incoming_.kind = Shown::Kind::Local;
         incoming_.entry = entry;
+        incoming_.locked = mounted.value().writeProtected;
         shown_[number - 1] = incoming_;
         inFlight_ = InFlight::Mount;
         say(" D%u: %s", number, name);
@@ -684,6 +690,7 @@ bool MenuController::boot()
         return false;
     }
     inFlight_ = InFlight::Boot;
+    shown_[0].locked = mounted.value().writeProtected;
     message_[0] = '\0';
     std::snprintf(detail, sizeof detail, "D1 name=%s", name);
     event("menu_boot", detail);
@@ -748,8 +755,13 @@ MenuReply MenuController::render(uint8_t action) const noexcept
     }
     for (unsigned n = 1; n <= kDrives; ++n) {
         const char* name = driveName(n);
-        std::snprintf(text, sizeof text, "D%u %.*s", n, static_cast<int>(kLabelColumns),
-                      name != nullptr ? name : "SIN DISCO");
+        if (name != nullptr && shown_[n - 1].locked) {
+            std::snprintf(text, sizeof text, "D%u %-*.*s%s", n, static_cast<int>(kLockedColumns),
+                          static_cast<int>(kLockedColumns), name, kLockedMark);
+        } else {
+            std::snprintf(text, sizeof text, "D%u %.*s", n, static_cast<int>(kLabelColumns),
+                          name != nullptr ? name : "SIN DISCO");
+        }
         put(screen, kMainDrives + (n - 1) * kMenuLineWidth, kMenuLineWidth, text, true);
     }
     put(screen, kMainTape, kMenuLineWidth, "C: SIN CINTA", true);

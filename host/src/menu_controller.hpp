@@ -139,6 +139,7 @@ private:
         EntryIndex entry = kNoEntry;                   // Local
         std::size_t slot = 0;                          // Tnfs
         char name[TnfsFolder::kDisplayWidth + 1] = {};  // Tnfs: display name
+        bool locked = true;                            // read-only: " SL" on the main screen
     };
 
     void collect();

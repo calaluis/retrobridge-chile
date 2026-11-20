@@ -118,6 +118,39 @@ nombres (`plus1-intento1..5.jsonl`).
   - **SUSTITUIDA** — sanitizadores: solo en el CI.
   - **HERRAMIENTA-AUSENTE** — firmware ESP-IDF: sin `idf.py`; lo compila el CI.
 
+## W005 — Escritura en el host (hecha, 2026-11-19)
+
+- `HostImageRepository`: archivos con `writes = true` (un solo escritor por ruta). Menú e imágenes TNFS siguen
+  sin escritura. `main.cpp`: `SioCommandDispatcher(bay, true)` solo en `--images`; `--image` sigue de solo
+  lectura.
+- `MountReport::writeProtected` (rb_application). Pantalla principal: unidad protegida = nombre recortado a 29
+  columnas + ` SL`. TNFS siempre protegida. D1: la marca se toma al asignar y se confirma al arrancar.
+- `MenuSioTransport` reenvía `receiveAfterAck` y sigue cada `W`/`P` a D1-D8: un registro por escritura al
+  observador. `main.cpp` lo escribe como evento JSONL `sio_write`:
+  `drive=n cmd=W|P sector=s result=complete|error|nak [crc32=xxxxxxxx] [cause=no_disk|protected|io] [reply=lost]`
+  (`host/src/sio_write_log.hpp`, CRC-32 IEEE propio, sin tabla).
+- Desvío del plan: la causa es una clase (`no_disk`, `protected`, `io`), no el texto del sistema; `rb_file_storage`
+  no guarda `errno`. El archivo bloqueado de verdad se prueba en la demo (W006); aquí, con una fuente que falla.
+- Pruebas: `test_host_write` nuevo (9 casos): P y W leídos de vuelta y conservados tras cerrar y reabrir (AC1-AC3);
+  atributo de solo lectura = STATUS `$BF`, ERROR, bytes iguales, marca (AC4, AC7); misma ATR en dos unidades;
+  menú en D1 (AC6); imagen TNFS no escribible (AC5); fallo al guardar = ERROR y `cause=io` (AC9); NAK del comando
+  y de datos; COMPLETE perdido sigue registrado; CRC-32 de `123456789` = `CBF43926`. `test_menu_tnfs`: 5 líneas de
+  unidad TNFS ahora llevan ` SL` (lo pide AC7). 64 de 64 en verde. Ejecutable `retrobridge_host` compila.
+- Controles negativos: con `writes = false`, fallan 2 casos; sin la marca, 2 casos; sin el registro del COMPLETE
+  perdido, 1 caso.
+- Riesgo `rsc risk`: tier 1. Un revisor (correctitud): un defecto arreglado (un COMPLETE que no salía dejaba la
+  escritura sin registro; ahora queda con `reply=lost`). Aceptado: tras un arranque y un reset en frío, la marca
+  de D1 es la de su último montaje (cosmético). Sin pruebas de la marca tras desmontar o reset (aceptado).
+- Controles (verify por tarea, corrida nueva tras el último cambio):
+  - pruebas: PASS, 64 de 64.
+  - compilación: PASS, MinGW ucrt64, `-Werror`, 0 avisos; `retrobridge_host.exe` enlaza; `check_layering` y
+    `check_notices` OK.
+  - seguridad: PASS por lectura dirigida. Solo se escriben archivos de `--images` que el sistema deja escribir;
+    la ruta la arma `build_image_path`; el registro no copia datos del Atari, solo su CRC.
+  - trazabilidad: PASS. AC1-AC7 y AC9 en `test_host_write`; AC11 (pruebas de menús) en verde.
+  - **SUSTITUIDA** — sanitizadores: solo en el CI.
+  - **HERRAMIENTA-AUSENTE** — firmware ESP-IDF: sin `idf.py`; lo compila el CI.
+
 ## Pendiente
 
-W005 a W007.
+W006 (demo con el responsable) y W007 (docs).

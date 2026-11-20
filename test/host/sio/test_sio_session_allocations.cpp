@@ -199,6 +199,29 @@ static void test_applying_a_mailbox_request_does_not_allocate(void)
     TEST_ASSERT_TRUE(step_without_allocation(h) == StepOutcome::MailboxApplied);
 }
 
+static void test_format_does_not_allocate(void)
+{
+    rb::test::MemoryByteSource source{make_atr_header(sd_data_size(720), 128), kAtrHeaderSize + sd_data_size(720),
+                                      true};
+    rb::test::FakeClock clock;
+    rb::test::ScriptedSioTransport transport{clock};
+    rb::app::DriveBay bay{1};
+    rb::test::FakeDriveMailbox mailbox;
+    rb::sio::SioCommandDispatcher dispatcher{bay, true};
+    rb::app::ApplyDriveRequest apply{bay, mailbox};
+    rb::sio::SioSession session{transport, clock, dispatcher, apply};
+    TEST_ASSERT_TRUE(bay.mount(DriveNumber::from(1).value(), DiskImage::open(source).value(),
+                               rb::app::ImageLocation::from("f.atr").value())
+                         .ok());
+    transport.push_frame(rb::test::sio_frame(rb::test::kD1, 0x21, 0, 0));
+    transport.push_frame(rb::test::sio_frame(rb::test::kD1, 0x22, 0, 0));  // other density: ERROR
+
+    const unsigned long before = g_allocations;
+    TEST_ASSERT_TRUE(session.step() == StepOutcome::Completed);
+    TEST_ASSERT_TRUE(session.step() == StepOutcome::Completed);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, g_allocations - before, "a format transaction allocated");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -206,6 +229,7 @@ int main(void)
     RUN_TEST(test_transactions_do_not_allocate);
     RUN_TEST(test_errors_and_recovery_do_not_allocate);
     RUN_TEST(test_writes_do_not_allocate);
+    RUN_TEST(test_format_does_not_allocate);
     RUN_TEST(test_applying_a_mailbox_request_does_not_allocate);
     return UNITY_END();
 }

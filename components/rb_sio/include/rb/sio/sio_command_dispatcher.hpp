@@ -6,6 +6,7 @@
 #include <optional>
 
 #include "rb/app/drive_bay.hpp"
+#include "rb/app/usecases/format_disk.hpp"
 #include "rb/app/usecases/get_drive_status.hpp"
 #include "rb/app/usecases/read_sector.hpp"
 #include "rb/app/usecases/write_sector.hpp"
@@ -39,6 +40,7 @@ struct Completion {
 //   READ on an empty drive, other READ, STATUS -> Accepted
 //   WRITE/PUT ('W'/'P') without allowWrites   -> Nak    (as the read-only v1)
 //   WRITE/PUT with sector 0 or beyond          -> Nak
+//   FORMAT ('!'/'"') without allowWrites      -> Nak; otherwise Accepted (AUX ignored)
 //   WRITE/PUT, also on an empty or protected drive -> Accepted, with a data frame
 //             of the sector size + checksum to receive (incomingFrame())
 // acceptData(): after the data frame arrived; bad checksum -> false (send NAK,
@@ -51,6 +53,10 @@ struct Completion {
 //             of the expected size + checksum (read command, ADR-005)
 //   WRITE/PUT -> COMPLETE when written (fflush'ed by the source); ERROR when
 //             protected (D3) or on any other failure (D2); no data frame follows
+//   FORMAT -> every sector to $00 ('!' single, '"' enhanced density), then
+//             COMPLETE, or ERROR when protected (D3) or on another density or
+//             failure (D2); both followed by a sector-sized bad sector list:
+//             $FF $FF (none) and $FF after it (menu-formatear-disco, M46-4)
 //
 // D0 of STATUS reports whether the previous command addressed to the drive was
 // NAKed [HIP]; it is cleared by any accepted command once reported.
@@ -59,7 +65,7 @@ public:
     static constexpr std::size_t kMaxFrameSize = 256 + 1;  // largest sector + checksum
 
     explicit SioCommandDispatcher(rb::app::DriveBay& bay, bool allowWrites = false) noexcept
-        : bay_(bay), status_(bay), read_(bay), write_(bay), allowWrites_(allowWrites)
+        : bay_(bay), status_(bay), read_(bay), write_(bay), format_(bay), allowWrites_(allowWrites)
     {
     }
 
@@ -99,13 +105,16 @@ private:
     Completion executeStatus(const Pending& pending, rb::core::Span<uint8_t> out);
     Completion executeRead(const Pending& pending, rb::core::Span<uint8_t> out);
     Completion executeWrite(const Pending& pending);
+    Completion executeFormat(const Pending& pending, rb::core::Span<uint8_t> out);
     static bool isWrite(uint8_t command) noexcept;
+    static bool isFormat(uint8_t command) noexcept;
     uint8_t& writeFlags(rb::domain::DriveNumber drive) noexcept { return lastWriteFlags_[drive.value() - 1]; }
 
     rb::app::DriveBay& bay_;
     rb::app::GetDriveStatus status_;
     rb::app::ReadSector read_;
     rb::app::WriteSector write_;
+    rb::app::FormatDisk format_;
     bool allowWrites_;
     std::optional<Pending> pending_;
     std::array<bool, rb::domain::DriveNumber::kMax> lastCommandRejected_{};

@@ -36,6 +36,27 @@ plan: 02-DOCS/wiki/sdd/plans/menu-formatear-disco.md
   - **SUSTITUIDA** — sanitizadores: el CI compila con `-DRB_SANITIZE=ON`; aquí no.
   - **HERRAMIENTA-AUSENTE** — firmware ESP-IDF: sin `idf.py` en este PC; lo compila el CI.
 
+## F002 — Formateo por SIO (hecha, 2026-11-20)
+
+- `sio_codes.hpp`: `kFormat` `$21` y `kFormatMedium` `$22`.
+- Despachador: sin `allowWrites`, NAK como hoy. Con él, acepta sin E/S (AUX no importa) y `execute` llama a
+  `FormatDisk` (`$21` = simple, `$22` = media). Responde COMPLETE o ERROR y siempre un búfer del tamaño del sector:
+  `$FF` en todo (lista vacía terminada en `$FFFF`, M46-4) más checksum. 128 bytes con la unidad vacía; 256 en
+  doble densidad (que da ERROR). STATUS: D3 si está protegida, D2 en otro fallo (densidad, E/S, unidad vacía).
+- `SioSession` no cambia: el formateo va por el camino de lectura (ACK, ejecución, código + trama).
+- Pruebas: 8 casos en `test_sio_dispatcher`, 2 en `test_sio_session`, 1 en `test_sio_session_allocations`
+  (formatear y rechazar sin reservas). Primero en rojo (3 suites fallaban), después en verde: 64 de 64.
+- Riesgo `rsc risk`: tier 1 (previsto 2). Un revisor (correctitud): un hallazgo menor, ya planeado para F004: el
+  host aún no registra el formateo en `sio_write` (`menu_sio_transport.cpp` solo sigue `W`/`P`). Sin otros
+  defectos: sesión, banderas de STATUS, largo del búfer y firmware (`allowWrites = false`, NAK) revisados.
+- Controles (verify por tarea, corrida nueva sobre 15850fd + cambios):
+  - pruebas: PASS, 64 de 64. `retrobridge_host.exe` compila.
+  - compilación: PASS, MinGW ucrt64, `-Werror`, 0 avisos.
+  - seguridad: PASS por lectura dirigida. El formateo solo escribe con `allowWrites` y por `DiskImage::format`.
+  - trazabilidad: PASS. `$21`/`$22` = M46-1 (AC1, AC2); otra densidad = AC3; protegida y vacía = AC4; búfer = M46-4.
+  - **SUSTITUIDA** — sanitizadores: el CI compila con `-DRB_SANITIZE=ON`; aquí no.
+  - **HERRAMIENTA-AUSENTE** — firmware ESP-IDF: sin `idf.py` en este PC; lo compila el CI.
+
 ## Pendiente
 
-F002 (SIO), F003 (crear ATR), F004 (menú), F005 (demo), F006 (docs).
+F003 (crear ATR), F004 (menú y registro, incluido `sio_write` del formateo), F005 (demo), F006 (docs).

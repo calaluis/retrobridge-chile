@@ -94,6 +94,20 @@ Acceptance SioCommandDispatcher::accept(Span<const uint8_t> commandBytes)
         return Acceptance::Accepted;
     }
 
+    case command::kFormat:
+    case command::kFormatMedium: {
+        if (!allowWrites_) {
+            return reject(drive);
+        }
+        // The answer is a sector-sized buffer: 128 bytes on an empty drive.
+        const Result<uint16_t> size = target->validateRead(SectorNumber::from(4).value());
+        const uint16_t length = size.ok() ? size.value() : kEmptyDriveReadLength;
+        pending_ = Pending{drive, frame.command(), std::nullopt, length};
+        lastCommandRejected_[drive.value() - 1] = false;
+        writeFlags(drive) = 0;
+        return Acceptance::Accepted;
+    }
+
     default:
         return reject(drive);
     }
@@ -108,6 +122,11 @@ Acceptance SioCommandDispatcher::reject(DriveNumber drive) noexcept
 bool SioCommandDispatcher::isWrite(uint8_t command) noexcept
 {
     return command == command::kWriteSector || command == command::kPutSector;
+}
+
+bool SioCommandDispatcher::isFormat(uint8_t command) noexcept
+{
+    return command == command::kFormat || command == command::kFormatMedium;
 }
 
 Span<uint8_t> SioCommandDispatcher::incomingFrame() noexcept
@@ -142,6 +161,9 @@ Completion SioCommandDispatcher::execute(Span<uint8_t> out)
     }
     if (isWrite(pending.command)) {
         return executeWrite(pending);
+    }
+    if (isFormat(pending.command)) {
+        return executeFormat(pending, out);
     }
     return executeRead(pending, out);
 }
@@ -179,6 +201,21 @@ Completion SioCommandDispatcher::executeWrite(const Pending& pending)
     writeFlags(pending.drive) = written.error() == ErrorCode::WriteProtected ? StatusFrameEncoder::kFlagProtected
                                                                              : StatusFrameEncoder::kFlagPut;
     return Completion{code::kError, 0};
+}
+
+Completion SioCommandDispatcher::executeFormat(const Pending& pending, Span<uint8_t> out)
+{
+    const rb::domain::Density density =
+        pending.command == command::kFormat ? rb::domain::Density::Single : rb::domain::Density::Enhanced;
+    const Result<void> formatted = format_.execute(pending.drive, density);
+    Span<uint8_t> list = out.first(pending.dataLength);
+    std::fill(list.begin(), list.end(), uint8_t{0xFF});  // no bad sectors: $FFFF ends the list
+    if (formatted.ok()) {
+        return Completion{code::kComplete, seal(out, pending.dataLength)};
+    }
+    writeFlags(pending.drive) = formatted.error() == ErrorCode::WriteProtected ? StatusFrameEncoder::kFlagProtected
+                                                                               : StatusFrameEncoder::kFlagPut;
+    return Completion{code::kError, seal(out, pending.dataLength)};
 }
 
 }  // namespace rb::sio

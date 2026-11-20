@@ -459,6 +459,32 @@ static void test_failed_data_ack_never_writes(void)
     TEST_ASSERT_EQUAL_UINT(0, h.source.writes());
 }
 
+// --- Formatting (menu-formatear-disco, F002) ---------------------------------------------
+
+static void test_format_acks_then_completes_with_the_bad_sector_list(void)
+{
+    WriteHarness h{true};
+    h.transport.push_frame(sio_frame(rb::test::kD1, 0x21, 0, 0));
+    TEST_ASSERT_TRUE(h.session.step() == StepOutcome::Completed);
+    TEST_ASSERT_EQUAL_size_t(0, h.transport.announced());  // no data frame from the Atari
+    assert_ack_then_completion(h.transport, code::kComplete, 129);
+    TEST_ASSERT_EQUAL_HEX8(0xFF, h.transport.sent(1).bytes[1]);
+    TEST_ASSERT_EQUAL_HEX8(0xFF, h.transport.sent(1).bytes[2]);
+    TEST_ASSERT_TRUE(h.transport.sent(1).startUs >= h.transport.sent(0).endUs + SioSession::kCompleteDelayUs);
+    for (std::size_t i = kAtrHeaderSize; i < h.source.bytes().size(); ++i) {
+        TEST_ASSERT_EQUAL_HEX8(0x00, h.source.bytes()[i]);
+    }
+}
+
+static void test_protected_format_errors_with_the_buffer(void)
+{
+    WriteHarness h{false};
+    h.transport.push_frame(sio_frame(rb::test::kD1, 0x21, 0, 0));
+    TEST_ASSERT_TRUE(h.session.step() == StepOutcome::Completed);
+    assert_ack_then_completion(h.transport, code::kError, 129);
+    TEST_ASSERT_EQUAL_UINT(0, h.source.writes());
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -484,5 +510,7 @@ int main(void)
     RUN_TEST(test_missing_data_frame_drops_the_write);
     RUN_TEST(test_failed_write_ack_never_writes);
     RUN_TEST(test_failed_data_ack_never_writes);
+    RUN_TEST(test_format_acks_then_completes_with_the_bad_sector_list);
+    RUN_TEST(test_protected_format_errors_with_the_buffer);
     return UNITY_END();
 }

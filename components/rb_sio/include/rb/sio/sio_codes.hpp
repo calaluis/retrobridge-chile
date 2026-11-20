@@ -14,6 +14,8 @@ constexpr uint8_t kError = 0x45;     // 'E'
 
 // Command bytes handled by the disk drive (Atari C016555 appendix K).
 namespace command {
+constexpr uint8_t kFormat = 0x21;        // '!', format (Altirra HW Ref. §10.2)
+constexpr uint8_t kFormatMedium = 0x22;  // '"', format in enhanced density (1050)
 constexpr uint8_t kPutSector = 0x50;    // 'P', write without verify
 constexpr uint8_t kReadSector = 0x52;   // 'R'
 constexpr uint8_t kStatus = 0x53;       // 'S'

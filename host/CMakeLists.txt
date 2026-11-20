@@ -24,6 +24,7 @@ add_executable(retrobridge_host
     src/file_identity.cpp
     src/udp_datagram_port.cpp
     src/jsonl_log.cpp
+    src/create_atr.cpp
     src/menu_catalog.cpp
     src/menu_image.cpp
     src/menu_controller.cpp

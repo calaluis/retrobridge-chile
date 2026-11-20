@@ -22,6 +22,14 @@ public:
     // alphabetically smaller name can push it out of the first kMaxEntries).
     bool offer(const char* fileName);
 
+    // Adds a file created while the host runs (menu-formatear-disco, F003) and
+    // returns its position. kNotInserted when the list is full, the name is
+    // already there or is not a catalog name; the list is then unchanged.
+    // Every position at or after the returned one moves up by one.
+    static constexpr std::size_t kNotInserted = kMaxEntries;
+    std::size_t insert(const char* fileName);
+    bool full() const noexcept { return count_ == kMaxEntries; }
+
     std::size_t count() const noexcept { return count_; }
     const char* name(std::size_t index) const noexcept { return names_[index].data(); }
 

@@ -204,6 +204,11 @@ set_tests_properties(test_memory_image_store PROPERTIES FIXTURES_REQUIRED menu_i
 # The local list: up to 999 .atr names (menu-navegacion N002).
 rb_add_host_test(test_menu_catalog menu/test_menu_catalog.cpp ${rb_root}/host/src/menu_catalog.cpp)
 target_include_directories(test_menu_catalog PRIVATE ${rb_root}/host/src)
+# Creating a blank ATR from the menu (menu-formatear-disco, F003).
+rb_add_host_test(test_create_atr menu/test_create_atr.cpp ${rb_root}/host/src/create_atr.cpp
+                 ${rb_root}/host/src/menu_catalog.cpp)
+target_include_directories(test_create_atr PRIVATE ${rb_root}/host/src)
+target_compile_definitions(test_create_atr PRIVATE RB_TEST_CREATE_DIR="${CMAKE_CURRENT_BINARY_DIR}/create-images")
 
 rb_add_host_test(test_tnfs_folder menu/test_tnfs_folder.cpp ${rb_root}/host/src/tnfs_folder.cpp
                  ${rb_root}/host/src/menu_catalog.cpp)

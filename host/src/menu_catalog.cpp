@@ -86,6 +86,21 @@ bool MenuCatalog::offer(const char* fileName)
     return true;
 }
 
+std::size_t MenuCatalog::insert(const char* fileName)
+{
+    if (full() || !isCatalogName(fileName)) {
+        return kNotInserted;
+    }
+    std::size_t at = 0;
+    while (at < count_ && compareNames(names_[at].data(), fileName) < 0) {
+        ++at;
+    }
+    if (at < count_ && compareNames(names_[at].data(), fileName) == 0) {
+        return kNotInserted;
+    }
+    return offer(fileName) ? at : kNotInserted;
+}
+
 bool readCatalog(const char* directory, MenuCatalog& catalog)
 {
     return forEachRegularFile(

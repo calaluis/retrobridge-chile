@@ -57,6 +57,29 @@ plan: 02-DOCS/wiki/sdd/plans/menu-formatear-disco.md
   - **SUSTITUIDA** — sanitizadores: el CI compila con `-DRB_SANITIZE=ON`; aquí no.
   - **HERRAMIENTA-AUSENTE** — firmware ESP-IDF: sin `idf.py` en este PC; lo compila el CI.
 
+## F003 — Crear ATR y lista (hecha, 2026-11-20)
+
+- `host/src/create_atr.{hpp,cpp}`: `isNewAtrName` (1 a 25 de A-Z, 0-9, `-` y `_`, M46-3) y `createAtr`. Escribe
+  `<NOMBRE>.ATR` con cabecera de 16 bytes y 720 x 128 (simple) o 1040 x 128 (media) sectores en `$00`, sin
+  formatear (M46-2). Abre con `"wbx"` (creación exclusiva): un fichero existente nunca se toca (`AlreadyExists`).
+  Si falla la escritura, borra lo que creó esta llamada (`IoError`).
+- `MenuCatalog::insert`: devuelve la posición en orden; `kNotInserted` si la lista está llena (999), si el nombre
+  ya está o si no es un nombre del catálogo. `full()` nuevo.
+- Pruebas: `test_create_atr`, 8 casos. Primero en rojo (no compilaba), después en verde: 65 de 65.
+- Riesgo `rsc risk`: tier 1. Un revisor (correctitud): un hallazgo, corregido. La regla de nombre aceptaba nombres
+  de dispositivo de Windows (`NUL`, `CON`, `AUX`, `PRN`, `COM0-9`, `LPT0-9`): `NUL.ATR` abre el dispositivo,
+  devuelve `Created` y no queda fichero. Ahora `isNewAtrName` los rechaza; prueba añadida (incluye `CONSOLA`,
+  `COM10` y `NULO`, que sí valen). Sin otros defectos: cabecera, duplicados por mayúsculas (`EEXIST` en un
+  sistema de ficheros insensible) y `std::remove` revisados.
+- Controles (verify por tarea, corrida nueva sobre 6c61485 + cambios):
+  - pruebas: PASS, 65 de 65. `retrobridge_host.exe` compila.
+  - compilación: PASS, MinGW ucrt64, `-Werror`, 0 avisos.
+  - seguridad: PASS por lectura dirigida. El nombre no puede salir de la carpeta ni abrir un dispositivo; nunca
+    sobrescribe.
+  - trazabilidad: PASS. Crear = M46-2 (AC5); nombre existente = AC6; nombre inválido = AC7; lista llena = AC8.
+  - **SUSTITUIDA** — sanitizadores: el CI compila con `-DRB_SANITIZE=ON`; aquí no.
+  - **HERRAMIENTA-AUSENTE** — firmware ESP-IDF: sin `idf.py` en este PC; lo compila el CI.
+
 ## Pendiente
 
-F003 (crear ATR), F004 (menú y registro, incluido `sio_write` del formateo), F005 (demo), F006 (docs).
+F004 (menú y registro, incluido `sio_write` del formateo), F005 (demo), F006 (docs).

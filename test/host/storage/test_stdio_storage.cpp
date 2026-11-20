@@ -9,6 +9,8 @@
 #include <optional>
 #include <string>
 
+#include <sys/stat.h>
+
 #include "contracts/image_byte_source_contract.hpp"
 #include "contracts/image_repository_contract.hpp"
 #include "fakes/fake_byte_source.hpp"
@@ -255,6 +257,118 @@ static void test_file_truncated_after_open_reports_io_error(void)
     repository.close(source);
 }
 
+// --- Writes (menu-escritura-disco, W002) --------------------------------------------
+
+namespace {
+
+int set_writable(const char* name, bool writable)
+{
+    std::array<char, 300> path{};
+    data_path(name, path);
+#ifdef _WIN32
+    return _chmod(path.data(), writable ? (_S_IREAD | _S_IWRITE) : _S_IREAD);
+#else
+    return chmod(path.data(), writable ? 0644 : 0444);
+#endif
+}
+
+void make_writable(const char* name, bool writable)
+{
+    TEST_ASSERT_EQUAL_INT(0, set_writable(name, writable));
+}
+
+uint8_t file_byte(const char* name, uint32_t offset)
+{
+    std::array<char, 300> path{};
+    data_path(name, path);
+    std::FILE* file = std::fopen(path.data(), "rb");
+    TEST_ASSERT_NOT_NULL(file);
+    TEST_ASSERT_EQUAL_INT(0, std::fseek(file, static_cast<long>(offset), SEEK_SET));
+    const int byte = std::fgetc(file);
+    std::fclose(file);
+    return static_cast<uint8_t>(byte);
+}
+
+}  // namespace
+
+static void test_repository_without_writes_never_opens_for_writing(void)
+{
+    write_image("w-off.atr", kSdHeader, kAtrHeaderSize + sd_data_size(720));
+    StdioImageRepository<2> repository{RB_TEST_DATA_DIR};
+    ImageByteSource* source = repository.open(location("w-off.atr")).value();
+    TEST_ASSERT_FALSE(source->writable());
+    const std::array<uint8_t, 4> data{1, 2, 3, 4};
+    TEST_ASSERT_TRUE(source->writeAt(kAtrHeaderSize, Span<const uint8_t>{data}).error() == ErrorCode::WriteProtected);
+    repository.close(source);
+    TEST_ASSERT_EQUAL_HEX8(sd_expected(kAtrHeaderSize), file_byte("w-off.atr", kAtrHeaderSize));
+}
+
+static void test_written_sector_is_in_the_file_after_closing(void)
+{
+    write_image("w-on.atr", kDdHeader, kAtrHeaderSize + dd_data_size(720));
+    StdioImageRepository<2> repository{RB_TEST_DATA_DIR, true};
+    std::array<uint8_t, 256> data{};
+    for (std::size_t i = 0; i < data.size(); ++i) {
+        data[i] = static_cast<uint8_t>(0xA0 + i);
+    }
+    ImageByteSource* source = nullptr;
+    {
+        DiskImage image = open_image(repository, "w-on.atr", source);
+        TEST_ASSERT_FALSE(image.readOnly());
+        TEST_ASSERT_EQUAL_UINT16(256, image.writeSector(sector(4), Span<const uint8_t>{data}).value());
+        std::array<uint8_t, 256> back{};
+        TEST_ASSERT_EQUAL_UINT16(256, image.readSector(sector(4), Span<uint8_t>{back}).value());
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(data.data(), back.data(), 256);
+    }
+    repository.close(source);
+    for (uint32_t i = 0; i < 256; ++i) {
+        TEST_ASSERT_EQUAL_HEX8(data[i], file_byte("w-on.atr", kAtrHeaderSize + 3 * 128 + i));
+    }
+    TEST_ASSERT_EQUAL_HEX8(FakeByteSource::data_byte(kAtrHeaderSize + 3 * 128 + 256),
+                           file_byte("w-on.atr", kAtrHeaderSize + 3 * 128 + 256));
+}
+
+static void test_read_only_file_opens_protected(void)
+{
+    (void)set_writable("w-ro.atr", true);  // a previous run may have left it read-only; may not exist yet
+    write_image("w-ro.atr", kSdHeader, kAtrHeaderSize + sd_data_size(720));
+    make_writable("w-ro.atr", false);
+    StdioImageRepository<2> repository{RB_TEST_DATA_DIR, true};
+    ImageByteSource* source = nullptr;
+    {
+        DiskImage image = open_image(repository, "w-ro.atr", source);
+        TEST_ASSERT_TRUE(image.readOnly());
+        const std::array<uint8_t, 256> data{};
+        TEST_ASSERT_TRUE(image.writeSector(sector(1), Span<const uint8_t>{data}).error() == ErrorCode::WriteProtected);
+    }
+    repository.close(source);
+    make_writable("w-ro.atr", true);
+    TEST_ASSERT_EQUAL_HEX8(sd_expected(kAtrHeaderSize), file_byte("w-ro.atr", kAtrHeaderSize));
+}
+
+static void test_same_file_has_one_writer_at_a_time(void)
+{
+    write_image("w-two.atr", kSdHeader, kAtrHeaderSize + sd_data_size(720));
+    StdioImageRepository<3> repository{RB_TEST_DATA_DIR, true};
+    ImageByteSource* first = repository.open(location("w-two.atr")).value();
+    ImageByteSource* other = repository.open(location("sd.atr")).value();
+    TEST_ASSERT_TRUE(first->writable());
+    TEST_ASSERT_TRUE(other->writable());
+#ifdef _WIN32
+    ImageByteSource* second = repository.open(location("W-TWO.ATR")).value();  // same file, other case
+    TEST_ASSERT_FALSE(second->writable());
+    repository.close(second);
+#endif
+    ImageByteSource* third = repository.open(location("w-two.atr")).value();
+    TEST_ASSERT_FALSE(third->writable());  // the first one still writes
+    repository.close(first);
+    repository.close(third);
+    ImageByteSource* again = repository.open(location("w-two.atr")).value();
+    TEST_ASSERT_TRUE(again->writable());
+    repository.close(again);
+    repository.close(other);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -268,5 +382,9 @@ int main(void)
     RUN_TEST(test_reads_128_and_256_byte_sectors_and_the_last_one);
     RUN_TEST(test_invalid_atr_is_reported_by_the_domain);
     RUN_TEST(test_file_truncated_after_open_reports_io_error);
+    RUN_TEST(test_repository_without_writes_never_opens_for_writing);
+    RUN_TEST(test_written_sector_is_in_the_file_after_closing);
+    RUN_TEST(test_read_only_file_opens_protected);
+    RUN_TEST(test_same_file_has_one_writer_at_a_time);
     return UNITY_END();
 }

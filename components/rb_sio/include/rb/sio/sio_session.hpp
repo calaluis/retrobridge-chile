@@ -25,6 +25,10 @@ enum class StepOutcome : uint8_t {
 //
 // Transaction: accept() (no I/O) -> ACK -> execute() -> wait until the end of
 // the ACK + kCompleteDelayUs (t5 >= 250 us) -> one send of [code][data][checksum].
+// Write (W/P, menu-escritura-disco): accept() -> receiveAfterAck() (ACK + data
+// frame) -> ACK or NAK of the data (bad checksum: NAK, nothing written, ends
+// Nacked) -> execute() -> wait from the end of that ACK + kCompleteDelayUs ->
+// COMPLETE or ERROR alone.
 // The data line is released at the end of every transaction, including failures.
 //
 // Recovery: transport errors are recoverable and never abort. If the ACK cannot
@@ -52,6 +56,7 @@ private:
     StepOutcome endTransaction(StepOutcome outcome);
     StepOutcome sendNak();
     StepOutcome runAccepted();
+    StepOutcome runWithData(rb::core::Span<uint8_t> incoming);
 
     rb::app::SioTransport& transport_;
     rb::app::Clock& clock_;

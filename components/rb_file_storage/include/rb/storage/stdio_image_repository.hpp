@@ -23,12 +23,16 @@ namespace rb::storage {
 // The base path is configuration from outside (a command-line folder, a build
 // directory): an empty one or one longer than kMaxBasePath is not copied and
 // every open() then fails with InvalidArgument; baseValid() reports it.
+// Writes (menu-escritura-disco): off by default, so every source is read-only.
+// With `writes`, a file opens for writing when it allows it and no other open
+// slot already writes the same path (compared without case, as on Windows);
+// otherwise it opens read-only. One writer per file (M45, spec assumption).
 template <std::size_t Slots>
 class StdioImageRepository final : public rb::app::ImageRepository {
 public:
     static constexpr std::size_t kMaxBasePath = kMaxImageBase;
 
-    explicit StdioImageRepository(const char* basePath)
+    explicit StdioImageRepository(const char* basePath, bool writes = false) : writes_(writes)
     {
         RB_ASSERT(basePath != nullptr);  // programming error
         const std::size_t length = std::strlen(basePath);
@@ -62,14 +66,19 @@ protected:
         if (!built.ok()) {
             return rb::core::Failure{built.error()};
         }
-        for (StdioByteSource& slot : slots_) {
+        const StdioByteSource::Access access = writes_ && !writerOpen(path.data())
+                                                   ? StdioByteSource::Access::ReadWriteIfAllowed
+                                                   : StdioByteSource::Access::ReadOnly;
+        for (std::size_t i = 0; i < Slots; ++i) {
+            StdioByteSource& slot = slots_[i];
             if (slot.isOpen()) {
                 continue;
             }
-            const rb::core::Result<void> opened = slot.open(path.data());
+            const rb::core::Result<void> opened = slot.open(path.data(), access);
             if (!opened.ok()) {
                 return rb::core::Failure{opened.error()};
             }
+            std::memcpy(paths_[i].data(), path.data(), path.size());
             return static_cast<rb::domain::ImageByteSource*>(&slot);
         }
         return rb::core::Failure{rb::core::ErrorCode::NoFreeSlot};
@@ -87,9 +96,37 @@ protected:
     }
 
 private:
+    bool writerOpen(const char* path) const noexcept
+    {
+        for (std::size_t i = 0; i < Slots; ++i) {
+            if (slots_[i].isOpen() && slots_[i].writable() && sameText(paths_[i].data(), path)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static bool sameText(const char* a, const char* b) noexcept
+    {
+        for (;; ++a, ++b) {
+            const unsigned char x = static_cast<unsigned char>(*a);
+            const unsigned char y = static_cast<unsigned char>(*b);
+            const unsigned char lx = (x >= 'A' && x <= 'Z') ? static_cast<unsigned char>(x + 32) : x;
+            const unsigned char ly = (y >= 'A' && y <= 'Z') ? static_cast<unsigned char>(y + 32) : y;
+            if (lx != ly) {
+                return false;
+            }
+            if (x == 0) {
+                return true;
+            }
+        }
+    }
+
     std::array<StdioByteSource, Slots> slots_{};
+    std::array<std::array<char, kMaxImagePath + 1>, Slots> paths_{};
     std::array<char, kMaxBasePath + 1> base_{};
     bool baseValid_ = false;
+    bool writes_ = false;
 };
 
 }  // namespace rb::storage

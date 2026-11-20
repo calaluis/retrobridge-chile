@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "fakes/fake_byte_source.hpp"
+#include "fakes/memory_byte_source.hpp"
 #include "rb/app/drive_bay.hpp"
 #include "rb/sio/sio_checksum.hpp"
 #include "rb/sio/sio_codes.hpp"
@@ -95,6 +96,49 @@ void assert_sector_frame(const Buffer& out, uint32_t file_offset, uint16_t lengt
         TEST_ASSERT_EQUAL_HEX8(FakeByteSource::data_byte(file_offset + i), out[i]);
     }
     TEST_ASSERT_EQUAL_HEX8(sio_checksum(Span<const uint8_t>{out.data(), length}), out[length]);
+}
+
+constexpr uint8_t kWrite = 0x57;
+constexpr uint8_t kPut = 0x50;
+
+std::array<uint8_t, 5> write_frame(uint8_t command, uint16_t sector)
+{
+    return frame(kD1, command, static_cast<uint8_t>(sector & 0xFF), static_cast<uint8_t>(sector >> 8));
+}
+
+rb::test::MemoryByteSource sd_memory(bool writable)
+{
+    return rb::test::MemoryByteSource{make_atr_header(sd_data_size(720), 128), kAtrHeaderSize + sd_data_size(720),
+                                      writable};
+}
+
+void mount_memory(DriveBay& bay, rb::test::MemoryByteSource& source)
+{
+    auto result = bay.mount(DriveNumber::from(1).value(), DiskImage::open(source).value(),
+                            ImageLocation::from("test.atr").value());
+    TEST_ASSERT_TRUE(result.ok());
+}
+
+// Fills the incoming frame with `length` bytes of value seed + i and its checksum
+// (spoiled when `good` is false).
+void fill_data(SioCommandDispatcher& dispatcher, uint8_t seed, bool good = true)
+{
+    const Span<uint8_t> in = dispatcher.incomingFrame();
+    TEST_ASSERT_TRUE(in.size() > 1);
+    const std::size_t length = in.size() - 1;
+    for (std::size_t i = 0; i < length; ++i) {
+        in[i] = static_cast<uint8_t>(seed + i);
+    }
+    in[length] = static_cast<uint8_t>(sio_checksum(Span<const uint8_t>{in.data(), length}) ^ (good ? 0 : 1));
+}
+
+Completion run_write(SioCommandDispatcher& dispatcher, uint8_t command, uint16_t sector, uint8_t seed)
+{
+    TEST_ASSERT_TRUE(accept(dispatcher, write_frame(command, sector)) == Acceptance::Accepted);
+    fill_data(dispatcher, seed);
+    TEST_ASSERT_TRUE(dispatcher.acceptData());
+    Buffer out{};
+    return dispatcher.execute(Span<uint8_t>{out});
 }
 
 }  // namespace
@@ -347,6 +391,141 @@ static int execute_without_accept(void)
     return 0;
 }
 
+// --- Writes (menu-escritura-disco, W004) ---------------------------------------------
+
+static void test_writes_are_nacked_without_allow_writes(void)
+{
+    DriveBay bay{1};
+    rb::test::MemoryByteSource source = sd_memory(true);
+    mount_memory(bay, source);
+    SioCommandDispatcher dispatcher{bay};
+    TEST_ASSERT_TRUE(accept(dispatcher, write_frame(kWrite, 4)) == Acceptance::Nak);
+    TEST_ASSERT_TRUE(accept(dispatcher, write_frame(kPut, 4)) == Acceptance::Nak);
+    TEST_ASSERT_EQUAL_size_t(0, dispatcher.incomingFrame().size());
+    assert_status(dispatcher, {0x01, 0xFF, 0xE0, 0x00, 0xE1});  // as the read-only v1: D0, byte 1 $FF
+    TEST_ASSERT_EQUAL_UINT(0, source.writes());
+}
+
+static void test_write_and_put_store_the_sector(void)
+{
+    DriveBay bay{1};
+    rb::test::MemoryByteSource source = sd_memory(true);
+    mount_memory(bay, source);
+    SioCommandDispatcher dispatcher{bay, true};
+    const Completion w = run_write(dispatcher, kWrite, 4, 0x10);
+    TEST_ASSERT_EQUAL_HEX8(code::kComplete, w.code);
+    TEST_ASSERT_EQUAL_UINT16(0, w.frameLength);
+    const Completion p = run_write(dispatcher, kPut, 5, 0x20);
+    TEST_ASSERT_EQUAL_HEX8(code::kComplete, p.code);
+    for (uint32_t i = 0; i < 128; ++i) {
+        TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(0x10 + i), source.bytes()[kAtrHeaderSize + 3u * 128u + i]);
+        TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(0x20 + i), source.bytes()[kAtrHeaderSize + 4u * 128u + i]);
+    }
+    TEST_ASSERT_FALSE(dispatcher.hasPendingCommand());
+    assert_status(dispatcher, {0x00, 0xFF, 0xE0, 0x00, 0xE0});
+}
+
+static void test_incoming_frame_follows_the_sector_size(void)
+{
+    DriveBay bay{1};
+    FakeByteSource dd = dd_source();
+    mount(bay, dd);
+    SioCommandDispatcher dispatcher{bay, true};
+    TEST_ASSERT_TRUE(accept(dispatcher, write_frame(kWrite, 1)) == Acceptance::Accepted);
+    TEST_ASSERT_EQUAL_size_t(129, dispatcher.incomingFrame().size());  // boot sector
+    dispatcher.abandon();
+    TEST_ASSERT_TRUE(accept(dispatcher, write_frame(kPut, 4)) == Acceptance::Accepted);
+    TEST_ASSERT_EQUAL_size_t(257, dispatcher.incomingFrame().size());
+    dispatcher.abandon();
+    TEST_ASSERT_TRUE(accept(dispatcher, read_frame(4)) == Acceptance::Accepted);
+    TEST_ASSERT_EQUAL_size_t(0, dispatcher.incomingFrame().size());  // a read carries no data
+    dispatcher.abandon();
+}
+
+static void test_write_to_an_invalid_sector_is_nacked(void)
+{
+    DriveBay bay{1};
+    rb::test::MemoryByteSource source = sd_memory(true);
+    mount_memory(bay, source);
+    SioCommandDispatcher dispatcher{bay, true};
+    TEST_ASSERT_TRUE(accept(dispatcher, write_frame(kWrite, 0)) == Acceptance::Nak);
+    TEST_ASSERT_TRUE(accept(dispatcher, write_frame(kWrite, 721)) == Acceptance::Nak);
+    TEST_ASSERT_FALSE(dispatcher.hasPendingCommand());
+}
+
+static void test_bad_data_checksum_writes_nothing_and_sets_d1(void)
+{
+    DriveBay bay{1};
+    rb::test::MemoryByteSource source = sd_memory(true);
+    mount_memory(bay, source);
+    SioCommandDispatcher dispatcher{bay, true};
+    TEST_ASSERT_TRUE(accept(dispatcher, write_frame(kWrite, 4)) == Acceptance::Accepted);
+    fill_data(dispatcher, 0x30, false);
+    TEST_ASSERT_FALSE(dispatcher.acceptData());
+    TEST_ASSERT_FALSE(dispatcher.hasPendingCommand());
+    TEST_ASSERT_EQUAL_UINT(0, source.writes());
+    assert_status(dispatcher, {0x02, 0xFF, 0xE0, 0x00, 0xE2});
+    assert_status(dispatcher, {0x02, 0xFF, 0xE0, 0x00, 0xE2});  // until the next read or write
+    Buffer out{};
+    run(dispatcher, read_frame(1), out);
+    assert_status(dispatcher, {0x00, 0xFF, 0xE0, 0x00, 0xE0});
+}
+
+static void test_protected_disk_answers_error_and_sets_d3(void)
+{
+    DriveBay bay{1};
+    rb::test::MemoryByteSource source = sd_memory(false);
+    mount_memory(bay, source);
+    SioCommandDispatcher dispatcher{bay, true};
+    assert_status(dispatcher, {0x00, 0xBF, 0xE0, 0x00, 0xA0});  // protection in byte 1, no D3 yet
+    const std::vector<uint8_t> before = source.bytes();
+    const Completion w = run_write(dispatcher, kWrite, 4, 0x40);
+    TEST_ASSERT_EQUAL_HEX8(code::kError, w.code);
+    TEST_ASSERT_EQUAL_UINT16(0, w.frameLength);
+    TEST_ASSERT_TRUE(before == source.bytes());
+    assert_status(dispatcher, {0x08, 0xBF, 0xE0, 0x00, 0xA8});  // D3 after the refusal
+    assert_status(dispatcher, {0x08, 0xBF, 0xE0, 0x00, 0xA8});  // still the last operation
+    Buffer out{};
+    run(dispatcher, read_frame(1), out);
+    assert_status(dispatcher, {0x00, 0xBF, 0xE0, 0x00, 0xA0});  // protection stays in byte 1
+}
+
+static void test_io_failure_answers_error_and_sets_d2(void)
+{
+    DriveBay bay{1};
+    rb::test::MemoryByteSource source = sd_memory(true);
+    source.fail_writes(true);
+    mount_memory(bay, source);
+    SioCommandDispatcher dispatcher{bay, true};
+    const Completion p = run_write(dispatcher, kPut, 4, 0x50);
+    TEST_ASSERT_EQUAL_HEX8(code::kError, p.code);
+    assert_status(dispatcher, {0x04, 0xEF, 0xE0, 0x00, 0xD4});
+}
+
+static void test_write_to_an_empty_drive_takes_the_frame_then_errors(void)
+{
+    DriveBay bay{1};
+    SioCommandDispatcher dispatcher{bay, true};
+    TEST_ASSERT_TRUE(accept(dispatcher, write_frame(kWrite, 4)) == Acceptance::Accepted);
+    TEST_ASSERT_EQUAL_size_t(129, dispatcher.incomingFrame().size());
+    fill_data(dispatcher, 0);
+    TEST_ASSERT_TRUE(dispatcher.acceptData());
+    Buffer out{};
+    TEST_ASSERT_EQUAL_HEX8(code::kError, dispatcher.execute(Span<uint8_t>{out}).code);
+}
+
+static void test_repeated_write_gives_the_same_result(void)
+{
+    DriveBay bay{1};
+    rb::test::MemoryByteSource source = sd_memory(true);
+    mount_memory(bay, source);
+    SioCommandDispatcher dispatcher{bay, true};
+    TEST_ASSERT_EQUAL_HEX8(code::kComplete, run_write(dispatcher, kWrite, 9, 0x61).code);
+    const std::vector<uint8_t> once = source.bytes();
+    TEST_ASSERT_EQUAL_HEX8(code::kComplete, run_write(dispatcher, kWrite, 9, 0x61).code);
+    TEST_ASSERT_TRUE(once == source.bytes());
+}
+
 int main(int argc, char** argv)
 {
     if (argc > 1 && std::strcmp(argv[1], "--execute-without-accept") == 0) {
@@ -369,5 +548,14 @@ int main(int argc, char** argv)
     RUN_TEST(test_status_for_each_geometry);
     RUN_TEST(test_status_ignores_aux_bytes);
     RUN_TEST(test_abandon_discards_the_pending_command_without_io);
+    RUN_TEST(test_writes_are_nacked_without_allow_writes);
+    RUN_TEST(test_write_and_put_store_the_sector);
+    RUN_TEST(test_incoming_frame_follows_the_sector_size);
+    RUN_TEST(test_write_to_an_invalid_sector_is_nacked);
+    RUN_TEST(test_bad_data_checksum_writes_nothing_and_sets_d1);
+    RUN_TEST(test_protected_disk_answers_error_and_sets_d3);
+    RUN_TEST(test_io_failure_answers_error_and_sets_d2);
+    RUN_TEST(test_write_to_an_empty_drive_takes_the_frame_then_errors);
+    RUN_TEST(test_repeated_write_gives_the_same_result);
     return UNITY_END();
 }

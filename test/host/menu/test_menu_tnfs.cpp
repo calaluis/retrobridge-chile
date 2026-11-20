@@ -176,7 +176,7 @@ void test_an_atr_chosen_for_d1_is_assigned_with_its_display_name_and_boots()
     assert_line(pick, kMainMessage, " UNIDAD PARA: ATARI LOGO.ATR");  // menu-navegacion M42-4
     const MenuReply assigned = rig.settle(K1);
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutMain, assigned.layout());
-    assert_line(assigned, driveLine(1), "D1 ATARI LOGO.ATR");
+    assert_line(assigned, driveLine(1), "D1 ATARI LOGO.ATR                SL");
     assert_line(assigned, kMainMessage, " D1: ATARI LOGO.ATR (A ARRANCA)");
     TEST_ASSERT_TRUE(rig.controller->menuOnD1());
     TEST_ASSERT_EQUAL_STRING("ATARI LOGO.ATR", rig.controller->driveName(1));
@@ -198,7 +198,7 @@ void test_an_atr_chosen_for_d1_is_assigned_with_its_display_name_and_boots()
     rig.controller->service();
     rig.step();
     TEST_ASSERT_TRUE(rig.controller->menuOnD1());
-    assert_line(rig.press(kRedraw), driveLine(1), "D1 ATARI LOGO.ATR");
+    assert_line(rig.press(kRedraw), driveLine(1), "D1 ATARI LOGO.ATR                SL");
     TEST_ASSERT_EQUAL_size_t(1, slotsInUse(rig.store()));
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionBoot, rig.press(KA).action());
 }
@@ -240,7 +240,7 @@ void test_a_load_longer_than_seven_seconds_shows_its_progress_and_mounts_on_d2()
     }
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, done.action());
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutMain, done.layout());
-    assert_line(done, driveLine(2), "D2 ATARI LOGO.ATR");
+    assert_line(done, driveLine(2), "D2 ATARI LOGO.ATR                SL");
     assert_line(done, kMainMessage, " D2: ATARI LOGO.ATR");
     TEST_ASSERT_EQUAL_STRING_LEN("*tnfs*", rig.mounted(2), 6);
     TEST_ASSERT_TRUE(fakeClock.nowMicros() > 7000000u);
@@ -524,7 +524,7 @@ void test_a_tnfs_image_on_d1_boots_again_after_a_cold_reset()
         TEST_ASSERT_TRUE(rig.controller->menuOnD1());
         TEST_ASSERT_EQUAL_size_t(1, slotsInUse(rig.store()));
     }
-    assert_line(rig.press(kRedraw), driveLine(1), "D1 ATARI LOGO.ATR");
+    assert_line(rig.press(kRedraw), driveLine(1), "D1 ATARI LOGO.ATR                SL");
 }
 
 void test_a_cold_reset_with_a_tnfs_mount_in_flight_keeps_the_slots_right()
@@ -541,7 +541,7 @@ void test_a_cold_reset_with_a_tnfs_mount_in_flight_keeps_the_slots_right()
     for (int i = 0; i < 200 && second.action() == rb::host::kMenuActionWait; ++i) {
         second = rig.controller->key(kPoll);
     }
-    assert_line(second, driveLine(2), "D2 ATARI LOGO.ATR");
+    assert_line(second, driveLine(2), "D2 ATARI LOGO.ATR                SL");
     TEST_ASSERT_FALSE(rig.mailbox.idle());
     rig.controller->onColdReset();
     rig.controller->service();  // the mailbox is busy: the menu waits

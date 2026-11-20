@@ -17,6 +17,7 @@ struct MountReport {
     rb::domain::DiskGeometry geometry;
     bool headerSizeMismatch;
     uint32_t ignoredTrailingBytes;
+    bool writeProtected = true;  // the disk refuses writes (menu-escritura-disco)
 };
 
 // Storage context (ADR-014). Opens the image and validates its header (may block,

@@ -4,6 +4,9 @@
 // receive errors) are queued by the test; every send() is recorded with its
 // start and end time and advances the FakeClock by the bytes' time on the wire,
 // so send() returns "after the last stop bit" as the port contract requires.
+// receiveAfterAck() records its ACK like a send (it counts for fail_send) and
+// hands over the next queued data frame; none queued, or a frame of another
+// length, is a TransportError, as NetSIO reports it.
 // Fixed-capacity storage only: it allocates nothing while a session runs.
 
 #include <algorithm>
@@ -24,6 +27,7 @@ public:
     static constexpr std::size_t kMaxSendBytes = 1 + 256 + 1;  // code + largest sector + checksum
     static constexpr uint64_t kDefaultFrameTimeUs = 3000;      // t0 + 5 bytes + t1, roughly
     static constexpr std::size_t kNoFailure = SIZE_MAX;
+    static constexpr std::size_t kMaxDataFrames = 4;
 
     struct Sent {
         std::array<uint8_t, kMaxSendBytes> bytes;
@@ -42,6 +46,15 @@ public:
     void push_timeout() { push(Event{Kind::Timeout, {}, 0, 0}); }
     void push_receive_error() { push(Event{Kind::ReceiveError, {}, 0, 0}); }
 
+    // A data frame (data + checksum) the computer sends after the ACK of a write.
+    void push_data(const uint8_t* bytes, std::size_t length)
+    {
+        RB_ASSERT(data_size_ < kMaxDataFrames && length <= kMaxSendBytes);
+        DataFrame& frame = data_[data_size_++];
+        std::copy(bytes, bytes + length, frame.bytes.begin());
+        frame.length = length;
+    }
+
     // The `index`-th call to send() (0-based) fails without transmitting.
     void fail_send(std::size_t index) { fail_send_index_ = index; }
 
@@ -54,6 +67,7 @@ public:
     }
     unsigned releases() const { return releases_; }
     unsigned waits() const { return waits_; }
+    std::size_t announced() const { return announced_; }  // frame size of the last receiveAfterAck
     uint64_t last_command_released_at() const { return last_released_at_; }
 
     // --- SioTransport --------------------------------------------------------------
@@ -101,8 +115,33 @@ public:
 
     void releaseDataLine() override { ++releases_; }
 
+    rb::core::Result<void> receiveAfterAck(rb::core::Span<uint8_t> frame) override
+    {
+        const uint8_t ack = 0x41;
+        const rb::core::Result<void> acked = send(rb::core::Span<const uint8_t>{&ack, 1});
+        if (!acked.ok()) {
+            return acked;
+        }
+        announced_ = frame.size();
+        if (data_next_ == data_size_) {
+            clock_.advance(1000000);
+            return rb::core::Failure{rb::core::ErrorCode::TransportError};
+        }
+        const DataFrame& data = data_[data_next_++];
+        if (data.length != frame.size()) {
+            return rb::core::Failure{rb::core::ErrorCode::TransportError};
+        }
+        std::copy(data.bytes.begin(), data.bytes.begin() + data.length, frame.begin());
+        clock_.advance(sio_byte_time_us(data.length));
+        return {};
+    }
+
 private:
     enum class Kind { Frame, Timeout, ReceiveError };
+    struct DataFrame {
+        std::array<uint8_t, kMaxSendBytes> bytes;
+        std::size_t length;
+    };
     struct Event {
         Kind kind;
         std::array<uint8_t, 5> bytes;
@@ -127,6 +166,10 @@ private:
     unsigned releases_ = 0;
     unsigned waits_ = 0;
     uint64_t last_released_at_ = 0;
+    std::array<DataFrame, kMaxDataFrames> data_{};
+    std::size_t data_size_ = 0;
+    std::size_t data_next_ = 0;
+    std::size_t announced_ = 0;
 };
 
 }  // namespace rb::test

@@ -42,6 +42,17 @@ Result<uint16_t> VirtualDrive::readSector(SectorNumber sector, Span<uint8_t> out
     return result;
 }
 
+Result<uint16_t> VirtualDrive::writeSector(SectorNumber sector, Span<const uint8_t> data)
+{
+    if (!disk_) {
+        lastOperationFailed_ = true;
+        return Failure{ErrorCode::NoDiskMounted};
+    }
+    Result<uint16_t> result = disk_->writeSector(sector, data);
+    lastOperationFailed_ = !result.ok();
+    return result;
+}
+
 Result<uint16_t> VirtualDrive::validateRead(SectorNumber sector) const noexcept
 {
     if (!disk_) {
@@ -56,7 +67,7 @@ Result<uint16_t> VirtualDrive::validateRead(SectorNumber sector) const noexcept
 
 DriveStatus VirtualDrive::status() const noexcept
 {
-    // v1 is read-only: every drive reports write protection.
+    // An empty drive reports protection, as before; a disk reports its own.
     if (!disk_) {
         return DriveStatus{false, true, lastOperationFailed_, Density::Unknown};
     }

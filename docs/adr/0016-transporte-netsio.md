@@ -1,6 +1,8 @@
 # ADR-016 — Transporte NetSIO para servir a un Atari emulado
 
 - Estado: Propuesta (2026-11-04), Issue #32, entrega E1a. Decisiones D1–D6 del diseño aprobadas el 2026-11-04.
+  Enmendada el 2026-11-19 por [ADR-019](0019-escritura-de-sectores.md): la escritura de sectores reemplaza el
+  `write_size` 0 y la `09` vacía.
 - Contexto: objetivo de producto acordado en la Issue #32. RetroBridge debe poder usarse desde un Atari emulado
   (Altirra), no solo desde el hardware.
 
@@ -36,11 +38,12 @@ tras `COMMAND OFF + SYNC` (`18 <sync>`) hasta recibir una *Sync response* (`81 <
    | Puerto | NetSIO |
    |---|---|
    | `waitCommandFrame()` | `11` abre la trama; `02`/`01` la llenan (se guardan 5 bytes y se cuentan todos); `18 <sync>` la cierra y deja la sincronización pendiente. Las marcas de tiempo son del reloj del PC, **no tiempo SIO** |
-   | `send()` con sincronización pendiente | Debe ser 1 byte (ACK o NAK); se envía como `81 <sync> 01 <byte> 00 00`. `write_size` vale 0: unidad de solo lectura |
+   | `send()` con sincronización pendiente | Debe ser 1 byte (ACK o NAK); se envía como `81 <sync> 01 <byte> 00 00`. `write_size` vale 0: unidad de solo lectura (con escritura, ver [ADR-019](0019-escritura-de-sectores.md)) |
    | `send()` sin sincronización pendiente | Un `02 <bytes>` de 1 a 512 bytes; consume 1 crédito. Sin crédito: `C6 00`, espera de `C7` y, si vence, `TransportError` |
    | `releaseDataLine()` | Una sincronización aún pendiente (trama ignorada o ACK fallido) se responde vacía: `81 <sync> 00 00 00 00` |
 
-   Una sincronización sin trama y una `09` (dato + sincronización de escritura) se responden vacías al instante.
+   Una sincronización sin trama y una `09` (dato + sincronización de escritura) se responden vacías al instante. Con
+   escritura activa, la `09` cierra los datos de una `W`/`P` ([ADR-019](0019-escritura-de-sectores.md)).
    `FE`/`FF` descartan la trama a medias.
 3. **Perfil explícito del par (D2):**
    - `Fep003Strict` (por defecto): longitudes exactas de FEP-003.

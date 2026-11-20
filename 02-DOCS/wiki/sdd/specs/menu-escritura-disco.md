@@ -113,7 +113,7 @@ usable. IDs de requisito: M45-n.
 - Given lo mismo con `W`, When escribe, Then COMPLETE y el mismo resultado.
 - Given un sector escrito en D2, When se cierra el host, se relanza y se monta la ATR otra vez, Then el sector
   conserva lo escrito.
-- Given una ATR con atributo de solo lectura en D2, When el Atari pide STATUS, Then el bit de protección vale 1;
+- Given una ATR con atributo de solo lectura en D2, When el Atari pide STATUS, Then STATUS marca la protección;
   When escribe, Then ERROR y el SHA-256 del archivo no cambia.
 - Given una imagen TNFS en D3, When el Atari escribe, Then ERROR y STATUS marca protección.
 - Given el menú en D1, When el Atari escribe en D1, Then ERROR y el menú no cambia.
@@ -160,3 +160,5 @@ usable. IDs de requisito: M45-n.
 - 2026-11-19 — borrador de `specify`. Base origin/main 39c8ff5.
 - 2026-11-19 — `clarify`: cuatro preguntas al responsable, respuestas incorporadas.
 - 2026-11-19 — aprobada por el responsable («Apruebo»), con las cuatro suposiciones tomadas a la vista.
+- 2026-11-19 — precisión del plan, aceptada por el responsable: «el bit de protección vale 1» pasa a «STATUS marca
+  la protección» (byte 1 = `$BF`, H2b intacta). La marca en pantalla es ` SL`.

@@ -30,7 +30,90 @@ Result<CommandBytes> MenuSioTransport::waitCommandFrame(uint32_t timeoutUs)
         serveMenu(command);
         return Failure{ErrorCode::Timeout};
     }
+    trackWrite(command);
     return received;
+}
+
+void MenuSioTransport::trackWrite(const CommandBytes& command) noexcept
+{
+    writeStage_ = WriteStage::None;
+    if (writes_ == nullptr || command.count != command.bytes.size()) {
+        return;
+    }
+    const uint8_t device = command.bytes[0];
+    const uint8_t code = command.bytes[1];
+    if (device < rb::sio::device::kFirstDisk || device > rb::sio::device::kLastDisk ||
+        (code != rb::sio::command::kWriteSector && code != rb::sio::command::kPutSector) ||
+        rb::sio::sio_checksum(Span<const uint8_t>{command.bytes.data(), 4}) != command.bytes[4]) {
+        return;
+    }
+    write_ = SioWriteRecord{};
+    write_.drive = static_cast<uint8_t>(device - 0x30);
+    write_.command = code;
+    write_.sector = static_cast<uint16_t>(command.bytes[2] | (command.bytes[3] << 8));
+    writeStage_ = WriteStage::Command;
+}
+
+void MenuSioTransport::reportWrite(char result) noexcept
+{
+    write_.result = result;
+    writeStage_ = WriteStage::None;
+    writes_->onSioWrite(write_);
+}
+
+Result<void> MenuSioTransport::receiveAfterAck(Span<uint8_t> frame)
+{
+    const Result<void> received = inner_.receiveAfterAck(frame);
+    if (writeStage_ == WriteStage::Command) {
+        if (received.ok() && !frame.empty()) {
+            write_.haveData = true;
+            write_.crc32 = crc32(frame.data(), frame.size() - 1);  // the sector, without its checksum
+            writeStage_ = WriteStage::Data;
+        } else {
+            writeStage_ = WriteStage::None;  // no data frame: nothing was written, nothing to report
+        }
+    }
+    return received;
+}
+
+Result<void> MenuSioTransport::send(Span<const uint8_t> bytes)
+{
+    const Result<void> sent = inner_.send(bytes);
+    if (writeStage_ == WriteStage::None || bytes.empty()) {
+        return sent;
+    }
+    if (!sent.ok()) {
+        if (writeStage_ == WriteStage::Completion) {
+            // The sector was already handled: report it, with the reply lost.
+            write_.replyLost = true;
+            reportWrite(bytes[0] == rb::sio::code::kComplete ? 'C' : 'E');
+        } else {
+            writeStage_ = WriteStage::None;  // nothing was written
+        }
+        return sent;
+    }
+    const uint8_t first = bytes[0];
+    switch (writeStage_) {
+    case WriteStage::Command:  // the command itself was NAKed (invalid sector)
+        if (first == rb::sio::code::kNak) {
+            reportWrite('N');
+        }
+        break;
+    case WriteStage::Data:
+        if (first == rb::sio::code::kNak) {
+            reportWrite('N');  // bad data checksum: nothing written
+        } else {
+            writeStage_ = WriteStage::Completion;
+        }
+        break;
+    case WriteStage::Completion:
+        reportWrite(first == rb::sio::code::kComplete ? 'C' : 'E');
+        break;
+    case WriteStage::None:
+    default:
+        break;
+    }
+    return sent;
 }
 
 void MenuSioTransport::serveMenu(const CommandBytes& command)

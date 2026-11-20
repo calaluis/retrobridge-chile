@@ -52,6 +52,9 @@ enum class ErrorCode : uint8_t {
     BoardNotConfirmed,
     InvalidPinAssignment,
     StorageNotMounted,
+
+    // Disk writes (menu-escritura-disco)
+    WriteProtected,
 };
 
 }  // namespace rb::core

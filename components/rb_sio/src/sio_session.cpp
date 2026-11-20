@@ -56,6 +56,10 @@ StepOutcome SioSession::sendNak()
 
 StepOutcome SioSession::runAccepted()
 {
+    const Span<uint8_t> incoming = dispatcher_.incomingFrame();
+    if (!incoming.empty()) {
+        return runWithData(incoming);
+    }
     const uint8_t ack = code::kAck;
     if (!transport_.send(Span<const uint8_t>{&ack, 1}).ok()) {
         dispatcher_.abandon();  // without an ACK the computer retries; never execute
@@ -64,6 +68,32 @@ StepOutcome SioSession::runAccepted()
     const uint64_t ackEnd = clock_.nowMicros();  // send() returns after the last bit
 
     // The data frame is written right after the completion byte: one buffer, one send.
+    const Span<uint8_t> response{response_};
+    const Completion completion = dispatcher_.execute(response.subspan(1, SioCommandDispatcher::kMaxFrameSize));
+    response_[0] = completion.code;
+
+    clock_.waitUntil(ackEnd + kCompleteDelayUs);
+    const Result<void> sent = transport_.send(response.first(1u + completion.frameLength));
+    return endTransaction(sent.ok() ? StepOutcome::Completed : StepOutcome::TransportFailed);
+}
+
+StepOutcome SioSession::runWithData(Span<uint8_t> incoming)
+{
+    if (!transport_.receiveAfterAck(incoming).ok()) {
+        dispatcher_.abandon();  // no complete data frame: never write
+        return endTransaction(StepOutcome::TransportFailed);
+    }
+    const bool valid = dispatcher_.acceptData();
+    const uint8_t reply = valid ? code::kAck : code::kNak;
+    if (!transport_.send(Span<const uint8_t>{&reply, 1}).ok()) {
+        dispatcher_.abandon();
+        return endTransaction(StepOutcome::TransportFailed);
+    }
+    if (!valid) {
+        return endTransaction(StepOutcome::Nacked);
+    }
+    const uint64_t ackEnd = clock_.nowMicros();
+
     const Span<uint8_t> response{response_};
     const Completion completion = dispatcher_.execute(response.subspan(1, SioCommandDispatcher::kMaxFrameSize));
     response_[0] = completion.code;

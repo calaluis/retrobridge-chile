@@ -60,6 +60,7 @@ rb_add_host_test(test_value_objects domain/test_value_objects.cpp)
 rb_add_host_test(test_atr_layout domain/test_atr_layout.cpp)
 rb_add_host_test(test_disk_image domain/test_disk_image.cpp)
 rb_add_host_test(test_virtual_drive domain/test_virtual_drive.cpp)
+rb_add_host_test(test_disk_write domain/test_disk_write.cpp)
 
 # rb_application
 rb_add_host_test(test_image_location application/test_image_location.cpp)
@@ -173,6 +174,16 @@ rb_add_host_test(test_host_menu menu/test_host_menu.cpp
 target_include_directories(test_host_menu PRIVATE ${rb_root}/host/src)
 target_compile_definitions(test_host_menu PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
 set_tests_properties(test_host_menu PROPERTIES FIXTURES_REQUIRED menu_images)
+# Disk writes with --images (menu-escritura-disco, W005).
+rb_add_host_test(test_host_write menu/test_host_write.cpp
+                 ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
+                 ${rb_root}/host/src/menu_controller.cpp ${rb_root}/host/src/menu_sio_transport.cpp
+                 ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_folder.cpp)
+target_include_directories(test_host_write PRIVATE ${rb_root}/host/src)
+target_compile_definitions(test_host_write PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}"
+                           RB_TEST_WRITE_DIR="${CMAKE_CURRENT_BINARY_DIR}/write-images")
+target_link_libraries(test_host_write PRIVATE Threads::Threads)
+set_tests_properties(test_host_write PROPERTIES FIXTURES_REQUIRED menu_images)
 # E on the main screen: edit or add a server and rewrite --sources (menu-editar-servidor, M43).
 rb_add_host_test(test_menu_editar menu/test_menu_editar.cpp
                  ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp

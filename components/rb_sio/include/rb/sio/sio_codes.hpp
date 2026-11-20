@@ -12,10 +12,12 @@ constexpr uint8_t kComplete = 0x43;  // 'C'
 constexpr uint8_t kError = 0x45;     // 'E'
 }  // namespace code
 
-// Command bytes handled by the v1 disk drive (Atari C016555 appendix K).
+// Command bytes handled by the disk drive (Atari C016555 appendix K).
 namespace command {
-constexpr uint8_t kReadSector = 0x52;  // 'R'
-constexpr uint8_t kStatus = 0x53;      // 'S'
+constexpr uint8_t kPutSector = 0x50;    // 'P', write without verify
+constexpr uint8_t kReadSector = 0x52;   // 'R'
+constexpr uint8_t kStatus = 0x53;       // 'S'
+constexpr uint8_t kWriteSector = 0x57;  // 'W', write with verify
 }  // namespace command
 
 // Disk drive device IDs: D1 = $31 [DOC for $31-$34]; D5-D8 follow the same

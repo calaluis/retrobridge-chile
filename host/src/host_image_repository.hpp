@@ -6,6 +6,8 @@
 // location is a file of the images folder, opened by StdioImageRepository.
 // kFileSlots: one image per drive D1..D8 and one more being validated or
 // mounted while the drive still holds the image it displaces.
+// Files open for writing when they allow it and no other drive writes the same
+// one (menu-escritura-disco); the menu and TNFS images are never writable.
 
 #include <cstddef>
 #include <cstring>
@@ -25,7 +27,7 @@ class HostImageRepository final : public rb::app::ImageRepository {
 public:
     static constexpr std::size_t kFileSlots = 8 + 1;
 
-    HostImageRepository(const char* folder, MenuImage& menu) : files_(folder), menu_(menu) {}
+    HostImageRepository(const char* folder, MenuImage& menu) : files_(folder, true), menu_(menu) {}
 
     std::size_t openFiles() const noexcept { return files_.open_count(); }
     bool menuOpen() const noexcept { return menuOpen_; }

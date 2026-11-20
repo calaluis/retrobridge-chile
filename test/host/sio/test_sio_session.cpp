@@ -8,6 +8,7 @@
 
 #include "fakes/fake_byte_source.hpp"
 #include "fakes/fake_remote_byte_source.hpp"
+#include "fakes/memory_byte_source.hpp"
 #include "fakes/memory_image_repository.hpp"
 #include "rb/app/image_location.hpp"
 #include "rb/app/usecases/mount_disk_image.hpp"
@@ -352,6 +353,112 @@ static void test_receive_error_releases_the_line(void)
     TEST_ASSERT_TRUE(h.session.step() == StepOutcome::Completed);
 }
 
+// --- Writes (menu-escritura-disco, W004) ---------------------------------------------
+
+namespace {
+
+struct WriteHarness {
+    explicit WriteHarness(bool writable)
+        : source{make_atr_header(sd_data_size(720), 128), kAtrHeaderSize + sd_data_size(720), writable}
+    {
+        auto result = bay.mount(DriveNumber::from(1).value(), DiskImage::open(source).value(),
+                                ImageLocation::from("w.atr").value());
+        TEST_ASSERT_TRUE(result.ok());
+    }
+    rb::test::MemoryByteSource source;
+    rb::test::FakeClock clock;
+    ScriptedSioTransport transport{clock};
+    rb::app::DriveBay bay{1};
+    rb::test::FakeDriveMailbox mailbox;
+    rb::sio::SioCommandDispatcher dispatcher{bay, true};
+    rb::app::ApplyDriveRequest apply{bay, mailbox};
+    SioSession session{transport, clock, dispatcher, apply};
+};
+
+}  // namespace
+
+static void test_write_acks_command_and_data_then_completes(void)
+{
+    WriteHarness h{true};
+    h.transport.push_frame(sio_frame(rb::test::kD1, 0x57, 4, 0));
+    const auto data = rb::test::data_frame(128, 0x11);
+    h.transport.push_data(data.data(), 129);
+
+    TEST_ASSERT_TRUE(h.session.step() == StepOutcome::Completed);
+    TEST_ASSERT_EQUAL_size_t(129, h.transport.announced());
+    TEST_ASSERT_EQUAL_size_t(3, h.transport.sends());
+    TEST_ASSERT_EQUAL_HEX8(code::kAck, h.transport.sent(0).bytes[0]);  // command
+    TEST_ASSERT_EQUAL_HEX8(code::kAck, h.transport.sent(1).bytes[0]);  // data
+    TEST_ASSERT_EQUAL_size_t(1, h.transport.sent(2).length);
+    TEST_ASSERT_EQUAL_HEX8(code::kComplete, h.transport.sent(2).bytes[0]);
+    TEST_ASSERT_TRUE(h.transport.sent(2).startUs >= h.transport.sent(1).endUs + SioSession::kCompleteDelayUs);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(data.data(), &h.source.bytes()[kAtrHeaderSize + 3u * 128u], 128);
+    TEST_ASSERT_EQUAL_UINT(1, h.transport.releases());
+}
+
+static void test_bad_data_frame_is_nacked_and_not_written(void)
+{
+    WriteHarness h{true};
+    h.transport.push_frame(sio_frame(rb::test::kD1, 0x50, 4, 0));
+    const auto data = rb::test::data_frame(128, 0x22, false);
+    h.transport.push_data(data.data(), 129);
+
+    TEST_ASSERT_TRUE(h.session.step() == StepOutcome::Nacked);
+    TEST_ASSERT_EQUAL_size_t(2, h.transport.sends());
+    TEST_ASSERT_EQUAL_HEX8(code::kNak, h.transport.sent(1).bytes[0]);
+    TEST_ASSERT_EQUAL_UINT(0, h.source.writes());
+    TEST_ASSERT_FALSE(h.dispatcher.hasPendingCommand());
+}
+
+static void test_protected_write_takes_the_data_then_errors(void)
+{
+    WriteHarness h{false};
+    h.transport.push_frame(sio_frame(rb::test::kD1, 0x57, 4, 0));
+    const auto data = rb::test::data_frame(128, 0x33);
+    h.transport.push_data(data.data(), 129);
+
+    TEST_ASSERT_TRUE(h.session.step() == StepOutcome::Completed);
+    TEST_ASSERT_EQUAL_HEX8(code::kAck, h.transport.sent(1).bytes[0]);
+    TEST_ASSERT_EQUAL_HEX8(code::kError, h.transport.sent(2).bytes[0]);
+}
+
+static void test_missing_data_frame_drops_the_write(void)
+{
+    WriteHarness h{true};
+    h.transport.push_frame(sio_frame(rb::test::kD1, 0x57, 4, 0));
+    h.transport.push_frame(status_frame());
+
+    TEST_ASSERT_TRUE(h.session.step() == StepOutcome::TransportFailed);
+    TEST_ASSERT_FALSE(h.dispatcher.hasPendingCommand());
+    TEST_ASSERT_EQUAL_UINT(0, h.source.writes());
+    TEST_ASSERT_EQUAL_UINT(1, h.transport.releases());
+    TEST_ASSERT_TRUE(h.session.step() == StepOutcome::Completed);  // the next command is served
+}
+
+static void test_failed_write_ack_never_writes(void)
+{
+    WriteHarness h{true};
+    h.transport.fail_send(0);
+    h.transport.push_frame(sio_frame(rb::test::kD1, 0x57, 4, 0));
+    const auto data = rb::test::data_frame(128, 0x44);
+    h.transport.push_data(data.data(), 129);
+    TEST_ASSERT_TRUE(h.session.step() == StepOutcome::TransportFailed);
+    TEST_ASSERT_FALSE(h.dispatcher.hasPendingCommand());
+    TEST_ASSERT_EQUAL_UINT(0, h.source.writes());
+}
+
+static void test_failed_data_ack_never_writes(void)
+{
+    WriteHarness h{true};
+    h.transport.fail_send(1);
+    h.transport.push_frame(sio_frame(rb::test::kD1, 0x57, 4, 0));
+    const auto data = rb::test::data_frame(128, 0x55);
+    h.transport.push_data(data.data(), 129);
+    TEST_ASSERT_TRUE(h.session.step() == StepOutcome::TransportFailed);
+    TEST_ASSERT_FALSE(h.dispatcher.hasPendingCommand());
+    TEST_ASSERT_EQUAL_UINT(0, h.source.writes());
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -371,5 +478,11 @@ int main(void)
     RUN_TEST(test_failed_completion_releases_the_line_and_recovers);
     RUN_TEST(test_failed_nak_releases_the_line);
     RUN_TEST(test_receive_error_releases_the_line);
+    RUN_TEST(test_write_acks_command_and_data_then_completes);
+    RUN_TEST(test_bad_data_frame_is_nacked_and_not_written);
+    RUN_TEST(test_protected_write_takes_the_data_then_errors);
+    RUN_TEST(test_missing_data_frame_drops_the_write);
+    RUN_TEST(test_failed_write_ack_never_writes);
+    RUN_TEST(test_failed_data_ack_never_writes);
     return UNITY_END();
 }

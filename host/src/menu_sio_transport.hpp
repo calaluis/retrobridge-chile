@@ -13,7 +13,9 @@
 //     kSendBlock bytes. AUX2 numbers each key: a repeated AUX1 + AUX2 is SIOV
 //     retrying, answered with the same reply and not applied again. A bad
 //     checksum is ignored; any other command is NAKed.
-// Every other frame goes to SioSession unchanged.
+// Every other frame goes to SioSession unchanged. A write (W/P) to D1..D8 is
+// also followed through receiveAfterAck() and the replies the session sends,
+// and reported once to the SioWriteObserver, if any (menu-escritura-disco).
 
 #include <array>
 #include <cstddef>
@@ -22,6 +24,7 @@
 #include "menu_controller.hpp"
 #include "rb/app/ports/clock.hpp"
 #include "rb/app/ports/sio_transport.hpp"
+#include "sio_write_log.hpp"
 
 namespace rb::host {
 
@@ -35,13 +38,15 @@ struct MenuTransportStats {
 
 class MenuSioTransport final : public rb::app::SioTransport {
 public:
-    MenuSioTransport(rb::app::SioTransport& inner, rb::app::Clock& clock, MenuController& controller) noexcept
-        : inner_(inner), clock_(clock), controller_(controller)
+    MenuSioTransport(rb::app::SioTransport& inner, rb::app::Clock& clock, MenuController& controller,
+                     SioWriteObserver* writes = nullptr) noexcept
+        : inner_(inner), clock_(clock), controller_(controller), writes_(writes)
     {
     }
 
     rb::core::Result<rb::app::CommandBytes> waitCommandFrame(uint32_t timeoutUs) override;
-    rb::core::Result<void> send(rb::core::Span<const uint8_t> bytes) override { return inner_.send(bytes); }
+    rb::core::Result<void> send(rb::core::Span<const uint8_t> bytes) override;
+    rb::core::Result<void> receiveAfterAck(rb::core::Span<uint8_t> frame) override;
     void releaseDataLine() override { inner_.releaseDataLine(); }
 
     const MenuTransportStats& stats() const noexcept { return stats_; }
@@ -49,10 +54,18 @@ public:
 private:
     void serveMenu(const rb::app::CommandBytes& command);
     void serveText(const rb::app::CommandBytes& command);
+    void trackWrite(const rb::app::CommandBytes& command) noexcept;
+    void reportWrite(char result) noexcept;
 
     rb::app::SioTransport& inner_;
     rb::app::Clock& clock_;
     MenuController& controller_;
+    SioWriteObserver* writes_;
+    // The write being followed: Command (waiting for the data or a NAK), Data
+    // (data received, next byte answers it), Completion (data ACKed).
+    enum class WriteStage : uint8_t { None, Command, Data, Completion };
+    WriteStage writeStage_ = WriteStage::None;
+    SioWriteRecord write_{};
     MenuTransportStats stats_{};
     // NetSIO takes at most 512 bytes per data block; 256 keeps a margin and
     // fits the test transport.

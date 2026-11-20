@@ -21,7 +21,8 @@ namespace rb::domain {
 //   * Destroying or move-assigning over a valid image detaches its source.
 // Hence a source is attached exactly while one live DiskImage references it.
 //
-// Read-only in v1. Identity (ImageLocation) is added in H2 with ImageRepository.
+// Writable exactly when its source is (menu-escritura-disco, M45-1/M45-3).
+// Identity (ImageLocation) is added in H2 with ImageRepository.
 class DiskImage {
 public:
     static rb::core::Result<DiskImage> open(ImageByteSource& source);
@@ -33,7 +34,7 @@ public:
     ~DiskImage();
 
     bool isValid() const noexcept { return source_ != nullptr; }
-    bool readOnly() const noexcept { return true; }
+    bool readOnly() const noexcept { return source_ == nullptr || !source_->writable(); }
     const DiskGeometry& geometry() const noexcept { return layout_.geometry(); }
     const AtrLayout& layout() const noexcept { return layout_; }
 
@@ -42,6 +43,11 @@ public:
 
     // Copies sector `sector` into the start of `out`; returns its size in bytes.
     rb::core::Result<uint16_t> readSector(SectorNumber sector, rb::core::Span<uint8_t> out);
+
+    // Writes the first bytes of `data` (the sector's size) as sector `sector`;
+    // returns that size. BufferTooSmall, SectorOutOfRange and WriteProtected
+    // write nothing; IoError comes from the source.
+    rb::core::Result<uint16_t> writeSector(SectorNumber sector, rb::core::Span<const uint8_t> data);
 
 private:
     DiskImage(ImageByteSource& source, const AtrLayout& layout) noexcept;

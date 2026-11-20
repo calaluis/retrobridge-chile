@@ -139,6 +139,7 @@ private:
         EntryIndex entry = kNoEntry;                   // Local
         std::size_t slot = 0;                          // Tnfs
         char name[TnfsFolder::kDisplayWidth + 1] = {};  // Tnfs: display name
+        bool locked = true;                            // read-only: " SL" on the main screen
     };
 
     void collect();
@@ -224,6 +225,10 @@ private:
 
     Shown previous_;                       // what the drive in flight showed before
     Shown incoming_;                       // what it shows if the request is applied
+    // The same local ATR picked again for its own drive: unmount first, mount when the
+    // unmount is applied, so the old source is closed and the new one may write (ADR-019).
+    unsigned remountDrive_ = 0;            // 0: none
+    EntryIndex remountEntry_ = kNoEntry;
 
     // The TNFS folder on screen: its source, its path and its listing.
     unsigned source_ = 0;

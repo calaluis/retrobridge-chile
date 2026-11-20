@@ -42,6 +42,35 @@ void assert_status_reply(const NetSioHarness& h, std::size_t first, uint8_t sync
     h.assert_sent(first + 1, {0x02, 0x43, 0x00, 0xFF, 0xE0, 0x00, 0xE0});
 }
 
+// A write command frame for D1, left with its sync pending (ACK not sent yet).
+void open_write(NetSioHarness& h, uint8_t sync)
+{
+    h.push_frame(command_frame(kD1, 0x57, 4, 0), sync);
+    TEST_ASSERT_TRUE(h.transport.waitCommandFrame(20000).ok());
+    TEST_ASSERT_TRUE(h.transport.syncPending());
+}
+
+// A 128-byte sector, data value i * 7.
+std::array<uint8_t, 128> sector_data()
+{
+    std::array<uint8_t, 128> data{};
+    for (std::size_t i = 0; i < data.size(); ++i) {
+        data[i] = static_cast<uint8_t>(i * 7u);
+    }
+    return data;
+}
+
+// DATA BLOCK (02) with `count` bytes of `data` from `first`.
+void push_block(NetSioHarness& h, const uint8_t* data, std::size_t count)
+{
+    std::array<uint8_t, 1 + 512> block{};
+    block[0] = 0x02;
+    for (std::size_t i = 0; i < count; ++i) {
+        block[1 + i] = data[i];
+    }
+    h.from_atari_bytes(block.data(), 1 + count);
+}
+
 }  // namespace
 
 void setUp(void) {}
@@ -292,6 +321,165 @@ static void test_write_data_sync_is_released_empty(void)
     h.assert_sent(0, {0x81, 0x11, 0x00, 0x00, 0x00, 0x00});
 }
 
+// --- Write data frame (menu-escritura-disco, W003) -----------------------------------
+
+static void test_write_ack_announces_the_data_frame_then_collects_it(void)
+{
+    NetSioHarness h;
+    h.connect();
+    open_write(h, 0x20);
+    const std::array<uint8_t, 128> data = sector_data();
+    const uint8_t checksum = rb::sio::sio_checksum(Span<const uint8_t>{data});
+    push_block(h, data.data(), 65);  // as measured in W001: 65 + 63 + 09
+    push_block(h, data.data() + 65, 63);
+    h.from_atari({0x09, checksum, 0x21});
+
+    std::array<uint8_t, 129> frame{};
+    TEST_ASSERT_TRUE(h.transport.receiveAfterAck(Span<uint8_t>{frame}).ok());
+    h.assert_sent(0, {0x81, 0x20, 0x01, 0x41, 0x81, 0x00});  // write_size 129, LE
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(data.data(), frame.data(), 128);
+    TEST_ASSERT_EQUAL_HEX8(checksum, frame[128]);
+    TEST_ASSERT_TRUE(h.transport.syncPending());  // the data still waits for ACK/NAK
+
+    const uint8_t ack[] = {0x41};
+    TEST_ASSERT_TRUE(h.transport.send(Span<const uint8_t>{ack}).ok());
+    h.assert_sent(1, {0x81, 0x21, 0x01, 0x41, 0x00, 0x00});
+    TEST_ASSERT_FALSE(h.transport.syncPending());
+    TEST_ASSERT_EQUAL_UINT32(2, h.transport.stats().validSyncResponses);
+    TEST_ASSERT_EQUAL_UINT32(1, h.transport.stats().dataFramesReceived);
+}
+
+static void test_write_data_byte_by_byte_under_the_hub_profile(void)
+{
+    NetSioHarness h{PeerProfile::NetsiohubTrailingByte};
+    h.connect();
+    open_write(h, 0x30);
+    h.from_atari({0x01, 0xA1});
+    h.from_atari({0x01, 0xA2});
+    h.from_atari({0x02, 0xA3, 0xA4});
+    h.from_atari({0x09, 0x5C, 0x31});
+
+    std::array<uint8_t, 5> frame{};
+    TEST_ASSERT_TRUE(h.transport.receiveAfterAck(Span<uint8_t>{frame}).ok());
+    h.assert_sent(0, {0x81, 0x30, 0x01, 0x41, 0x05, 0x00});
+    const uint8_t expected[] = {0xA1, 0xA2, 0xA3, 0xA4, 0x5C};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, frame.data(), 5);
+    TEST_ASSERT_EQUAL_UINT32(0, h.transport.stats().trailerGaps);
+}
+
+static void test_write_data_nak_answers_the_data_sync(void)
+{
+    NetSioHarness h;
+    h.connect();
+    open_write(h, 0x40);
+    h.from_atari({0x02, 1, 2, 3, 4});
+    h.from_atari({0x09, 0xEE, 0x41});
+    std::array<uint8_t, 5> frame{};
+    TEST_ASSERT_TRUE(h.transport.receiveAfterAck(Span<uint8_t>{frame}).ok());
+    const uint8_t nak[] = {0x4E};
+    TEST_ASSERT_TRUE(h.transport.send(Span<const uint8_t>{nak}).ok());
+    h.assert_sent(1, {0x81, 0x41, 0x01, 0x4E, 0x00, 0x00});
+}
+
+static void test_write_data_longer_than_announced_is_refused(void)
+{
+    NetSioHarness h;
+    h.connect();
+    open_write(h, 0x50);
+    h.from_atari({0x02, 1, 2, 3, 4, 5});
+    h.from_atari({0x09, 6, 0x51});
+    std::array<uint8_t, 5> frame{};
+    const auto received = h.transport.receiveAfterAck(Span<uint8_t>{frame});
+    TEST_ASSERT_FALSE(received.ok());
+    TEST_ASSERT_TRUE(received.error() == ErrorCode::TransportError);
+    h.transport.releaseDataLine();
+    h.assert_sent(1, {0x81, 0x51, 0x00, 0x00, 0x00, 0x00});  // released, neither ACK nor NAK
+    TEST_ASSERT_EQUAL_UINT32(1, h.transport.stats().dataFramesDiscarded);
+}
+
+static void test_write_data_shorter_than_announced_is_refused(void)
+{
+    NetSioHarness h;
+    h.connect();
+    open_write(h, 0x52);
+    h.from_atari({0x02, 1, 2});
+    h.from_atari({0x09, 3, 0x53});
+    std::array<uint8_t, 5> frame{};
+    TEST_ASSERT_FALSE(h.transport.receiveAfterAck(Span<uint8_t>{frame}).ok());
+    h.transport.releaseDataLine();
+    h.assert_sent(1, {0x81, 0x53, 0x00, 0x00, 0x00, 0x00});
+}
+
+static void test_write_data_that_never_comes_times_out(void)
+{
+    NetSioConfig config = rb::test::harness_config(PeerProfile::Fep003Strict);
+    config.dataTimeoutUs = 50000;
+    NetSioHarness h{config};
+    h.connect();
+    open_write(h, 0x54);
+    const uint64_t start = h.clock.nowMicros();
+    std::array<uint8_t, 5> frame{};
+    TEST_ASSERT_FALSE(h.transport.receiveAfterAck(Span<uint8_t>{frame}).ok());
+    TEST_ASSERT_TRUE(h.clock.nowMicros() - start >= 50000);
+    TEST_ASSERT_EQUAL_size_t(1, h.port.sent_count());  // only the ACK
+    TEST_ASSERT_FALSE(h.transport.syncPending());
+}
+
+static void test_write_data_needs_a_pending_command_sync(void)
+{
+    NetSioHarness h;
+    h.connect();
+    std::array<uint8_t, 5> frame{};
+    TEST_ASSERT_FALSE(h.transport.receiveAfterAck(Span<uint8_t>{frame}).ok());
+    open_write(h, 0x55);
+    TEST_ASSERT_FALSE(h.transport.receiveAfterAck(Span<uint8_t>{}).ok());  // empty frame
+    TEST_ASSERT_EQUAL_size_t(0, h.port.sent_count());
+    TEST_ASSERT_TRUE(h.transport.syncPending());  // untouched: the session releases it
+}
+
+static void test_new_command_frame_abandons_the_write_and_is_kept(void)
+{
+    NetSioHarness h;
+    FakeByteSource sd = sd_image();
+    h.mount(sd);
+    h.connect();
+    open_write(h, 0x56);
+    h.from_atari({0x02, 1, 2});
+    h.push_frame(kStatusD1, 0x57);  // the computer gave up on the write
+    std::array<uint8_t, 5> frame{};
+    TEST_ASSERT_FALSE(h.transport.receiveAfterAck(Span<uint8_t>{frame}).ok());
+    h.transport.releaseDataLine();
+    TEST_ASSERT_TRUE(h.session.step() == StepOutcome::Completed);  // the STATUS is still served
+    assert_status_reply(h, 1, 0x57);
+}
+
+static void test_reset_during_write_data_abandons_it(void)
+{
+    NetSioHarness h;
+    h.connect();
+    open_write(h, 0x5A);
+    h.from_atari({0x02, 1, 2});
+    h.from_atari({0xFF});
+    h.from_atari({0x02, 3, 4});
+    h.from_atari({0x09, 5, 0x5B});
+    std::array<uint8_t, 5> frame{};
+    TEST_ASSERT_FALSE(h.transport.receiveAfterAck(Span<uint8_t>{frame}).ok());
+    TEST_ASSERT_EQUAL_UINT32(1, h.transport.stats().dataFramesDiscarded);
+}
+
+static void test_failed_write_ack_keeps_the_sync_for_release(void)
+{
+    NetSioHarness h;
+    h.connect();
+    open_write(h, 0x58);
+    h.port.fail_send(2);  // C2, C1, then the ACK
+    std::array<uint8_t, 5> frame{};
+    TEST_ASSERT_FALSE(h.transport.receiveAfterAck(Span<uint8_t>{frame}).ok());
+    TEST_ASSERT_TRUE(h.transport.syncPending());
+    h.transport.releaseDataLine();
+    h.assert_sent(0, {0x81, 0x58, 0x00, 0x00, 0x00, 0x00});
+}
+
 static void test_trailer_gaps_are_counted(void)
 {
     NetSioHarness h{PeerProfile::NetsiohubTrailingByte};
@@ -465,6 +653,16 @@ int main(void)
     RUN_TEST(test_cold_reset_discards_a_partial_frame);
     RUN_TEST(test_sync_without_frame_is_released_at_once);
     RUN_TEST(test_write_data_sync_is_released_empty);
+    RUN_TEST(test_write_ack_announces_the_data_frame_then_collects_it);
+    RUN_TEST(test_write_data_byte_by_byte_under_the_hub_profile);
+    RUN_TEST(test_write_data_nak_answers_the_data_sync);
+    RUN_TEST(test_write_data_longer_than_announced_is_refused);
+    RUN_TEST(test_write_data_shorter_than_announced_is_refused);
+    RUN_TEST(test_write_data_that_never_comes_times_out);
+    RUN_TEST(test_write_data_needs_a_pending_command_sync);
+    RUN_TEST(test_new_command_frame_abandons_the_write_and_is_kept);
+    RUN_TEST(test_reset_during_write_data_abandons_it);
+    RUN_TEST(test_failed_write_ack_keeps_the_sync_for_release);
     RUN_TEST(test_trailer_gaps_are_counted);
     RUN_TEST(test_without_credit_the_transport_asks_and_waits);
     RUN_TEST(test_reconnect_without_new_credit_asks_before_completing);

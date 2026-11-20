@@ -2,7 +2,8 @@
 // (Issue #32, E1b; ADR-016). Reuses the real drive context: DriveBay,
 // SioCommandDispatcher, ApplyDriveRequest and SioSession over NetSioSioTransport,
 // with a loopback UDP port, the PC clock and ATRs read through
-// StdioImageRepository. Read-only drive. Not firmware: no UART, GPIO or SIO timing.
+// StdioImageRepository. --image: read-only drive; --images: writes go to the
+// images folder (menu-escritura-disco). Not firmware: no UART, GPIO or SIO timing.
 //
 //   retrobridge_host --image <file.atr> [--port 9997] [--peer netsiohub|fep003]
 //                    [--log <file.jsonl>] [--seconds N]
@@ -45,6 +46,7 @@
 #include "rb/sio/sio_session.hpp"
 #include "rb/storage/image_path.hpp"
 #include "rb/storage/stdio_image_repository.hpp"
+#include "sio_write_log.hpp"
 #include "tnfs_link.hpp"
 #include "tnfs_loader.hpp"
 #include "udp_datagram_port.hpp"
@@ -210,6 +212,25 @@ public:
 
 private:
     rb::host::JsonlLog& log_;
+};
+
+// sio_write events (menu-escritura-disco): called by MenuSioTransport in the
+// drive context, right after the reply, so the drive shows why a write failed.
+class LogSioWrites final : public rb::host::SioWriteObserver {
+public:
+    LogSioWrites(rb::host::JsonlLog& log, rb::app::DriveBay& bay) : log_(log), bay_(bay) {}
+    void onSioWrite(const rb::host::SioWriteRecord& record) override
+    {
+        const auto number = rb::domain::DriveNumber::from(record.drive);
+        const rb::domain::VirtualDrive* drive = number.ok() ? bay_.find(number.value()) : nullptr;
+        char detail[96];
+        rb::host::formatSioWrite(record, drive, detail, sizeof detail);
+        log_.event("sio_write", detail);
+    }
+
+private:
+    rb::host::JsonlLog& log_;
+    rb::app::DriveBay& bay_;
 };
 
 // Registers with the hub and runs the session until --seconds or a dead hub.
@@ -435,8 +456,9 @@ int runMenu(const Options& options)
     rb::netsio::NetSioConfig config;
     config.profile = options.profile;
     rb::netsio::NetSioSioTransport netsio{port, clock, config, &watch};
-    rb::host::MenuSioTransport transport{netsio, clock, controller};
-    rb::sio::SioCommandDispatcher dispatcher{bay};
+    LogSioWrites writes{log, bay};
+    rb::host::MenuSioTransport transport{netsio, clock, controller, &writes};
+    rb::sio::SioCommandDispatcher dispatcher{bay, true};  // writes to the images folder (menu-escritura-disco)
     rb::app::ApplyDriveRequest apply{bay, mailbox};
     rb::sio::SioSession session{transport, clock, dispatcher, apply};
 

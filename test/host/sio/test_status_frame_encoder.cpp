@@ -104,6 +104,35 @@ static void test_d3_is_not_a_permanent_write_protect_flag(void)
     TEST_ASSERT_EQUAL_HEX8(0x00, frame[0] & 0x46);  // D1, D2, D6 never set in v1
 }
 
+static void test_protection_is_reported_in_byte_1_only_with_writes(void)
+{
+    const DiskGeometry g = geometry(720, SectorSize::Bytes128);
+    const DriveStatus locked{true, true, false, g.density()};
+    const DriveStatus open{true, false, false, g.density()};
+    assert_frame(Frame{0x00, 0xFF, 0xE0, 0x00}, StatusFrameEncoder::encode(locked, &g, false, 0, false));
+    assert_frame(Frame{0x00, 0xBF, 0xE0, 0x00}, StatusFrameEncoder::encode(locked, &g, false, 0, true));
+    assert_frame(Frame{0x00, 0xFF, 0xE0, 0x00}, StatusFrameEncoder::encode(open, &g, false, 0, true));
+    // An empty drive stays "not ready".
+    const DriveStatus empty{false, true, false, Density::Unknown};
+    assert_frame(Frame{0x00, 0x7F, 0xE0, 0x00}, StatusFrameEncoder::encode(empty, nullptr, false, 0, true));
+}
+
+static void test_write_flags_set_d1_d2_d3(void)
+{
+    const DiskGeometry g = geometry(720, SectorSize::Bytes128);
+    const DriveStatus locked_failed{true, true, true, g.density()};
+    const DriveStatus open_failed{true, false, true, g.density()};
+    // Refused by protection: D3, and byte 1 stays $BF (not "record not found").
+    assert_frame(Frame{0x08, 0xBF, 0xE0, 0x00},
+                 StatusFrameEncoder::encode(locked_failed, &g, false, StatusFrameEncoder::kFlagProtected, true));
+    // Failed write on a writable disk: D2 and $EF.
+    assert_frame(Frame{0x04, 0xEF, 0xE0, 0x00},
+                 StatusFrameEncoder::encode(open_failed, &g, false, StatusFrameEncoder::kFlagPut, true));
+    // Bad data frame: D1. Bits outside D1-D3 are never taken from the flags.
+    assert_frame(Frame{0x02, 0xFF, 0xE0, 0x00},
+                 StatusFrameEncoder::encode(DriveStatus{true, false, false, g.density()}, &g, false, 0xF3, true));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -116,5 +145,7 @@ int main(void)
     RUN_TEST(test_no_disk_takes_precedence_over_previous_failure);
     RUN_TEST(test_previous_nak_sets_d0);
     RUN_TEST(test_d3_is_not_a_permanent_write_protect_flag);
+    RUN_TEST(test_protection_is_reported_in_byte_1_only_with_writes);
+    RUN_TEST(test_write_flags_set_d1_d2_d3);
     return UNITY_END();
 }

@@ -183,3 +183,32 @@ Rama `feat/menu-xex` (worktree `.worktrees/feat-menu-xex`, desde main `ff9ff63`)
       `test_xex_image`.
     - 3, un nombre con `..`: el escaneo no los produce. Sin cambio.
     - 4, `events.has` busca un trozo del texto: aceptado. Los textos que se buscan son específicos.
+
+## X005 — el `.xex` de prueba de RetroBridge
+
+- Estado: hecho, pendiente de commit.
+- Archivos:
+  - `tools/make_xex_demo.py` (nuevo): programa 6502 propio en `$2000`, más INITAD y RUNAD. `--out` escribe el archivo.
+  - `tools/tests/test_xex_demo.py` (nuevo): 6 pruebas.
+  - `tools/tests/test_xex_loader.py`: `Cpu.run` acepta `pc`; el intérprete suma `AND #imm` (`$29`).
+- Qué muestra en el Atari:
+  - línea 1: ` RETROBRIDGE XEX OK` si corrió INITAD; si no, ` RETROBRIDGE XEX: INITAD NO CORRIO`;
+  - línea 2: ` BASIC APAGADO` si PORTB bit 1 vale 1; si no, ` BASIC ENCENDIDO`.
+- Rojo visto: las pruebas fallaron sin el módulo.
+- Mutantes, 4 de 4 muertos:
+  - el salto del marcador invertido;
+  - la máscara de PORTB cambiada;
+  - `init` sin marcar;
+  - el segmento de INITAD quitado.
+- Controles:
+  - pruebas: PASS. `tools/tests` 167 de 167 (19 de `test_xex_*`).
+  - compilación: no aplica; solo Python.
+  - seguridad: PASS. Herramienta local; solo escribe la ruta de `--out`.
+  - trazabilidad: PASS. Prepara la demo de AC5, AC6 y AC7 (X006).
+- Riesgo: `rsc risk` nivel 1, un revisor.
+- Revisión: un revisor. Sin fallas en el hardware; 2 huecos de prueba y 3 detalles:
+  - 1, la prueba no miraba la lista entera: ahora compara los 12 bytes, con el salto JVB a sí misma.
+  - 2, la guarda del bloque de 1 KB nunca se vio fallar: nueva prueba; su mutante muere.
+  - 3, cada prueba sin INITAD o con BASIC mira una sola línea: aceptado; la prueba con el cargador cubre el resto.
+  - 4, `BASIC_OFF` repetido: ahora se importa de `make_xex_loader`.
+  - 5, no fija colores ni apaga el modo de atracción: aceptado; no cambia la prueba de "OK".

@@ -103,9 +103,9 @@ class Cpu:
         m[buffer:buffer + SECTOR] = self.disk[start:start + SECTOR]
         self.y = 0x01
 
-    def run(self, max_steps=2_000_000):
-        """Runs from the boot entry (ORG + 6). Returns ("run", pc) at a hooked RUNAD target or ("halt", pc)."""
-        pc = loader.LOADER_ORG + 6
+    def run(self, max_steps=2_000_000, pc=None):
+        """Runs from the boot entry (ORG + 6), or from `pc`. Returns ("run", pc) at a hooked target or ("halt", pc)."""
+        pc = loader.LOADER_ORG + 6 if pc is None else pc
         for _ in range(max_steps):
             self.ticks += 1
             if self.ticks % 200 == 0:
@@ -140,6 +140,8 @@ class Cpu:
                 self.a |= imm; self.flags(self.a); pc += 2
             elif op == 0x0D:
                 self.a |= self.mem[ab]; self.flags(self.a); pc += 3
+            elif op == 0x29:
+                self.a &= imm; self.flags(self.a); pc += 2
             elif op == 0x2D:
                 self.a &= self.mem[ab]; self.flags(self.a); pc += 3
             elif op == 0xC9:

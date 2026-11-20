@@ -26,7 +26,8 @@ struct NetSioStats {
     uint32_t datagramsIn = 0;
     uint32_t datagramsOut = 0;
     uint32_t malformed = 0;          // rejected by decode() under the configured profile
-    uint32_t ignoredMessages = 0;    // valid but irrelevant to a disk drive (motor, proceed, ...)
+    uint32_t ignoredMessages = 0;    // valid but irrelevant to a disk drive (proceed, interrupt, ...)
+    uint32_t motorChanges = 0;       // MOTOR ON/OFF from the Atari (cassette-cas C002)
     uint32_t framesDelivered = 0;
     uint32_t framesDiscarded = 0;    // cut by a reset or by a new COMMAND ON
     uint32_t validSyncResponses = 0; // 81 with ack_type 1 (ACK or NAK)
@@ -103,6 +104,8 @@ public:
     bool connected() const noexcept { return connected_; }
     bool syncPending() const noexcept { return pendingSync_.has_value(); }
     uint8_t credit() const noexcept { return credit_; }
+    // MOTOR line as the last 20/21 from the Atari left it (cassette-cas C002); off after connect.
+    bool motorOn() const noexcept { return motor_; }
     const NetSioStats& stats() const noexcept { return stats_; }
 
 private:
@@ -137,6 +140,7 @@ private:
     std::optional<uint8_t> pendingSync_;
     std::optional<uint8_t> lastTrailer_;
     uint8_t credit_ = 0;
+    bool motor_ = false;
     bool connected_ = false;
     bool pingAnswered_ = false;
     uint64_t nextAliveUs_ = 0;

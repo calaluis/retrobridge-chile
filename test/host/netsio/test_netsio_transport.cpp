@@ -303,6 +303,38 @@ static void test_cold_reset_discards_a_partial_frame(void)
     TEST_ASSERT_EQUAL_UINT32(1, h.transport.stats().framesDelivered);
 }
 
+// cassette-cas C002: MOTOR ON/OFF from the Atari set the motor state; they are not ignored.
+static void test_motor_messages_set_the_motor_state(void)
+{
+    NetSioHarness h;
+    h.connect();
+    TEST_ASSERT_FALSE(h.transport.motorOn());
+    h.from_atari({0x21});
+    (void)h.session.step();
+    TEST_ASSERT_TRUE(h.transport.motorOn());
+    h.from_atari({0x20});
+    (void)h.session.step();
+    TEST_ASSERT_FALSE(h.transport.motorOn());
+    TEST_ASSERT_EQUAL_UINT32(2, h.transport.stats().motorChanges);
+    TEST_ASSERT_EQUAL_UINT32(0, h.transport.stats().ignoredMessages);
+}
+
+// cassette-cas C002: a cold reset and a reconnection leave the motor off.
+static void test_motor_is_off_after_reset_and_reconnect(void)
+{
+    NetSioHarness h;
+    h.connect();
+    h.from_atari({0x21});
+    (void)h.session.step();
+    h.from_atari({0xFF});
+    (void)h.session.step();
+    TEST_ASSERT_FALSE(h.transport.motorOn());
+    h.from_atari({0x21});
+    (void)h.session.step();
+    h.transport.disconnect();
+    TEST_ASSERT_FALSE(h.transport.motorOn());
+}
+
 static void test_sync_without_frame_is_released_at_once(void)
 {
     NetSioHarness h;
@@ -672,5 +704,7 @@ int main(void)
     RUN_TEST(test_receive_error_is_a_transport_failure);
     RUN_TEST(test_answering_a_sync_with_more_than_one_byte_is_refused);
     RUN_TEST(test_command_bytes_carry_pc_clock_edges);
+    RUN_TEST(test_motor_messages_set_the_motor_state);
+    RUN_TEST(test_motor_is_off_after_reset_and_reconnect);
     return UNITY_END();
 }

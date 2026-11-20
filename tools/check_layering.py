@@ -25,6 +25,7 @@ PURE_LAYERS = {
     "rb_hw_diag": ("rb/core/", "rb/hwdiag/"),  # autonomous diagnostics: no Atari domain, no ESP-IDF
     "rb_netsio": ("rb/core/", "rb/app/", "rb/netsio/"),  # NetSIO transport (ADR-016): no sockets, no rb_sio
     "rb_net_tnfs": ("rb/core/", "rb/netsio/", "rb/net_tnfs/"),  # read-only TNFS client (menu-tnfs): no sockets
+    "rb_cassette": ("rb/core/", "rb/cassette/"),  # the cassette (cassette-cas): no RMT, UART or GPIO
 }
 
 FORBIDDEN_PLATFORM = re.compile(

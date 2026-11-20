@@ -30,6 +30,7 @@ uint32_t littleEndian32(Span<const uint8_t> bytes) noexcept
 
 Result<void> NetSioSioTransport::connect()
 {
+    motor_ = false;
     for (uint8_t attempt = 0; attempt < config_.pingAttempts; ++attempt) {
         pingAnswered_ = false;
         const Result<void> pinged = transmitSignal(id::kPingRequest);
@@ -63,6 +64,7 @@ Result<void> NetSioSioTransport::connect()
 void NetSioSioTransport::disconnect()
 {
     answerEmpty();
+    motor_ = false;
     if (connected_) {
         (void)transmitSignal(id::kDeviceDisconnected);  // best effort: the hub also expires silent devices
         connected_ = false;
@@ -324,9 +326,15 @@ bool NetSioSioTransport::process(std::size_t length)
     case id::kSpeedChange:
         stats_.lastBaud = littleEndian32(message.payload);
         return false;
+    case id::kMotorOn:
+    case id::kMotorOff:
+        motor_ = message.id == id::kMotorOn;
+        ++stats_.motorChanges;
+        return false;
     case id::kColdReset:
     case id::kWarmReset:
         ++stats_.resets;
+        motor_ = false;  // the OS starts with the cassette motor off
         abandonData();
         if (inFrame_) {
             inFrame_ = false;

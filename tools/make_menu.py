@@ -116,6 +116,10 @@ LIST_END = LIST_MESSAGE + LINE_WIDTH
 MAIN_TITLE_TEXT = " RETROBRIDGE CHILE  "
 MAIN_SUBTITLE_TEXT = " ESTADO DE UNIDADES "
 NO_HOST_TEXT = " ERROR: EL HOST NO RESPONDE"
+# menu-presentacion: shown in the message row of the screen in view while the reply arrives.
+LOADING_TEXT = " CARGANDO..."
+DLISTL = 0xD402              # ANTIC display list pointer, low byte (the OS copies SDLSTL there each frame)
+HIDDEN_LIMIT = 0x4000        # the hidden reply buffer ends below this (a 16 KB Atari)
 
 # Colors of the reference (OS shadows COLOR0..COLOR4) and CHACTL.
 COLORS = {0x02C4: 0x0E, 0x02C5: 0x0E, 0x02C6: 0xA0, 0x02C7: 0x46, 0x02C8: 0xA0}
@@ -156,8 +160,9 @@ def footer_key(key: str, label: str) -> bytes:
 
 
 def main_footer() -> bytes:
-    rows = (footer_key("1-8", " ABRIR FUENTE") + footer_key("E", " EDITAR SERVIDOR"),
-            footer_key("A", "   ARRANCAR D1 ") + footer_key("U", " GESTIONAR UNIDADES"))
+    # menu-presentacion: every key of the main screen in two rows, N included (AC3).
+    rows = (footer_key("1-8", " FUENTE  ") + footer_key("E", " SERVIDOR ") + footer_key("N", " NUEVA ATR"),
+            footer_key("A", " ARRANCAR D1  ") + footer_key("U", " DESMONTAR UNIDAD"))
     return b"".join(row + bytes(LINE_WIDTH - len(row)) for row in rows)
 
 
@@ -205,6 +210,25 @@ def abs_op(opcode: int, address: int) -> bytes:
     return bytes([opcode, address & 0xFF, address >> 8])
 
 
+def copy_pages() -> list:
+    """hidden -> reply, one page after another from the top (menu-presentacion): the rows the
+    beam draws first are written first."""
+    code = []
+    for page in range(-(-REPLY_SIZE // 0x100)):
+        count = min(0x100, REPLY_SIZE - page * 0x100)
+        code += [
+            b"\xA2\x00",                              # LDX #0
+            ("label", f"copy{page}"),
+            b"\xBD", ("abs", f"hid{page}"),           # LDA hidden+page,X
+            b"\x9D", ("abs", f"rep{page}"),           # STA reply+page,X
+            b"\xE8",                                  # INX
+        ]
+        if count < 0x100:
+            code.append(bytes([0xE0, count]))         # CPX #count (the last, partial page)
+        code += [b"\xD0", ("rel", f"copy{page}")]     # BNE copy (a whole page: until X wraps)
+    return code
+
+
 def menu_program():
     """Returns (block, labels): the bytes loaded at MENU_ORG and the label addresses."""
     store = lambda value, address: [bytes([0xA9, value]), abs_op(0x8D, address)]  # noqa: E731
@@ -228,12 +252,16 @@ def menu_program():
         *store(NO_KEY, CH),                           # forget any key pressed during boot; A = NO_KEY
         ("label", "send"),                            # A = key code (NO_KEY: just draw)
         abs_op(0x8D, DAUX1),                          # STA DAUX1
+        bytes([0xC9, POLL]),                          # CMP #POLL (the host's own progress is on screen)
+        b"\xF0", ("rel", "no_notice"),                # BEQ no_notice
+        b"\x20", ("abs", "notice"),                   # JSR notice (menu-presentacion)
+        ("label", "no_notice"),
         *store(MENU_DEVICE, DDEVIC),
         *store(0x01, DUNIT),
         *store(MENU_COMMAND, DCOMND),
         *store(0x40, DSTATS),                         # data from the device to the Atari
-        b"\xA9", ("lo", "reply"), abs_op(0x8D, DBUFLO),
-        b"\xA9", ("hi", "reply"), abs_op(0x8D, DBUFHI),
+        b"\xA9", ("lo", "hidden"), abs_op(0x8D, DBUFLO),  # out of sight: no sweep (menu-presentacion)
+        b"\xA9", ("hi", "hidden"), abs_op(0x8D, DBUFHI),
         *store(MENU_TIMEOUT_S, DTIMLO),
         *store(REPLY_SIZE & 0xFF, DBYTLO),
         *store(REPLY_SIZE >> 8, DBYTHI),
@@ -253,11 +281,11 @@ def menu_program():
         b"\x10", ("rel", "answered"),                 # BPL answered
         b"\x4C", ("abs", "nohost"),                   # JMP nohost (negative status: error)
         ("label", "answered"),
-        b"\xAD", ("abs", "layout"),                   # LDA layout
-        b"\x29\x01",                                  # AND #1 (two layouts)
-        b"\xAA",                                      # TAX
-        b"\xBD", ("abs", "dltab"),                    # LDA dltab,X (low byte of its display list)
-        abs_op(0x8D, SDLSTL),                         # STA SDLSTL
+        bytes([0xA5, RTCLOK_LOW]),                    # LDA RTCLOK
+        ("label", "blank"),
+        bytes([0xC5, RTCLOK_LOW]),                    # CMP RTCLOK
+        b"\xF0", ("rel", "blank"),                    # BEQ blank (wait for the vertical blank)
+        b"\x20", ("abs", "show"),                     # JSR show (display list, then the whole screen)
         b"\xAD", ("abs", "action"),                   # LDA action
         b"\xF0", ("rel", "key"),                      # BEQ key (show)
         bytes([0xC9, ACTION_WAIT]),                   # CMP #2
@@ -319,6 +347,7 @@ def menu_program():
         abs_op(0x4C, COLDSV),                         # JMP COLDSV: boot what the host put on D1
         ("label", "nohost"),
         b"\xA9\x00", b"\x8D", ("abs", "cur_count"),   # no local bar on the stale screen (N007)
+        b"\x8D", ("abs", "layout"),                   # STA layout: the main list shows it (menu-presentacion)
         # The buffer may hold a list, or a reply cut or mixed (two hosts on the hub, seen in the
         # demo of menu-editar-servidor): clear everything below the title, which both layouts
         # share, so the main display list shows only the title and the message.
@@ -579,6 +608,39 @@ def menu_program():
         ("label", "ed_put"),
         b"\x99", ("label", "ep_lo"), b"\x00", ("label", "ep_hi"), b"\x00",  # STA field,Y
         b"\x60",                                      # RTS
+        # notice (menu-presentacion): LOADING_TEXT in the message row of the layout in view.
+        ("label", "notice"),
+        b"\xAD", ("abs", "layout"),                   # LDA layout
+        b"\x29\x01",                                  # AND #1
+        b"\xD0", ("rel", "notice_list"),              # BNE notice_list
+        bytes([0xA2, LINE_WIDTH - 1]),                # LDX #39
+        ("label", "notice_main"),
+        b"\xBD", ("abs", "loading_text"),             # LDA loading_text,X
+        b"\x9D", ("abs", "main_message"),             # STA main_message,X
+        b"\xCA",                                      # DEX
+        b"\x10", ("rel", "notice_main"),              # BPL notice_main
+        b"\x60",                                      # RTS
+        ("label", "notice_list"),
+        bytes([0xA2, LINE_WIDTH - 1]),                # LDX #39
+        ("label", "notice_row"),
+        b"\xBD", ("abs", "loading_text"),             # LDA loading_text,X
+        b"\x9D", ("abs", "list_message"),             # STA list_message,X
+        b"\xCA",                                      # DEX
+        b"\x10", ("rel", "notice_row"),               # BPL notice_row
+        b"\x60",                                      # RTS
+        # show (menu-presentacion), called in the vertical blank: the display list of the new
+        # layout goes to the shadow and to ANTIC at once, then the reply is copied from the hidden
+        # buffer top to bottom, ahead of the beam.
+        ("label", "show"),
+        b"\xAD", ("abs", "hid_layout"),               # LDA hidden layout
+        b"\x29\x01",                                  # AND #1 (two layouts)
+        b"\xAA",                                      # TAX
+        b"\xBD", ("abs", "dltab"),                    # LDA dltab,X (low byte of its display list)
+        abs_op(0x8D, SDLSTL),                         # STA SDLSTL
+        abs_op(0x8D, DLISTL),                         # STA DLISTL
+        *copy_pages(),
+        b"\x60",                                      # RTS
+        ("label", "show_end"),
         # Keyboard code (without Shift and Control) -> screen code of the character typed:
         # lowercase letters, digits, '.' and '-'; 0 for any other key.
         ("label", "chartab"), char_table(),
@@ -617,6 +679,7 @@ def menu_program():
         b"\x41", ("abs", "dl_list"),
         ("label", "dl_end"),
         ("label", "nohost_text"), screen_line(NO_HOST_TEXT),
+        ("label", "loading_text"), screen_line(LOADING_TEXT),
         ("label", "seq"), b"\x00",
         # Reply buffer: action, layout and the screen the display lists show. It starts
         # with the main template, so the screen is complete even before the host answers.
@@ -657,7 +720,19 @@ def menu_program():
     labels = addresses(program)
     for name, offset in screen_labels.items():
         labels[name] = labels["screen"] + offset
-    code = assemble(program, MENU_ORG, extra_labels={k: labels[k] for k in screen_labels})
+    # menu-presentacion: the hidden reply buffer is RAM on the first page after the block the
+    # boot loads; it is never loaded from the disk, so the block does not grow.
+    loaded = -(-(labels["end"] - MENU_ORG) // BOOT_SECTOR_SIZE) * BOOT_SECTOR_SIZE
+    hidden = (MENU_ORG + loaded + 0xFF) & ~0xFF
+    if hidden + REPLY_SIZE > HIDDEN_LIMIT:
+        raise ValueError("the hidden reply buffer does not fit below HIDDEN_LIMIT")
+    hidden_labels = {"hidden": hidden, "hid_layout": hidden + 1}
+    for page in range(-(-REPLY_SIZE // 0x100)):
+        hidden_labels[f"hid{page}"] = hidden + page * 0x100
+        hidden_labels[f"rep{page}"] = labels["reply"] + page * 0x100
+    labels.update(hidden_labels)
+    code = assemble(program, MENU_ORG,
+                    extra_labels={**{k: labels[k] for k in screen_labels}, **hidden_labels})
     sectors = -(-len(code) // BOOT_SECTOR_SIZE)
     block = bytearray(code + bytes(sectors * BOOT_SECTOR_SIZE - len(code)))
     block[1] = sectors

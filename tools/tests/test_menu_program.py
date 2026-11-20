@@ -21,6 +21,7 @@ import make_menu  # noqa: E402
 REPO = TOOLS.parent
 ORG = make_menu.MENU_ORG
 STEPS_PER_FRAME = 200  # instructions per frame; a real frame runs thousands, the wait loop needs more than 20 (menu-navegacion)
+REAL_STEPS_PER_FRAME = 6000  # ~29,800 cycles per NTSC frame at ~5 cycles per instruction (menu-presentacion)
 
 
 class Halt(Exception):
@@ -56,6 +57,9 @@ class Menu6502:
         self.joy_until = 0
         self.frames = 0
         self.sp = 0xFF
+        # menu-presentacion: label name -> frames at each visit of that label.
+        self.watch = {}
+        self.visits = []
 
     def word(self, at):
         return self.mem[at] | (self.mem[at + 1] << 8)
@@ -90,13 +94,23 @@ class Menu6502:
 
     def run(self, pc=None, max_steps=200000):
         pc = ORG + 6 if pc is None else pc
+        show, show_end = self.labels.get("show", -1), self.labels.get("show_end", -1)
+        clock = 0.0
         for step in range(max_steps):
-            if step % STEPS_PER_FRAME == STEPS_PER_FRAME - 1:
+            # The copy of menu-presentacion runs thousands of instructions; at STEPS_PER_FRAME
+            # it would last ~19 frames instead of under one. Inside it, an instruction costs
+            # what it costs on the Atari: about 1/REAL_STEPS_PER_FRAME of a frame.
+            clock += STEPS_PER_FRAME / REAL_STEPS_PER_FRAME if show <= pc < show_end else 1
+            if clock >= STEPS_PER_FRAME:
+                clock -= STEPS_PER_FRAME
                 self.mem[make_menu.RTCLOK_LOW] = (self.mem[make_menu.RTCLOK_LOW] + 1) & 0xFF
                 self.frames += 1
             self.pc = pc
             if pc == self.labels.get("tick"):
                 self.ticks_waited += 1
+            for name in self.watch:
+                if pc == self.labels[name]:
+                    self.visits.append((name, self.frames))
             op = self.mem[pc]
             imm, zp, ab = self.mem[pc + 1], self.mem[pc + 1], self.word(pc + 1)
             if op == 0xA9:
@@ -212,10 +226,17 @@ class Menu6502:
         dcb["ticks_waited"] = self.ticks_waited
         dcb["frames"] = self.frames
         dcb["length"] = self.word(make_menu.DBYTLO)
+        # What the Atari shows while the reply arrives (the sector probe has no menu screen).
+        dcb["visible"] = self.screen() if "screen" in self.labels else None
         self.siov_calls.append(dcb)
         reply = self.siov(dcb)
         if reply is None:
             self.y = 0x8A      # SIO timeout
+        elif isinstance(reply, tuple):
+            # ("cut", data): the bytes arrived but the frame failed (checksum), as a reply cut
+            # or mixed by two hosts on the hub: SIOV wrote them and returns an error.
+            m[dcb["buffer"]:dcb["buffer"] + len(reply[1])] = reply[1]
+            self.y = 0x8F
         else:
             m[dcb["buffer"]:dcb["buffer"] + len(reply)] = reply
             self.y = 0x01
@@ -369,10 +390,11 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(screen[sub:sub + 20], make_menu.screen_codes(" ESTADO DE UNIDADES ", 20))
         inv = lambda text: bytes(b | 0x80 for b in make_menu.screen_codes(text, len(text)))  # noqa: E731
         txt = lambda text: make_menu.screen_codes(text, len(text))  # noqa: E731
-        row1 = (b"\x42" + inv("1-8") + b"\x56" + txt(" ABRIR FUENTE") + b"\x42" + inv("E") + b"\x56"
-                + txt(" EDITAR SERVIDOR") + b"\x00" * 3)
-        row2 = (b"\x42" + inv("A") + b"\x56" + txt("   ARRANCAR D1 ") + b"\x42" + inv("U") + b"\x56"
-                + txt(" GESTIONAR UNIDADES"))
+        # menu-presentacion (AC3): every key of the main screen, N included.
+        row1 = (b"\x42" + inv("1-8") + b"\x56" + txt(" FUENTE  ") + b"\x42" + inv("E") + b"\x56"
+                + txt(" SERVIDOR ") + b"\x42" + inv("N") + b"\x56" + txt(" NUEVA ATR"))
+        row2 = (b"\x42" + inv("A") + b"\x56" + txt(" ARRANCAR D1  ") + b"\x42" + inv("U") + b"\x56"
+                + txt(" DESMONTAR UNIDAD") + b"\x00" * 3)
         self.assertEqual((len(row1), len(row2)), (40, 40))
         foot = make_menu.MAIN_FOOTER
         self.assertEqual(screen[foot:foot + 80], row1 + row2)
@@ -398,7 +420,7 @@ class MenuProgramTest(unittest.TestCase):
         call = cpu.siov_calls[0]
         self.assertEqual((call["device"], call["unit"], call["command"]), (0x5A, 1, 0x4B))
         self.assertEqual((call["dstats"], call["aux1"], call["aux2"]), (0x40, 0xFF, 1 << 5 | make_menu.NO_ROW))
-        self.assertEqual((call["buffer"], call["length"]), (self.labels["reply"], 962))
+        self.assertEqual((call["buffer"], call["length"]), (self.labels["hidden"], 962))  # menu-presentacion
         self.assertEqual(call["timeout"], make_menu.MENU_TIMEOUT_S)
         self.assertEqual(cpu.word(make_menu.SDLSTL), self.labels["dl_main"])
         self.assertEqual(cpu.screen(), host_reply(0, 0)[2:])
@@ -550,9 +572,12 @@ class MenuProgramTest(unittest.TestCase):
         # RTCLOK starts at 240, so the count crosses its wrap to 0.
         down = lambda frame: (13, 1) if frame < 70 else (15, 1)  # noqa: E731
         sends = self.joystick_sends(down, 90, rtclok=240)
-        self.assertEqual([code for code, _ in sends], [make_menu.NAV_DOWN] * 6)
+        self.assertEqual([code for code, _ in sends], [make_menu.NAV_DOWN] * 5)
         frames = [frame for _, frame in sends]
-        self.assertEqual([b - a for a, b in zip(frames, frames[1:])], [30, 9, 9, 9, 9])
+        # menu-presentacion: every answer is shown after a vertical blank, one frame the repeat
+        # does not count, so 30/9 became 31/10 here (6 moves a second instead of 6.7). Five
+        # sends fit in the 70 frames where six did.
+        self.assertEqual([b - a for a, b in zip(frames, frames[1:])], [31, 10, 10, 10])
 
     def test_a_slow_answer_only_pauses_the_repeat(self):
         # The third send waits 200 frames inside SIOV (more than 127): the repeat resumes
@@ -560,8 +585,10 @@ class MenuProgramTest(unittest.TestCase):
         down = lambda frame: (13, 1) if frame < 300 else (15, 1)  # noqa: E731
         sends = self.joystick_sends(down, 320, slow=(3, 200))
         frames = [frame for _, frame in sends]
-        self.assertEqual(frames[3] - frames[2], 200 + 8)
-        self.assertEqual(frames[4] - frames[3], 9)
+        # menu-presentacion: 200 + 10 and then 10 (was 200 + 8 and 9): the vertical blank before
+        # each answer is shown, as in test_a_held_direction_repeats_after_30_frames_then_every_9.
+        self.assertEqual(frames[3] - frames[2], 200 + 10)
+        self.assertEqual(frames[4] - frames[3], 10)
 
     def test_a_new_direction_is_sent_at_once_and_restarts_the_delay(self):
         joy = lambda f: (14, 1) if f < 10 else (15, 1) if f < 12 else (7, 1) if f < 20 else (15, 1)  # noqa: E731
@@ -769,6 +796,77 @@ class MenuProgramTest(unittest.TestCase):
         table = make_menu.char_table()
         self.assertEqual(sum(1 for b in table if b), len(make_menu.KEYBOARD))
         self.assertEqual(table[0x22], make_menu.screen_codes(".", 1)[0])
+
+    # menu-presentacion: the reply arrives out of sight; the screen changes at once.
+
+    def test_the_hidden_buffer_is_ram_after_the_block_on_its_own_page(self):
+        hidden = self.labels["hidden"]
+        self.assertEqual(hidden & 0xFF, 0)
+        self.assertGreaterEqual(hidden, ORG + len(self.block))
+        self.assertLess(hidden - (ORG + len(self.block)), 0x100)
+        self.assertLessEqual(hidden + make_menu.REPLY_SIZE, 0x4000)
+
+    def test_while_the_list_loads_the_main_screen_stays_with_the_notice(self):
+        first, second = host_reply(0, 0, 0x21), host_reply(0, 1, 0x22)
+        replies = [first, second]
+        cpu = Menu6502(self.block, [KEY_1], lambda dcb: replies.pop(0))
+        cpu.run_until_idle()
+        seen = cpu.siov_calls[1]["visible"]
+        message = make_menu.MAIN_MESSAGE
+        expected = first[2:message + 2] + make_menu.screen_line(make_menu.LOADING_TEXT) + first[message + 42:]
+        self.assertEqual(seen, expected)
+        self.assertEqual(cpu.screen(), second[2:])  # the list, whole
+
+    def test_while_a_key_on_the_list_loads_the_notice_is_on_the_list_message_row(self):
+        first, second = host_reply(0, 1, 0x22), host_reply(0, 0, 0x21)
+        replies = [first, second]
+        cpu = Menu6502(self.block, [KEY_ESC], lambda dcb: replies.pop(0))
+        cpu.run_until_idle()
+        seen = cpu.siov_calls[1]["visible"]
+        message = make_menu.LIST_MESSAGE
+        expected = first[2:message + 2] + make_menu.screen_line(make_menu.LOADING_TEXT) + first[message + 42:]
+        self.assertEqual(seen, expected)
+        self.assertEqual(cpu.screen(), second[2:])
+
+    def test_a_poll_shows_no_notice_over_the_progress_of_the_host(self):
+        wait = host_reply(make_menu.ACTION_WAIT, 0, 0x23)
+        replies = [wait, host_reply(0, 0)]
+        cpu = Menu6502(self.block, [], lambda dcb: replies.pop(0))
+        cpu.run_until_idle()
+        poll = cpu.siov_calls[1]
+        self.assertEqual(poll["aux1"], make_menu.POLL)
+        self.assertEqual(poll["visible"], wait[2:])
+
+    def test_the_new_screen_is_copied_after_a_vertical_blank_with_its_display_list(self):
+        replies = [host_reply(0, 0), host_reply(0, 1, 0x22)]
+        cpu = Menu6502(self.block, [KEY_1], lambda dcb: replies.pop(0))
+        cpu.watch = {"show": True}
+        cpu.run_until_idle()
+        self.assertEqual(len(cpu.visits), 2)
+        self.assertGreater(cpu.visits[1][1], cpu.siov_calls[1]["frames"])  # RTCLOK moved first
+        self.assertEqual(cpu.mem[make_menu.DLISTL], self.labels["dl_list"] & 0xFF)
+        self.assertEqual(cpu.mem[make_menu.SDLSTL], self.labels["dl_list"] & 0xFF)
+        self.assertEqual(cpu.screen(), host_reply(0, 1, 0x22)[2:])
+
+    def test_after_no_answer_on_the_list_the_notice_goes_to_the_main_message_row(self):
+        # The error screen uses the main display list, so the next notice must be on its row.
+        replies = [host_reply(0, 1, 0x22), None, host_reply(0, 0)]
+        cpu = Menu6502(self.block, [KEY_1], lambda dcb: replies.pop(0))
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        cpu.keys = [KEY_1]
+        cpu.run_until_idle(self.labels["key"])
+        message = make_menu.MAIN_MESSAGE
+        seen = cpu.siov_calls[2]["visible"]
+        self.assertEqual(seen[message:message + 40], make_menu.screen_line(make_menu.LOADING_TEXT))
+
+    def test_a_cut_reply_never_reaches_the_screen(self):
+        cut = host_reply(0, 1, 0x2A)
+        replies = [host_reply(0, 0), ("cut", cut)]
+        cpu = Menu6502(self.block, [KEY_1], lambda dcb: replies.pop(0))
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        self.assertNotIn(0x2A, cpu.screen())
+        message = make_menu.MAIN_MESSAGE
+        self.assertEqual(cpu.screen()[message:message + 40], make_menu.screen_line(make_menu.NO_HOST_TEXT))
 
     def test_committed_include_matches_the_generator(self):
         include = REPO / "host" / "src" / "menu_program.inc"

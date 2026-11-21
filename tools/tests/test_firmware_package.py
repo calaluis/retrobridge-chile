@@ -733,5 +733,161 @@ class CassettePackageTest(unittest.TestCase):
         self.assertFalse(ok)
 
 
+def closed_record():
+    return {"H4": {"aprobada": False, "fecha": None, "registro": None},
+            "M3a": {"aprobada": False, "fecha": None, "registro": None},
+            "nota": "datos de prueba"}
+
+
+CLOSED_PROFILE = "puertas H4 y M3a sin aprobar (perfil)"
+CLOSED_RECORD = "puertas H4 y M3a sin aprobar (registro)"
+
+
+class CassetteReadOnlyPackageTest(unittest.TestCase):
+    """cassette-lectura: the same cassette code and calls, packaged only while H4 and M3a are unsigned."""
+
+    def setUp(self):
+        CassettePackageTest.setUp(self)
+        self.profile(False, False)
+        self.gates(closed_record())
+
+    tearDown = CassettePackageTest.tearDown
+    profile = CassettePackageTest.profile
+    gates = CassettePackageTest.gates
+    failed = CassettePackageTest.failed
+
+    def package(self, variant="cassette-lectura"):
+        return CassettePackageTest.package(self, variant)
+
+    def assert_refused(self, check_name, variant="cassette-lectura"):
+        CassettePackageTest.assert_refused(self, check_name, variant)
+
+    def edit_out(self, rel, change):
+        path = self.f.out / rel
+        data = json.loads(path.read_text(encoding="utf-8"))
+        change(data)
+        path.write_text(json.dumps(data), encoding="utf-8")
+        fp.write_manifest(self.f.out)  # a consistent manifest does not help
+
+    # positive case
+
+    def test_read_only_package_with_both_gates_unsigned(self):
+        log = self.package()
+        self.assertTrue(log.ok, self.failed(log))
+        provenance = json.loads((self.f.out / "PROVENANCE.json").read_text(encoding="utf-8"))
+        self.assertEqual(provenance["package"], "retrobridge-fw-cassette-lectura-fujinet-atari-v1x")
+        self.assertEqual(provenance["variant"], "cassette-lectura")
+        self.assertEqual(provenance["features"], ["cassette"])
+        self.assertEqual(provenance["gates"], closed_record())
+        self.assertEqual(json.loads((self.f.out / "config" / "puertas.json").read_text(encoding="utf-8")),
+                         closed_record())
+        self.assertIn("sin aprobar", (self.f.out / "LEEME.md").read_text(encoding="utf-8"))
+        log = fp.verify_package(self.f.out)
+        self.assertTrue(log.ok, self.failed(log))
+        self.assertIn("registrado en CI: " + CLOSED_PROFILE, [c.name for c in log.checks])
+
+    # any approval refuses it, at generation
+
+    def test_h4_signed_in_the_profile_is_refused(self):
+        self.profile(True, False)
+        self.assert_refused(CLOSED_PROFILE)
+
+    def test_m3a_signed_in_the_profile_is_refused(self):
+        self.profile(False, True)
+        self.assert_refused(CLOSED_PROFILE)
+
+    def test_profile_that_cannot_be_read_is_refused(self):
+        write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp",
+              "constexpr BoardProfile fujinet_atari_v1x_profile() noexcept { return kUnsigned; }\n")
+        self.assert_refused(CLOSED_PROFILE)
+
+    def test_an_approved_profile_behind_a_define_is_refused(self):
+        write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp",
+              "#define false true\n" + PROFILE_HEADER % ("false", "false"))  # reads unsigned, compiles approved
+        self.assert_refused(CLOSED_PROFILE)
+
+    def test_h4_approved_in_the_record_is_refused(self):
+        record = closed_record()
+        record["H4"]["aprobada"] = True
+        self.gates(record)
+        self.assert_refused(CLOSED_RECORD)
+
+    def test_m3a_approved_in_the_record_is_refused(self):
+        record = closed_record()
+        record["M3a"]["aprobada"] = True
+        self.gates(record)
+        self.assert_refused(CLOSED_RECORD)
+
+    def test_not_approved_must_be_the_json_false(self):
+        record = closed_record()
+        record["H4"]["aprobada"] = "no"
+        self.gates(record)
+        self.assert_refused(CLOSED_RECORD)
+
+    def test_a_gate_missing_from_the_record_is_refused(self):
+        record = closed_record()
+        del record["M3a"]
+        self.gates(record)
+        self.assert_refused(CLOSED_RECORD)
+
+    def test_a_repeated_key_in_the_record_is_refused(self):
+        text = json.dumps(closed_record())[:-1] + ', "H4": {"aprobada": true}}'
+        write(self.f.src / "docs" / "mediciones" / "puertas.json", text)
+        self.assert_refused(CLOSED_RECORD)
+
+    def test_the_record_missing_is_refused(self):
+        (self.f.src / "docs" / "mediciones" / "puertas.json").unlink()
+        self.assert_refused(CLOSED_RECORD)
+
+    def test_the_code_scan_still_applies(self):
+        write(self.f.src / "components" / "rb_sio" / "tx.cpp", "void f() { gpio_set_level(21, 0); }\n")
+        self.assert_refused("GPIO/UART del SIO solo en rb_esp_cassette (código)")
+
+    def test_cassette_feature_must_be_linked_in(self):
+        write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=CASSETTE_ELF))
+        self.assert_refused("casetera incorporada (aplicación)")
+
+    # and at verification
+
+    def test_verify_refuses_a_record_changed_to_approved(self):
+        self.assertTrue(self.package().ok)
+        self.edit_out("config/puertas.json", lambda r: r["M3a"].update(aprobada=True))
+        self.assertIn(CLOSED_RECORD, self.failed(fp.verify_package(self.f.out)))
+
+    def test_verify_refuses_a_record_that_differs_from_provenance(self):
+        self.assertTrue(self.package().ok)
+        self.edit_out("config/puertas.json", lambda r: r.update(nota="otra"))
+        self.assertIn(CLOSED_RECORD, self.failed(fp.verify_package(self.f.out)))
+
+    def test_verify_requires_the_closed_profile_check_recorded(self):
+        self.assertTrue(self.package().ok)
+        self.edit_out("PROVENANCE.json",
+                      lambda p: p.update(checks=[c for c in p["checks"] if c["name"] != CLOSED_PROFILE]))
+        self.assertIn("registrado en CI: " + CLOSED_PROFILE, self.failed(fp.verify_package(self.f.out)))
+
+    def test_verify_refuses_a_package_renamed_to_the_approved_variant(self):
+        self.assertTrue(self.package().ok)
+        self.edit_out("PROVENANCE.json", lambda p: p.update(variant="cassette",
+                                                            package="retrobridge-fw-cassette-fujinet-atari-v1x"))
+        failed = self.failed(fp.verify_package(self.f.out))
+        self.assertIn("registrado en CI: puertas H4 y M3a (perfil)", failed)
+        self.assertIn("puertas H4 y M3a (registro)", failed)
+
+    # the other variants keep their controls
+
+    def test_the_approved_cassette_package_is_still_refused(self):
+        self.assert_refused("puertas H4 y M3a (perfil)", variant="cassette")
+
+    def test_diag_and_h3c_still_refuse_the_cassette_calls(self):
+        for variant in ("diag", "h3c"):
+            self.assert_refused("sin GPIO/UART del SIO (código)", variant=variant)
+
+    def test_real_profile_and_record_allow_only_the_read_only_package(self):
+        repo = Path(__file__).resolve().parents[2]
+        self.assertEqual(fp.profile_gates(repo), (False, False))
+        ok, detail, _record = fp.read_closed_record(repo)
+        self.assertTrue(ok, detail)
+
+
 if __name__ == "__main__":
     unittest.main()

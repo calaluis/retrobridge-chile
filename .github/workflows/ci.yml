@@ -59,3 +59,64 @@ jobs:
           grep -q '^CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y' build-fujinet/sdkconfig
           grep -q '^CONFIG_PARTITION_TABLE_CUSTOM=y' build-fujinet/sdkconfig
           idf.py -B build-fujinet -D SDKCONFIG=build-fujinet/sdkconfig size
+
+  # Read-only cassette firmware (cassette-cas, variant "cassette-lectura") for the FujiNet Atari
+  # FN32ROV-1.3/1.5: `cas mount` and `cas status` over USB, with H4 and M3a unsigned, so DATA IN and
+  # MOTOR are never configured. Always built from the pinned firmware commit FW_COMMIT, checked out
+  # apart from the packaging tools of this workflow's own commit. Pull Requests and manual runs only.
+  firmware-package-cassette-lectura:
+    name: Firmware package cassette-lectura (FujiNet Atari FN32ROV-1.3/1.5)
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    container: espressif/idf:v6.1   # D-12: pinned ESP-IDF release
+    env:
+      FW_COMMIT: f40510642090843de6b7f83a1bb07c5521df278a
+    steps:
+      - name: Checkout packaging tools (this workflow's commit)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ci
+          persist-credentials: false
+      - name: Checkout firmware source (pinned commit)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.FW_COMMIT }}
+          path: src
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build firmware (RB_BOARD_FUJINET_ATARI_V1X)
+        shell: bash
+        run: |
+          # The container runs as another user than the checkout owner: trust only these two trees.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/ci"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/src"
+          . "$IDF_PATH/export.sh"
+          mkdir reports
+          cd src
+          idf.py -B build-fujinet -D SDKCONFIG=build-fujinet/sdkconfig \
+                 -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board.fujinet-atari-v1x" build
+          idf.py -B build-fujinet -D SDKCONFIG=build-fujinet/sdkconfig size > ../reports/size.txt
+          idf.py -B build-fujinet -D SDKCONFIG=build-fujinet/sdkconfig size-components > ../reports/size-components.txt
+      - name: Verify and package
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          out="out/retrobridge-fw-cassette-lectura-fujinet-atari-v1x-${FW_COMMIT:0:7}"
+          python3 -I ci/tools/ci/firmware_package.py package --src src --build src/build-fujinet \
+                  --reports reports --out "$out" --baseline "$FW_COMMIT" --variant cassette-lectura
+          python3 -I ci/tools/ci/firmware_package.py verify "$out"
+          { echo '```'; cat "$out/reports/checks.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload artifact
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: retrobridge-fw-cassette-lectura-fujinet-atari-v1x-f405106
+          path: out/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record artifact digest
+        shell: bash
+        env:
+          DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: |
+          echo "Artifact zip SHA-256: $DIGEST" >> "$GITHUB_STEP_SUMMARY"

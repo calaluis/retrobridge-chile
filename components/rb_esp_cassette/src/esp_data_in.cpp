@@ -55,6 +55,13 @@ size_t encode_from_feed(const void* /*data*/, size_t /*data_size*/, size_t /*sym
     return written;
 }
 
+// RMT "transmission done" interrupt: only raises the flag pump() reads. No I/O, no logging.
+bool on_tx_done(rmt_channel_handle_t /*channel*/, const rmt_tx_done_event_data_t* /*event*/, void* ctx)
+{
+    static_cast<std::atomic<bool>*>(ctx)->store(true, std::memory_order_release);
+    return false;  // no task woken
+}
+
 }  // namespace
 
 bool EspDataIn::configure(const rb::board::CassetteOutputAssignment& pins) noexcept
@@ -119,7 +126,7 @@ bool EspDataIn::send(rb::core::Span<const uint8_t> bytes)
 
 bool EspDataIn::push(const rb::cassette::FskPortion& portion)
 {
-    return enabled() && !faulted_ && feed_.push(portion);
+    return enabled() && !faulted_ && !releasePending_ && feed_.push(portion);
 }
 
 bool EspDataIn::idle() const
@@ -129,11 +136,8 @@ bool EspDataIn::idle() const
 
 void EspDataIn::stop()
 {
-    if (channel_ != nullptr) {
-        (void)traced("rmt_disable", rmt_disable(as_channel(channel_)));  // aborts the transmission in flight
-    }
-    feed_.clear();
-    releasePin();
+    discardFeed_ = true;  // cleared by releasePin() once the RMT is disabled, never under it
+    (void)releasePin();
     sending_ = false;
     started_ = false;
     lastSize_ = 0;
@@ -142,6 +146,11 @@ void EspDataIn::stop()
 void EspDataIn::pump() noexcept
 {
     if (!enabled() || faulted_) {
+        return;
+    }
+    if (releasePending_) {
+        (void)releasePin();  // the RMT has to let go first: no run starts, even with portions queued
+        lastSize_ = feed_.size();
         return;
     }
     if (channel_ != nullptr && sending_ && !transmitting()) {
@@ -169,17 +178,30 @@ void EspDataIn::pump() noexcept
     lastSize_ = feed_.size();
 }
 
+// The RMT says when a transmission ends (on_trans_done). Polling rmt_tx_wait_all_done(0) instead
+// logged "flush timeout" as an error on every tick of a run (bench test C8, d05bfe2).
 bool EspDataIn::transmitting() const noexcept
 {
-    return channel_ != nullptr && rmt_tx_wait_all_done(as_channel(channel_), 0) == ESP_ERR_TIMEOUT;
+    return channel_ != nullptr && !txDone_.load(std::memory_order_acquire);
+}
+
+void EspDataIn::disableChannel() noexcept
+{
+    // Once per enable: IDF refuses a second rmt_disable() (ESP_ERR_INVALID_STATE, bench test C8).
+    if (channel_ == nullptr || !rmtEnabled_) {
+        return;
+    }
+    if (traced("rmt_disable", rmt_disable(as_channel(channel_))) == ESP_OK) {
+        rmtEnabled_ = false;
+    }
 }
 
 void EspDataIn::dropRun() noexcept
 {
     // The RMT could not play: the run is dropped (the Atari will not load it) instead of retrying
     // every tick. The player sees idle() and goes on; DATA IN goes back to the idle UART.
-    feed_.clear();
-    releasePin();
+    discardFeed_ = true;
+    (void)releasePin();
     started_ = false;
     ++failures_;
     ESP_LOGE(kTag, "FSK run dropped: RMT not available (%u so far)", static_cast<unsigned>(failures_));
@@ -211,7 +233,12 @@ bool EspDataIn::takePin() noexcept
         (void)pinToUart();
         return false;
     }
-    if (traced("rmt_enable", rmt_enable(channel)) != ESP_OK) {
+    rmt_tx_event_callbacks_t callbacks{};
+    callbacks.on_trans_done = &on_tx_done;
+    txDone_.store(false, std::memory_order_relaxed);
+    if (traced("rmt_tx_register_event_callbacks", rmt_tx_register_event_callbacks(channel, &callbacks, &txDone_)) !=
+            ESP_OK ||
+        traced("rmt_enable", rmt_enable(channel)) != ESP_OK) {
         (void)traced("rmt_del_encoder", rmt_del_encoder(encoder));
         (void)traced("rmt_del_channel", rmt_del_channel(channel));
         (void)pinToUart();
@@ -219,6 +246,7 @@ bool EspDataIn::takePin() noexcept
     }
     channel_ = channel;
     encoder_ = encoder;
+    rmtEnabled_ = true;
     started_ = false;
     return true;
 }
@@ -228,6 +256,7 @@ bool EspDataIn::startTransmission() noexcept
     rmt_transmit_config_t config{};
     config.loop_count = 0;
     config.flags.eot_level = 1;  // mark after every transmission: DATA IN released
+    txDone_.store(false, std::memory_order_release);  // before the RMT can notify this transmission
     if (traced("rmt_transmit", rmt_transmit(as_channel(channel_), as_encoder(encoder_), &dummy_, sizeof dummy_, &config)) !=
         ESP_OK) {
         return false;
@@ -237,19 +266,44 @@ bool EspDataIn::startTransmission() noexcept
     return true;
 }
 
-void EspDataIn::releasePin() noexcept
+bool EspDataIn::releasePin() noexcept
 {
     if (channel_ == nullptr) {
-        return;
+        discardIfDue();
+        releasePending_ = false;
+        return true;
     }
-    (void)traced("rmt_disable", rmt_disable(as_channel(channel_)));  // already disabled after stop(): harmless
-    (void)traced("rmt_del_channel", rmt_del_channel(as_channel(channel_)));
-    (void)traced("rmt_del_encoder", rmt_del_encoder(as_encoder(encoder_)));
-    channel_ = nullptr;
-    encoder_ = nullptr;
     sending_ = false;
+    disableChannel();  // aborts a transmission in flight; not again after it succeeded once
+    if (!rmtEnabled_) {
+        discardIfDue();  // the RMT no longer reads the feed
+    }
+    // Still enabled, or not deleted: the RMT still has the pin and may still call the encoder. Both are
+    // kept and UART2 does not get the pin; pump() or release() tries again.
+    if (rmtEnabled_ || traced("rmt_del_channel", rmt_del_channel(as_channel(channel_))) != ESP_OK) {
+        if (!releasePending_) {
+            ESP_LOGE(kTag, "RMT did not let go of GPIO%d: channel kept, DATA IN not on UART2, retrying", pin_);
+        }
+        releasePending_ = true;
+        return false;
+    }
+    channel_ = nullptr;
+    (void)traced("rmt_del_encoder", rmt_del_encoder(as_encoder(encoder_)));  // no channel calls it any more
+    encoder_ = nullptr;
+    if (releasePending_) {
+        ESP_LOGI(kTag, "RMT let go of GPIO%d on a retry", pin_);
+        releasePending_ = false;
+    }
     // The UART takes the pin back; it idles high (mark).
-    (void)pinToUart();
+    return pinToUart();
+}
+
+void EspDataIn::discardIfDue() noexcept
+{
+    if (discardFeed_) {
+        feed_.clear();
+        discardFeed_ = false;
+    }
 }
 
 bool EspDataIn::pinToUart() noexcept
@@ -287,18 +341,23 @@ bool EspDataIn::recover() noexcept
     return true;
 }
 
-void EspDataIn::release() noexcept
+bool EspDataIn::release() noexcept
 {
     if (!enabled()) {
-        return;
+        return true;
     }
     stop();  // an FSK run in flight ends; the pin goes back to the UART (or the driver faults)
+    if (releasePending_) {
+        ESP_LOGE(kTag, "DATA IN not released: the RMT still has GPIO%d; release() again later", pin_);
+        return false;  // UART2 and the pin stay as they are
+    }
     (void)traced("uart_driver_delete", uart_driver_delete(kUart));
     // No peripheral keeps the pin: output off, pull-up, so the 74LS07 lets DATA IN go.
     (void)traced("gpio_reset_pin", gpio_reset_pin(static_cast<gpio_num_t>(pin_)));
     ESP_LOGI(kTag, "DATA IN released: UART2 deleted, GPIO%d reset (output off)", pin_);
     pin_ = -1;
     faulted_ = false;
+    return true;
 }
 
 int EspDataIn::traced(const char* call, int err) const noexcept

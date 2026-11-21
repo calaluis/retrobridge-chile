@@ -27,6 +27,7 @@
 // The refill callback is not in IRAM: during a flash write (NVS, OTA) the RMT ISR waits and a run
 // may underrun. Nothing writes the flash while a tape plays today.
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -64,7 +65,12 @@ public:
 
     uint32_t underruns() const noexcept { return underruns_; }
     uint32_t failures() const noexcept { return failures_; }  // runs dropped: the RMT could not play
-    bool fskActive() const noexcept { return channel_ != nullptr; }
+    bool fskActive() const noexcept { return channel_ != nullptr; }  // the RMT has the pin
+    // The RMT did not let go of the pin (rmt_disable or rmt_del_channel failed): the channel and its
+    // encoder are kept, the pin is still the RMT's, UART2 does not get it and send() and push()
+    // refuse. The feed is not cleared while the RMT may still read it. pump() retries only the
+    // release, even with portions queued, until it succeeds (release() retries it too).
+    bool releasePending() const noexcept { return releasePending_; }
 
     // The UART could not take DATA IN back: the pin is reset (no output) and everything is refused.
     bool faulted() const noexcept { return faulted_; }
@@ -73,34 +79,42 @@ public:
     bool recover() noexcept;
 
     // Undoes configure(): stops any run, deletes the UART2 driver and resets the pin (output off,
-    // pull-up). enabled() is false afterwards. Used by the bench test C8.
-    void release() noexcept;
+    // pull-up). enabled() is false afterwards. Used by the bench test C8. False: the RMT did not let
+    // go of the pin (releasePending()); nothing else was undone and a later release() retries.
+    bool release() noexcept;
 
     // Optional trace of every ESP-IDF call that changes the pin or its peripherals, with its
-    // esp_err_t (0 = ESP_OK). Not called for the polling calls (uart_wait_tx_done,
-    // rmt_tx_wait_all_done) nor from the RMT interrupt. Set before configure(); nullptr: none.
+    // esp_err_t (0 = ESP_OK). Not called for uart_wait_tx_done (a poll) nor from the RMT
+    // interrupts (refill, on_trans_done). Set before configure(); nullptr: none.
     using CallTrace = void (*)(const char* call, int err);
     void setTrace(CallTrace trace) noexcept { trace_ = trace; }
 
 private:
     bool takePin() noexcept;      // UART -> RMT; false: the UART still has the pin
     void dropRun() noexcept;      // RMT failure: drop the queued run, pin back to the UART
-    void releasePin() noexcept;   // RMT -> UART, line at mark
+    bool releasePin() noexcept;   // RMT -> UART, line at mark; false: the RMT kept the pin
     bool pinToUart() noexcept;    // false: the UART refused it, the driver is faulted
     int traced(const char* call, int err) const noexcept;  // reports err to the trace, returns it
     bool startTransmission() noexcept;
     bool transmitting() const noexcept;
+    void disableChannel() noexcept;  // rmt_disable() once per enable
+    void discardIfDue() noexcept;    // clears the feed of a cancelled run (the RMT not reading it)
 
     int8_t pin_ = -1;
     uint32_t baud_ = kDefaultBaud;
     void* channel_ = nullptr;   // rmt_channel_handle_t while the pin belongs to the RMT
     void* encoder_ = nullptr;   // rmt_encoder_handle_t
     bool sending_ = false;      // a transmission was queued and has not been seen done
+    bool rmtEnabled_ = false;   // the channel is enabled: rmt_disable() is due exactly once
+    // Set by the RMT's on_trans_done interrupt, read by pump(): the transmission has ended.
+    std::atomic<bool> txDone_{false};
     bool started_ = false;      // this run has started once (a restart counts as an underrun)
     uint32_t underruns_ = 0;
     uint32_t failures_ = 0;
     uint32_t pinFaults_ = 0;
     bool faulted_ = false;
+    bool releasePending_ = false;
+    bool discardFeed_ = false;   // a cancelled or dropped run: clear the feed once the RMT is disabled
     CallTrace trace_ = nullptr;
     uint32_t lastSize_ = 0;     // feed size at the previous pump()
     uint8_t dummy_ = 0;         // rmt_transmit() wants a payload; the encoder reads the feed

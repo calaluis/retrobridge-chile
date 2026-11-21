@@ -19,7 +19,7 @@ namespace rb::esp {
 class SdCardStorage {
 public:
     static constexpr const char* kMountPoint = "/sd";
-    static constexpr int kMaxOpenFiles = 4;  // H3-4: 3 slots + 1 spare
+    static constexpr int kMaxOpenFiles = 7;  // H3-4: 3 slots + 1 spare; cassette-cas C106: 3 tapes
 
     SdCardStorage() = default;
     SdCardStorage(const SdCardStorage&) = delete;

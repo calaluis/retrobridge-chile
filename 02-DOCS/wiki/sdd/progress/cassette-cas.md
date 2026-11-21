@@ -210,6 +210,38 @@ b-e0\m49-cas\c003`.
 - Revisión de cierre (1 revisor, pruebas como evidencia): sin defectos; 6 huecos de prueba cerrados con pruebas, cada
   mutante comprobado.
 
+## C106 — MOTOR en GPIO36 y `cas` en la consola del ESP32 (código hecho, M3a y flash pendientes, 2026-11-20)
+
+- Cambio de estrategia del responsable: probar en el Atari real con la FujiNet, no en Altirra (ninguna de las 36
+  cintas reales de MicroSD es solo `data`; NetSIO no lleva `fsk `).
+- `rb_board`: `motor` y `motorGateApproved` (M3a) en el perfil; FujiNet: GPIO36, M3a **sin firmar**.
+  `validate_for_motor()` da un `MotorAssignment` solo con la placa confirmada y M3a firmada; el pin debe ser de solo
+  entrada (34–39) y no chocar con la microSD ni el SIO. `check_sio_pins()` también ve MOTOR.
+- `rb_cassette`: `StdioTapeFiles` (cintas por stdio, 3 ranuras, lectura con candado: la leen el reproductor y el
+  productor); `DiscardByteOut`/`DiscardWaveOut` (antes de H4 nada sale por DATA IN); `cas status` sin cinta muestra
+  MOTOR.
+- `rb_esp_cassette` (nuevo): `EspMotorIn` (configura GPIO36 como entrada solo si `validate_for_motor` lo da) y
+  `CassetteService` (banco de 1 MB y tablas en PSRAM, una vez; tarea del bucle y tarea del productor; pedidos y
+  respuestas numerados por colas). `rb_console`: comando `cas`. `app_main`: arranca la casetera si hay microSD.
+- `sdkconfig.board.fujinet-atari-v1x`: PSRAM encendida (`CONFIG_SPIRAM`, con `IGNORE_NOTFOUND`). microSD: 7 archivos
+  abiertos (antes 4).
+- Controles:
+  - pruebas: `test_motor_assignment` 7/7, `test_stdio_tape_files` 9/9 (Alien Ambush real hasta el final en las salidas
+    que descartan); `ctest` 74/74; `check_layering` y `check_notices` OK;
+  - RED: `StdioTapeFiles` falló contra el esqueleto. `validate_for_motor` se escribió antes de su prueba: compensado con
+    5 mutantes, todos atrapados; el candado, con otro mutante atrapado;
+  - **no ejecutado**: `idf.py build` (sin ESP-IDF en este equipo; lo compila el CI) y `rsc risk` (permiso denegado);
+    tier del plan: 2;
+  - seguridad: ningún GPIO del SIO ni GPIO36 se configura con M3a y H4 sin firmar (revisor de seguridad);
+  - trazabilidad: AC8 (consola), AC9 (espera M3a).
+- Revisión (2 revisores: corrección y seguridad; la lente de pruebas, cubierta con mutantes propios). Seguridad: sin
+  defectos. Corregido: presupuesto de archivos de la microSD; una misma cinta leída por dos tareas (candado); respuesta
+  tardía tomada por la siguiente (pedidos numerados); pila de las tareas; arranque sin PSRAM; limpieza si falla el
+  arranque; MOTOR visible desde los chequeos del SIO; comentario de las salidas. Anotado: `cmd_cas` une los argumentos
+  con un espacio (un nombre con dos espacios seguidos cambia).
+- Falta para cerrar C106: compilar en el CI, M3a (medición del responsable), firmar M3a en el perfil, flashear con
+  aprobación y ver `cas status` seguir a `CLOAD` (AC9).
+
 ## Decision queue
 
 - **review-after (2026-11-20)** — AC5 dice «sin perder ni repetir». Para tiradas FSK, si MOTOR cae con la señal en

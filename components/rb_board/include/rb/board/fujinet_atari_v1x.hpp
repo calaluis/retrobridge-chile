@@ -30,7 +30,9 @@ constexpr BoardProfile fujinet_atari_v1x_profile() noexcept
                         SpiHost::Spi3,  // VSPI: the native controller for these pins
                         kNoPin,
                         false,  // H4 not approved (docs/hardware/h4-puerta-sio.md)
-                        SioPins{39, 33, 21}};
+                        SioPins{39, 33, 21},
+                        36,      // MOTOR: GPIO36 (SENSOR_VP), straight from SIO pin 8
+                        false};  // M3a not signed (docs/hardware/procedimiento-medicion-pasiva-sio.md)
 }
 
 }  // namespace rb::board

@@ -140,6 +140,9 @@ rb_add_host_test(test_board_profile board/test_board_profile.cpp)
 target_link_libraries(test_board_profile PRIVATE rb_board)
 rb_add_host_test(test_fujinet_profile board/test_fujinet_profile.cpp)
 target_link_libraries(test_fujinet_profile PRIVATE rb_board)
+# MOTOR (SIO pin 8) on GPIO36, input only, behind the M3a gate (cassette-cas C106).
+rb_add_host_test(test_motor_assignment board/test_motor_assignment.cpp)
+target_link_libraries(test_motor_assignment PRIVATE rb_board)
 rb_add_host_test(test_sio_pins board/test_sio_pins.cpp)
 target_link_libraries(test_sio_pins PRIVATE rb_board)
 rb_add_host_test(test_sio_listen_assignment board/test_sio_listen_assignment.cpp)
@@ -231,6 +234,10 @@ target_link_libraries(test_rb_cassette_player PRIVATE rb_cassette)
 # `cas mount|status|eject|rewind`: a bad file keeps the tape, closing waits for the producer (cassette-cas C105).
 rb_add_host_test(test_cassette_commands cassette/test_cassette_commands.cpp)
 target_link_libraries(test_cassette_commands PRIVATE rb_cassette)
+# Tapes read through stdio and outputs that drive no pin before H4 (cassette-cas C106).
+rb_add_host_test(test_stdio_tape_files cassette/test_stdio_tape_files.cpp)
+find_package(Threads REQUIRED)
+target_link_libraries(test_stdio_tape_files PRIVATE rb_cassette Threads::Threads)
 
 
 rb_add_host_test(test_tnfs_folder menu/test_tnfs_folder.cpp ${rb_root}/host/src/tnfs_folder.cpp

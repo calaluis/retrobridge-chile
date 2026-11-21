@@ -21,6 +21,7 @@
 #include "rb/board/fujinet_atari_v1x.hpp"
 #include "rb/console/diagnostic_console.hpp"
 #include "rb/core/toolchain_checks.hpp"
+#include "rb/esp/cassette_service.hpp"
 #include "rb/esp/esp_clock.hpp"
 #include "rb/esp/esp_system_probe.hpp"
 #include "rb/esp/sd_card_storage.hpp"
@@ -63,9 +64,14 @@ rb::app::ReadSector g_read{g_bay};
 rb::esp::EspSystemProbe g_system{kBoard.name};
 rb::hwdiag::DiagnosticsRecorder g_diagnostics{rb::console::kSectorReadBudgetUs};
 
+// The cassette (cassette-cas C106): MOTOR only behind M3a, DATA IN never driven before H4.
+rb::esp::EspMotorIn g_motor;
+rb::esp::CassetteService g_cassette{"/sd/", g_motor};
+
 rb::console::ConsoleContext g_console{kBoard,    g_storage, g_repository, g_inspect, g_verify,
                                       g_benchmark, g_mount, g_unmount,    g_collect, g_apply,
-                                      g_status,  g_read,    g_diagnostics, g_system, g_clock};
+                                      g_status,  g_read,    g_diagnostics, g_system, g_clock,
+                                      g_cassette};
 
 }  // namespace
 
@@ -89,6 +95,12 @@ extern "C" void app_main(void)
         } else {
             ESP_LOGE(kTag, "microSD mount failed (esp_err 0x%x)", static_cast<unsigned>(g_storage.lastEspError()));
         }
+    }
+
+    // The cassette needs the microSD (its tapes) and PSRAM (its bank).
+    (void)g_motor.configure(kBoard);
+    if (mounted.ok() && !g_cassette.start()) {
+        ESP_LOGW(kTag, "cassette not started");
     }
 
     if (!rb::console::start_diagnostic_console(g_console)) {

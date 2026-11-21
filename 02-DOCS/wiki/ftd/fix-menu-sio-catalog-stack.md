@@ -30,9 +30,19 @@ funciona porque allí el menú corre en `retrobridge_host`, en el PC.
 
 - [x] Buffer fuera de la pila, con error ENOMEM.
 - [x] Backtrace decodificado.
-- [ ] CI verde: pruebas de host (Linux, ASan), compilación ESP-IDF v6.1 y paquete menu-sio.
-- [ ] Banco: arranca por USB, lee la microSD, muestra `D1: menu` y responde a `sio status` sin pánicos.
+- [x] CI verde en `e9c0f2b`: pruebas de host (Linux, ASan), compilación ESP-IDF v6.1 y paquete menu-sio.
+- [x] Banco de `e9c0f2b`: arranca por USB, `catalog: 17`, `D1: menu`, dos `sio status`, sin pánicos.
+- [ ] UART: con el 65XE encendido, `e9c0f2b` vio 168 tramas cortas y 0 completas (ninguna respuesta).
+- [ ] Banco con el 65XE: `tramas` > 0, `ordenes` > 0 y el menú en pantalla.
+
+## Segundo fallo: la UART entrega tarde los bytes
+
+- `waitCommandFrame` lee los 5 bytes con un plazo de `kFrameReadUs` = 6 ms desde que baja COMMAND.
+- Con los umbrales por defecto del driver (120 bytes, o 10 caracteres de línea en reposo ≈ 5,2 ms), los bytes
+  llegan a `uart_read_bytes` hacia los 9 ms. Toda trama queda corta.
+- Arreglo: `uart_set_rx_full_threshold(kUart, 1)` y `uart_set_rx_timeout(kUart, 1)` en `EspSioUart::begin()`.
+  El empaquetador (`MENU_SIO_CALLS`) cuenta las dos llamadas nuevas.
 
 ## Siguiente
 
-Repetir el banco con el paquete nuevo, con autorización para COM3.
+Flashear el paquete nuevo por COM3 y encender el 65XE con la FujiNet ya en `D1: menu`.

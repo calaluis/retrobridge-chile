@@ -40,7 +40,11 @@ bool EspSioUart::begin() noexcept
         ESP_LOGE(kTag, "UART2 driver not installed: SIO line off");
         return false;
     }
-    if (uart_param_config(kUart, &config) != ESP_OK ||
+    // Each received byte goes to the driver at once. With the defaults (120 bytes, or 10 idle characters,
+    // ~5.2 ms at 19200) a 5-byte command frame reached uart_read_bytes after kFrameReadUs: every frame was
+    // short and the 65XE never got an answer (menu-sio bench on the 65XE, 2026-11-21: 168 short, 0 frames).
+    if (uart_param_config(kUart, &config) != ESP_OK || uart_set_rx_full_threshold(kUart, 1) != ESP_OK ||
+        uart_set_rx_timeout(kUart, 1) != ESP_OK ||
         uart_set_pin(kUart, pins_.dataIn, pins_.dataOut, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK ||
         gpio_pullup_en(static_cast<gpio_num_t>(pins_.dataOut)) != ESP_OK) {
         (void)uart_driver_delete(kUart);

@@ -158,6 +158,7 @@ MENU_SIO_CALLS = (
     (_SIO_UART, "uart_driver_install", 1), (_SIO_UART, "uart_param_config", 1), (_SIO_UART, "uart_set_pin", 1),
     (_SIO_UART, "uart_driver_delete", 2), (_SIO_UART, "uart_read_bytes", 1), (_SIO_UART, "uart_write_bytes", 1),
     (_SIO_UART, "uart_wait_tx_done", 2), (_SIO_UART, "uart_flush_input", 1),
+    (_SIO_UART, "uart_set_rx_full_threshold", 1), (_SIO_UART, "uart_set_rx_timeout", 1),
     (_MENU_MAIN, "gpio_set_direction", 1), (_MENU_MAIN, "gpio_pullup_en", 1), (_MENU_MAIN, "gpio_get_level", 1),
 )
 # TX on DATA IN and RX on DATA OUT of the board profile, UART2, no RTS/CTS; GPIO only on COMMAND (input) and

@@ -243,6 +243,16 @@ target_link_libraries(test_stdio_tape_files PRIVATE rb_cassette Threads::Threads
 rb_add_host_test(test_fsk_symbol_feed cassette/test_fsk_symbol_feed.cpp)
 target_link_libraries(test_fsk_symbol_feed PRIVATE rb_cassette Threads::Threads)
 
+# rb_esp_cassette's DATA IN driver against a scripted model of the ESP-IDF calls (H4-C C8):
+# who owns GPIO21 after each step, and the fault when the UART cannot take it back.
+add_library(fake_idf STATIC fakes/idf/fake_idf.cpp)
+target_include_directories(fake_idf PUBLIC fakes/idf ${CMAKE_CURRENT_LIST_DIR})
+rb_apply_build_flags(fake_idf)
+rb_add_host_test(test_esp_data_in esp_cassette/test_esp_data_in.cpp
+                 ${rb_root}/components/rb_esp_cassette/src/esp_data_in.cpp)
+target_include_directories(test_esp_data_in PRIVATE ${rb_root}/components/rb_esp_cassette/include)
+target_link_libraries(test_esp_data_in PRIVATE fake_idf rb_cassette rb_board)
+
 
 rb_add_host_test(test_tnfs_folder menu/test_tnfs_folder.cpp ${rb_root}/host/src/tnfs_folder.cpp
                  ${rb_root}/host/src/menu_catalog.cpp)

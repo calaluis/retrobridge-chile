@@ -383,6 +383,7 @@ CASSETTE_APP_MARKERS = (b"\0\x1b[0;32mI (%lu) %s: DATA IN on GPIO%d: records by 
 CASSETTE_ELF = (ELF_BYTES + b"\0_ZN2rb3esp9EspDataIn9configureERKNS_5board24CassetteOutputAssignmentE\0"
                 b"_ZN2rb3esp15CassetteService5startEv\0")
 SET_PIN = "(void)uart_set_pin(kUart, pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);\n"
+GPIO_RESET = "(void)gpio_reset_pin(static_cast<gpio_num_t>(pin_));\n"
 
 
 def cassette_source(path):
@@ -393,7 +394,8 @@ def cassette_source(path):
         lines.append("void f(rmt_tx_channel_config_t config) { config.gpio_num = pin_; }\n")
     for file, name, count in fp.CASSETTE_SIO_CALLS:
         if file == path:
-            lines += [SET_PIN if name == "uart_set_pin" else f"(void){name}(kUart, pin_);\n"] * count
+            line = {"uart_set_pin": SET_PIN, "gpio_reset_pin": GPIO_RESET}.get(name, f"(void){name}(kUart, pin_);\n")
+            lines += [line] * count
     return "".join(lines)
 
 
@@ -667,6 +669,11 @@ class CassettePackageTest(unittest.TestCase):
     def test_uart_set_pin_on_another_pin_is_refused(self):
         write(self.f.src / "components" / "rb_esp_cassette" / "src" / "esp_data_in.cpp",
               ESP_DATA_IN.replace(SET_PIN, SET_PIN.replace("pin_", "33"), 1))
+        self.assert_refused("GPIO/UART del SIO solo en rb_esp_cassette (código)")
+
+    def test_gpio_reset_pin_on_another_pin_is_refused(self):
+        write(self.f.src / "components" / "rb_esp_cassette" / "src" / "esp_data_in.cpp",
+              ESP_DATA_IN.replace(GPIO_RESET, GPIO_RESET.replace("pin_", "33"), 1))
         self.assert_refused("GPIO/UART del SIO solo en rb_esp_cassette (código)")
 
     def test_uart_other_than_uart2_is_refused(self):

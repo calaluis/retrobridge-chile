@@ -105,17 +105,20 @@ WATCHED_IDENTIFIER = re.compile(r"(?<![.>\w])((?:gpio|uart|rmt|esp_rom_gpio|ledc
 _DATA_IN = "components/rb_esp_cassette/src/esp_data_in.cpp"
 _SERVICE = "components/rb_esp_cassette/src/cassette_service.cpp"
 CASSETTE_SIO_CALLS = (
-    (_DATA_IN, "uart_driver_install", 1), (_DATA_IN, "uart_param_config", 1), (_DATA_IN, "uart_set_pin", 5),
+    (_DATA_IN, "uart_driver_install", 1), (_DATA_IN, "uart_param_config", 1), (_DATA_IN, "uart_set_pin", 3),
     (_DATA_IN, "uart_driver_delete", 1), (_DATA_IN, "uart_wait_tx_done", 2), (_DATA_IN, "uart_set_baudrate", 1),
     (_DATA_IN, "uart_write_bytes", 1),
     (_DATA_IN, "rmt_new_tx_channel", 1), (_DATA_IN, "rmt_new_simple_encoder", 1), (_DATA_IN, "rmt_enable", 1),
     (_DATA_IN, "rmt_transmit", 1), (_DATA_IN, "rmt_tx_wait_all_done", 1), (_DATA_IN, "rmt_disable", 2),
     (_DATA_IN, "rmt_del_channel", 3), (_DATA_IN, "rmt_del_encoder", 2),
+    (_DATA_IN, "gpio_reset_pin", 1),  # H4-C C8: DATA IN left as an input when the UART refuses it
     (_SERVICE, "gpio_config", 1), (_SERVICE, "gpio_get_level", 1),  # MOTOR, input only
 )
 # Every uart_set_pin() of the cassette puts TX on the granted DATA IN pin and nothing else.
 CASSETTE_UART_SET_PIN = re.compile(r"uart_set_pin\s*\(\s*kUart\s*,\s*(?:pins\.dataIn\(\)|pin_)\s*,"
                                    r"\s*UART_PIN_NO_CHANGE\s*,\s*UART_PIN_NO_CHANGE\s*,\s*UART_PIN_NO_CHANGE\s*\)")
+# The one gpio_reset_pin() of the cassette resets the granted DATA IN pin and nothing else.
+CASSETTE_GPIO_RESET = re.compile(r"gpio_reset_pin\s*\(\s*static_cast\s*<\s*gpio_num_t\s*>\s*\(\s*pin_\s*\)\s*\)")
 CASSETTE_UART_PORT = "constexpr uart_port_t kUart = UART_NUM_2;"
 BOARD_PROFILE_HEADER = "components/rb_board/include/rb/board/board_profile.hpp"
 CODE_CHECK = "sin GPIO/UART del SIO (código)"
@@ -366,6 +369,8 @@ def check_sio_calls(src: Path, allowed: tuple):
     data_in = texts.get(_DATA_IN, "")
     if len(CASSETTE_UART_SET_PIN.findall(data_in)) != want.get((_DATA_IN, "uart_set_pin"), 0):
         wrong.append(f"{_DATA_IN}: uart_set_pin fuera de (kUart, pins.dataIn()/pin_, sin RX/RTS/CTS)")
+    if len(CASSETTE_GPIO_RESET.findall(data_in)) != want.get((_DATA_IN, "gpio_reset_pin"), 0):
+        wrong.append(f"{_DATA_IN}: gpio_reset_pin fuera de (pin_)")
     if data_in.count(CASSETTE_UART_PORT) != 1:
         wrong.append(f"{_DATA_IN}: kUart no es UART_NUM_2")
     return not wrong, ", ".join(wrong) or f"solo las {sum(want.values())} llamadas de C107"

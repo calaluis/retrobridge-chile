@@ -87,7 +87,7 @@ bool EspDataIn::configure(const rb::board::CassetteOutputAssignment& pins) noexc
 
 bool EspDataIn::setBaud(uint32_t baud)
 {
-    if (!enabled() || baud == 0) {
+    if (!enabled() || faulted_ || baud == 0) {
         return false;
     }
     if (baud == baud_) {
@@ -105,8 +105,8 @@ bool EspDataIn::setBaud(uint32_t baud)
 
 bool EspDataIn::send(rb::core::Span<const uint8_t> bytes)
 {
-    if (!enabled() || channel_ != nullptr) {
-        return false;  // no output, or the pin belongs to the RMT until its run has played
+    if (!enabled() || faulted_ || channel_ != nullptr) {
+        return false;  // no output, a fault, or the pin belongs to the RMT until its run has played
     }
     if (bytes.size() == 0) {
         return true;
@@ -117,7 +117,7 @@ bool EspDataIn::send(rb::core::Span<const uint8_t> bytes)
 
 bool EspDataIn::push(const rb::cassette::FskPortion& portion)
 {
-    return enabled() && feed_.push(portion);
+    return enabled() && !faulted_ && feed_.push(portion);
 }
 
 bool EspDataIn::idle() const
@@ -139,7 +139,7 @@ void EspDataIn::stop()
 
 void EspDataIn::pump() noexcept
 {
-    if (!enabled()) {
+    if (!enabled() || faulted_) {
         return;
     }
     if (channel_ != nullptr && sending_ && !transmitting()) {
@@ -196,7 +196,7 @@ bool EspDataIn::takePin() noexcept
     config.flags.init_level = 1;  // the RMT holds mark until the first symbol: DATA IN released
     rmt_channel_handle_t channel = nullptr;
     if (rmt_new_tx_channel(&config, &channel) != ESP_OK) {
-        (void)uart_set_pin(kUart, pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+        (void)pinToUart();
         return false;
     }
     rmt_simple_encoder_config_t simple{};
@@ -206,13 +206,13 @@ bool EspDataIn::takePin() noexcept
     rmt_encoder_handle_t encoder = nullptr;
     if (rmt_new_simple_encoder(&simple, &encoder) != ESP_OK) {
         (void)rmt_del_channel(channel);
-        (void)uart_set_pin(kUart, pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+        (void)pinToUart();
         return false;
     }
     if (rmt_enable(channel) != ESP_OK) {
         (void)rmt_del_encoder(encoder);
         (void)rmt_del_channel(channel);
-        (void)uart_set_pin(kUart, pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+        (void)pinToUart();
         return false;
     }
     channel_ = channel;
@@ -246,7 +246,42 @@ void EspDataIn::releasePin() noexcept
     encoder_ = nullptr;
     sending_ = false;
     // The UART takes the pin back; it idles high (mark).
-    (void)uart_set_pin(kUart, pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    (void)pinToUart();
+}
+
+bool EspDataIn::pinToUart() noexcept
+{
+    if (uart_set_pin(kUart, pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) == ESP_OK) {
+        return true;
+    }
+    // Nobody may drive DATA IN now: gpio_reset_pin() turns its output off with a pull-up, so the 74LS07 lets the line go.
+    const bool safe = gpio_reset_pin(static_cast<gpio_num_t>(pin_)) == ESP_OK;
+    feed_.clear();
+    sending_ = false;
+    started_ = false;
+    lastSize_ = 0;
+    faulted_ = true;
+    ++pinFaults_;
+    ESP_LOGE(kTag, "UART2 did not take GPIO%d back: DATA IN %s, output off until recover()", pin_,
+             safe ? "released (output off, pull-up)" : "NOT reset");
+    return false;
+}
+
+bool EspDataIn::recover() noexcept
+{
+    if (!enabled()) {
+        return false;
+    }
+    if (!faulted_) {
+        return true;
+    }
+    if (uart_set_pin(kUart, pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK) {
+        ESP_LOGE(kTag, "recover: UART2 still refuses GPIO%d; DATA IN stays reset (output off)", pin_);
+        return false;
+    }
+    faulted_ = false;
+    ESP_LOGI(kTag, "recover: DATA IN back on UART2 (GPIO%d), at mark", pin_);
+    return true;
 }
 
 }  // namespace rb::esp

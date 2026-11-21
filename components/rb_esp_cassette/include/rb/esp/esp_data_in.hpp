@@ -9,9 +9,17 @@
 //   handed to the RMT and given back when the run has played, or at once on stop(). Adapted from
 //   the owner's own code (FujiNet PR #1756, cassette_fsk_take_pin / cassette_fsk_release_pin and
 //   the RMT channel settings; PR #1804, stop on MOTOR drop), under ADR-012 amendment 1.
-// - Bus safety (H4, risk R2): DATA IN rests at mark (high: the 74LS07 lets go and the Atari's
-//   pull-up holds the line). The UART idles high, the RMT ends every transmission at high, and
-//   stop() and every failure leave the pin to the idle UART.
+// - Bus safety (H4, risk R2; H4-C C8): DATA IN rests at mark (high: the 74LS07 lets go and the
+//   Atari's pull-up holds the line). The UART idles high, the RMT ends every transmission at high,
+//   and stop() and every failure leave the pin to the idle UART.
+// - If the UART cannot take the pin back (uart_set_pin fails), the driver faults: it logs the
+//   error, resets GPIO21 to its default state (GPIO function, output off, pull-up: the 74LS07 lets the line
+//   go), and refuses send(), setBaud(), push() and pump() until recover() gives the pin back to
+//   the UART. Nothing retries on its own: recovery is an explicit call.
+// - Bytes already handed to the UART are not flushed by stop() or by a MOTOR drop: they go out,
+//   then the line idles at mark. The player hands them over paced by the tape clock (at 600 baud
+//   and a 2 ms loop, one byte at a time as a rule; at most CassettePlayer::kMaxSend after a long
+//   stall of the loop).
 //
 // Only configure() with a CassetteOutputAssignment (H4 and M3a signed) touches the hardware;
 // without it every call refuses and nothing is driven. One task calls everything except the
@@ -58,10 +66,17 @@ public:
     uint32_t failures() const noexcept { return failures_; }  // runs dropped: the RMT could not play
     bool fskActive() const noexcept { return channel_ != nullptr; }
 
+    // The UART could not take DATA IN back: the pin is reset (no output) and everything is refused.
+    bool faulted() const noexcept { return faulted_; }
+    uint32_t pinFaults() const noexcept { return pinFaults_; }  // times the UART refused the pin
+    // Explicit recovery: gives the pin back to the UART. True when not (or no longer) faulted.
+    bool recover() noexcept;
+
 private:
     bool takePin() noexcept;      // UART -> RMT; false: the UART still has the pin
     void dropRun() noexcept;      // RMT failure: drop the queued run, pin back to the UART
     void releasePin() noexcept;   // RMT -> UART, line at mark
+    bool pinToUart() noexcept;    // false: the UART refused it, the driver is faulted
     bool startTransmission() noexcept;
     bool transmitting() const noexcept;
 
@@ -73,6 +88,8 @@ private:
     bool started_ = false;      // this run has started once (a restart counts as an underrun)
     uint32_t underruns_ = 0;
     uint32_t failures_ = 0;
+    uint32_t pinFaults_ = 0;
+    bool faulted_ = false;
     uint32_t lastSize_ = 0;     // feed size at the previous pump()
     uint8_t dummy_ = 0;         // rmt_transmit() wants a payload; the encoder reads the feed
     uint32_t slots_[kFeedPortions] = {};

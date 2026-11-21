@@ -39,6 +39,10 @@ struct State {
     bool failUartSetPin = false;
     bool failRmtNewChannel = false;
     bool failRmtEnable = false;
+    bool failRmtDisable = false;    // rmt_disable() fails: the channel stays enabled, the run goes on
+    bool failRmtDelChannel = false; // rmt_del_channel() fails: the channel and the pin stay the RMT's
+    unsigned rmtDelChannelCalls = 0;
+    unsigned rmtDelEncoderCalls = 0;
     bool failGpioReset = false;
 };
 

@@ -420,6 +420,97 @@ static void test_a_restart_on_the_same_channel_waits_for_its_own_end(void)
     expectEveryCallOk();
 }
 
+// --- The RMT does not let go: nothing is reported as UART2's, the release completes later ---
+
+namespace {
+
+void expectStillTheRmts(unsigned uartSetPins)
+{
+    TEST_ASSERT_TRUE(fake_idf::state().owner == Owner::Rmt);
+    TEST_ASSERT_TRUE(fake_idf::state().rmtChannel);
+    TEST_ASSERT_TRUE(g_dataIn->fskActive());  // the pin is reported as the RMT's, not UART2's
+    TEST_ASSERT_TRUE(g_dataIn->releasePending());
+    TEST_ASSERT_FALSE(g_dataIn->idle());       // the player waits
+    TEST_ASSERT_FALSE(g_dataIn->faulted());
+    TEST_ASSERT_EQUAL_UINT(uartSetPins, fake_idf::state().uartSetPinCalls);  // UART2 was not given the pin
+    const uint8_t byte = 0x55;
+    const auto written = fake_idf::state().written.size();
+    TEST_ASSERT_FALSE(g_dataIn->send(rb::core::Span<const uint8_t>(&byte, 1)));
+    TEST_ASSERT_EQUAL_UINT32(written, fake_idf::state().written.size());
+    TEST_ASSERT_FALSE(g_dataIn->push(FskPortion{false, 200}));  // no new run on a channel being released
+}
+
+void expectBackOnTheUart()
+{
+    TEST_ASSERT_TRUE(fake_idf::state().owner == Owner::Uart);
+    TEST_ASSERT_FALSE(fake_idf::state().rmtChannel);
+    TEST_ASSERT_FALSE(g_dataIn->fskActive());
+    TEST_ASSERT_FALSE(g_dataIn->releasePending());
+    TEST_ASSERT_TRUE(g_dataIn->idle());
+    TEST_ASSERT_FALSE(g_dataIn->faulted());
+    const uint8_t byte = 0x55;
+    TEST_ASSERT_TRUE(g_dataIn->send(rb::core::Span<const uint8_t>(&byte, 1)));
+}
+
+}  // namespace
+
+static void test_a_failed_disable_on_stop_keeps_the_rmt_and_completes_later(void)
+{
+    tracedAndConfigured();
+    startRun();
+    const unsigned uartSetPins = fake_idf::state().uartSetPinCalls;
+    fake_idf::state().failRmtDisable = true;
+    g_dataIn->stop();
+    expectStillTheRmts(uartSetPins);
+    TEST_ASSERT_EQUAL_UINT(0, fake_idf::state().rmtDelChannelCalls);  // not deleted while enabled
+    TEST_ASSERT_EQUAL_UINT(0, fake_idf::state().rmtDelEncoderCalls);  // the RMT may still call it
+    g_dataIn->pump();  // still failing: still the RMT's
+    expectStillTheRmts(uartSetPins);
+    fake_idf::state().failRmtDisable = false;
+    g_dataIn->pump();  // the cassette loop retries
+    expectBackOnTheUart();
+    TEST_ASSERT_EQUAL_UINT(1, fake_idf::state().rmtDelChannelCalls);
+    TEST_ASSERT_EQUAL_UINT(1, fake_idf::state().rmtDelEncoderCalls);
+}
+
+static void test_a_failed_delete_after_a_run_keeps_the_channel_and_completes_later(void)
+{
+    tracedAndConfigured();
+    startRun();
+    TEST_ASSERT_TRUE(fake_idf::play_all() > 0);
+    const unsigned uartSetPins = fake_idf::state().uartSetPinCalls;
+    fake_idf::state().failRmtDelChannel = true;
+    g_dataIn->pump();  // the run has played, but the channel cannot be deleted
+    expectStillTheRmts(uartSetPins);
+    TEST_ASSERT_EQUAL_UINT(0, fake_idf::state().rmtDelEncoderCalls);  // the channel still holds it
+    g_dataIn->pump();
+    expectStillTheRmts(uartSetPins);
+    TEST_ASSERT_EQUAL_UINT(1, count_calls("rmt_disable"));  // disabled once, not on every retry
+    fake_idf::state().failRmtDelChannel = false;
+    g_dataIn->pump();
+    expectBackOnTheUart();
+    TEST_ASSERT_EQUAL_UINT(1, fake_idf::state().rmtDelEncoderCalls);
+    TEST_ASSERT_EQUAL_UINT(0, fake_idf::state().rmtDisableRefused);
+}
+
+static void test_release_with_a_failed_delete_can_be_completed_later(void)
+{
+    tracedAndConfigured();
+    startRun();
+    fake_idf::state().failRmtDelChannel = true;
+    TEST_ASSERT_FALSE(g_dataIn->release());
+    TEST_ASSERT_TRUE(g_dataIn->enabled());  // not released: a later release() retries
+    TEST_ASSERT_TRUE(fake_idf::state().owner == Owner::Rmt);
+    TEST_ASSERT_TRUE(fake_idf::state().uartInstalled);
+    TEST_ASSERT_EQUAL_UINT(0, fake_idf::state().gpioResets);
+    fake_idf::state().failRmtDelChannel = false;
+    TEST_ASSERT_TRUE(g_dataIn->release());
+    TEST_ASSERT_FALSE(g_dataIn->enabled());
+    TEST_ASSERT_TRUE(fake_idf::state().owner == Owner::Gpio);
+    TEST_ASSERT_FALSE(fake_idf::state().rmtChannel);
+    TEST_ASSERT_FALSE(fake_idf::state().uartInstalled);
+}
+
 static void test_the_model_refuses_a_second_rmt_disable(void)
 {
     rmt_channel_handle_t channel = nullptr;
@@ -456,6 +547,9 @@ int main()
     RUN_TEST(test_cancel_disables_once_and_gives_the_pin_back);
     RUN_TEST(test_a_new_run_after_a_cancel_starts_and_ends);
     RUN_TEST(test_a_restart_on_the_same_channel_waits_for_its_own_end);
+    RUN_TEST(test_a_failed_disable_on_stop_keeps_the_rmt_and_completes_later);
+    RUN_TEST(test_a_failed_delete_after_a_run_keeps_the_channel_and_completes_later);
+    RUN_TEST(test_release_with_a_failed_delete_can_be_completed_later);
     RUN_TEST(test_the_model_refuses_a_second_rmt_disable);
     return UNITY_END();
 }

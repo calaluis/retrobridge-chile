@@ -126,7 +126,7 @@ bool EspDataIn::send(rb::core::Span<const uint8_t> bytes)
 
 bool EspDataIn::push(const rb::cassette::FskPortion& portion)
 {
-    return enabled() && !faulted_ && feed_.push(portion);
+    return enabled() && !faulted_ && !releasePending_ && feed_.push(portion);
 }
 
 bool EspDataIn::idle() const
@@ -262,20 +262,32 @@ bool EspDataIn::startTransmission() noexcept
     return true;
 }
 
-void EspDataIn::releasePin() noexcept
+bool EspDataIn::releasePin() noexcept
 {
     if (channel_ == nullptr) {
-        return;
+        releasePending_ = false;
+        return true;
     }
-    disableChannel();  // not again after stop()
-    (void)traced("rmt_del_channel", rmt_del_channel(as_channel(channel_)));
-    (void)traced("rmt_del_encoder", rmt_del_encoder(as_encoder(encoder_)));
-    channel_ = nullptr;
-    encoder_ = nullptr;
-    rmtEnabled_ = false;
     sending_ = false;
+    disableChannel();  // not again after stop()
+    // Still enabled, or not deleted: the RMT still has the pin and may still call the encoder. Both are
+    // kept and UART2 does not get the pin; pump() or release() tries again.
+    if (rmtEnabled_ || traced("rmt_del_channel", rmt_del_channel(as_channel(channel_))) != ESP_OK) {
+        if (!releasePending_) {
+            ESP_LOGE(kTag, "RMT did not let go of GPIO%d: channel kept, DATA IN not on UART2, retrying", pin_);
+        }
+        releasePending_ = true;
+        return false;
+    }
+    channel_ = nullptr;
+    (void)traced("rmt_del_encoder", rmt_del_encoder(as_encoder(encoder_)));  // no channel calls it any more
+    encoder_ = nullptr;
+    if (releasePending_) {
+        ESP_LOGI(kTag, "RMT let go of GPIO%d on a retry", pin_);
+        releasePending_ = false;
+    }
     // The UART takes the pin back; it idles high (mark).
-    (void)pinToUart();
+    return pinToUart();
 }
 
 bool EspDataIn::pinToUart() noexcept
@@ -313,18 +325,23 @@ bool EspDataIn::recover() noexcept
     return true;
 }
 
-void EspDataIn::release() noexcept
+bool EspDataIn::release() noexcept
 {
     if (!enabled()) {
-        return;
+        return true;
     }
     stop();  // an FSK run in flight ends; the pin goes back to the UART (or the driver faults)
+    if (releasePending_) {
+        ESP_LOGE(kTag, "DATA IN not released: the RMT still has GPIO%d; release() again later", pin_);
+        return false;  // UART2 and the pin stay as they are
+    }
     (void)traced("uart_driver_delete", uart_driver_delete(kUart));
     // No peripheral keeps the pin: output off, pull-up, so the 74LS07 lets DATA IN go.
     (void)traced("gpio_reset_pin", gpio_reset_pin(static_cast<gpio_num_t>(pin_)));
     ESP_LOGI(kTag, "DATA IN released: UART2 deleted, GPIO%d reset (output off)", pin_);
     pin_ = -1;
     faulted_ = false;
+    return true;
 }
 
 int EspDataIn::traced(const char* call, int err) const noexcept

@@ -132,6 +132,15 @@ esp_err_t rmt_new_tx_channel(const rmt_tx_channel_config_t* config, rmt_channel_
 esp_err_t rmt_del_channel(rmt_channel_handle_t)
 {
     auto& s = fake_idf::state();
+    ++s.rmtDelChannelCalls;
+    if (s.failRmtDelChannel) {
+        ++s.errorLogs;
+        return ESP_FAIL;  // nothing changes: the channel still exists and still has the pin
+    }
+    if (s.rmtEnabled) {
+        ++s.errorLogs;
+        return ESP_ERR_INVALID_STATE;  // IDF: a channel is deleted only once disabled
+    }
     s.rmtChannel = false;
     s.rmtEnabled = false;
     s.rmtBusy = false;
@@ -155,6 +164,7 @@ esp_err_t rmt_new_simple_encoder(const rmt_simple_encoder_config_t* config, rmt_
 esp_err_t rmt_del_encoder(rmt_encoder_handle_t)
 {
     auto& s = fake_idf::state();
+    ++s.rmtDelEncoderCalls;
     s.encoderCallback = nullptr;
     s.encoderArg = nullptr;
     return ESP_OK;
@@ -177,6 +187,10 @@ esp_err_t rmt_disable(rmt_channel_handle_t)
         ++s.rmtDisableRefused;  // IDF: "channel can't be disabled in state 0"
         ++s.errorLogs;
         return ESP_ERR_INVALID_STATE;
+    }
+    if (s.failRmtDisable) {
+        ++s.errorLogs;
+        return ESP_FAIL;  // nothing changes: still enabled, a run in flight goes on
     }
     s.rmtEnabled = false;
     s.rmtBusy = false;  // aborts the transmission in flight

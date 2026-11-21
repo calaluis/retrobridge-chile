@@ -136,9 +136,8 @@ bool EspDataIn::idle() const
 
 void EspDataIn::stop()
 {
-    disableChannel();  // aborts the transmission in flight before the feed is cleared
-    feed_.clear();
-    releasePin();
+    discardFeed_ = true;  // cleared by releasePin() once the RMT is disabled, never under it
+    (void)releasePin();
     sending_ = false;
     started_ = false;
     lastSize_ = 0;
@@ -147,6 +146,11 @@ void EspDataIn::stop()
 void EspDataIn::pump() noexcept
 {
     if (!enabled() || faulted_) {
+        return;
+    }
+    if (releasePending_) {
+        (void)releasePin();  // the RMT has to let go first: no run starts, even with portions queued
+        lastSize_ = feed_.size();
         return;
     }
     if (channel_ != nullptr && sending_ && !transmitting()) {
@@ -196,8 +200,8 @@ void EspDataIn::dropRun() noexcept
 {
     // The RMT could not play: the run is dropped (the Atari will not load it) instead of retrying
     // every tick. The player sees idle() and goes on; DATA IN goes back to the idle UART.
-    feed_.clear();
-    releasePin();
+    discardFeed_ = true;
+    (void)releasePin();
     started_ = false;
     ++failures_;
     ESP_LOGE(kTag, "FSK run dropped: RMT not available (%u so far)", static_cast<unsigned>(failures_));
@@ -265,11 +269,15 @@ bool EspDataIn::startTransmission() noexcept
 bool EspDataIn::releasePin() noexcept
 {
     if (channel_ == nullptr) {
+        discardIfDue();
         releasePending_ = false;
         return true;
     }
     sending_ = false;
-    disableChannel();  // not again after stop()
+    disableChannel();  // aborts a transmission in flight; not again after it succeeded once
+    if (!rmtEnabled_) {
+        discardIfDue();  // the RMT no longer reads the feed
+    }
     // Still enabled, or not deleted: the RMT still has the pin and may still call the encoder. Both are
     // kept and UART2 does not get the pin; pump() or release() tries again.
     if (rmtEnabled_ || traced("rmt_del_channel", rmt_del_channel(as_channel(channel_))) != ESP_OK) {
@@ -288,6 +296,14 @@ bool EspDataIn::releasePin() noexcept
     }
     // The UART takes the pin back; it idles high (mark).
     return pinToUart();
+}
+
+void EspDataIn::discardIfDue() noexcept
+{
+    if (discardFeed_) {
+        feed_.clear();
+        discardFeed_ = false;
+    }
 }
 
 bool EspDataIn::pinToUart() noexcept

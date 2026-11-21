@@ -511,6 +511,43 @@ static void test_release_with_a_failed_delete_can_be_completed_later(void)
     TEST_ASSERT_FALSE(fake_idf::state().uartInstalled);
 }
 
+static void test_a_failed_disable_keeps_a_busy_queue_until_the_rmt_is_disabled(void)
+{
+    tracedAndConfigured();
+    startRun();  // two portions queued; the RMT has not read them yet
+    const unsigned uartSetPins = fake_idf::state().uartSetPinCalls;
+    fake_idf::state().failRmtDisable = true;
+    g_dataIn->stop();  // MOTOR dropped, but the RMT stays enabled and may still read the queue
+    expectStillTheRmts(uartSetPins);
+    for (int i = 0; i < 5; ++i) {
+        g_dataIn->pump();  // portions left in the queue: only the release is retried
+    }
+    expectStillTheRmts(uartSetPins);
+    TEST_ASSERT_EQUAL_UINT(1, fake_idf::state().rmtTransmits);   // no new transmission
+    TEST_ASSERT_EQUAL_UINT(1, fake_idf::state().rmtNewChannels);
+    TEST_ASSERT_EQUAL_UINT32(0, g_dataIn->underruns());
+    // The queue was not cleared under the RMT: the interrupt still finds its symbols.
+    TEST_ASSERT_TRUE(fake_idf::play_all() > 0);
+    fake_idf::state().failRmtDisable = false;
+    g_dataIn->pump();  // disabled now: the queue is cleared, the pin goes back to UART2
+    expectBackOnTheUart();
+    TEST_ASSERT_EQUAL_UINT(1, fake_idf::state().rmtTransmits);
+    startRun();  // the cancelled run left nothing behind: a new run starts from an empty queue
+    TEST_ASSERT_EQUAL_UINT(2, fake_idf::state().rmtTransmits);
+}
+
+static void test_a_cancel_clears_the_queue_once_the_rmt_is_disabled(void)
+{
+    tracedAndConfigured();
+    startRun();
+    fake_idf::state().failRmtDisable = true;
+    g_dataIn->stop();
+    fake_idf::state().failRmtDisable = false;
+    g_dataIn->pump();
+    expectBackOnTheUart();
+    TEST_ASSERT_EQUAL_UINT(0, fake_idf::play_all());  // nothing of the cancelled run is left
+}
+
 static void test_the_model_refuses_a_second_rmt_disable(void)
 {
     rmt_channel_handle_t channel = nullptr;
@@ -550,6 +587,8 @@ int main()
     RUN_TEST(test_a_failed_disable_on_stop_keeps_the_rmt_and_completes_later);
     RUN_TEST(test_a_failed_delete_after_a_run_keeps_the_channel_and_completes_later);
     RUN_TEST(test_release_with_a_failed_delete_can_be_completed_later);
+    RUN_TEST(test_a_failed_disable_keeps_a_busy_queue_until_the_rmt_is_disabled);
+    RUN_TEST(test_a_cancel_clears_the_queue_once_the_rmt_is_disabled);
     RUN_TEST(test_the_model_refuses_a_second_rmt_disable);
     return UNITY_END();
 }

@@ -68,7 +68,8 @@ public:
     bool fskActive() const noexcept { return channel_ != nullptr; }  // the RMT has the pin
     // The RMT did not let go of the pin (rmt_disable or rmt_del_channel failed): the channel and its
     // encoder are kept, the pin is still the RMT's, UART2 does not get it and send() and push()
-    // refuse. pump() (or release()) retries until it succeeds.
+    // refuse. The feed is not cleared while the RMT may still read it. pump() retries only the
+    // release, even with portions queued, until it succeeds (release() retries it too).
     bool releasePending() const noexcept { return releasePending_; }
 
     // The UART could not take DATA IN back: the pin is reset (no output) and everything is refused.
@@ -97,6 +98,7 @@ private:
     bool startTransmission() noexcept;
     bool transmitting() const noexcept;
     void disableChannel() noexcept;  // rmt_disable() once per enable
+    void discardIfDue() noexcept;    // clears the feed of a cancelled run (the RMT not reading it)
 
     int8_t pin_ = -1;
     uint32_t baud_ = kDefaultBaud;
@@ -112,6 +114,7 @@ private:
     uint32_t pinFaults_ = 0;
     bool faulted_ = false;
     bool releasePending_ = false;
+    bool discardFeed_ = false;   // a cancelled or dropped run: clear the feed once the RMT is disabled
     CallTrace trace_ = nullptr;
     uint32_t lastSize_ = 0;     // feed size at the previous pump()
     uint8_t dummy_ = 0;         // rmt_transmit() wants a payload; the encoder reads the feed

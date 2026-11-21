@@ -49,6 +49,8 @@ struct State {
     // --- SIO line (menu-sio-fisico T4) ------------------------------------------------------
     int64_t nowUs = 0;                   // esp_timer_get_time(); vTaskDelay, delays and reads advance it
     int uartBaud = 0;                    // uart_param_config
+    int uartRxFullThreshold = -1;        // uart_set_rx_full_threshold (-1: driver default, 120)
+    int uartRxTimeout = -1;              // uart_set_rx_timeout (-1: driver default, 10 characters)
     int uartTxPin = -1;                  // uart_set_pin
     int uartRxPin = -1;
     std::vector<int> inputs;             // gpio_set_direction(INPUT)

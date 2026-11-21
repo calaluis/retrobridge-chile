@@ -23,6 +23,8 @@ typedef void* QueueHandle_t;
 esp_err_t uart_driver_install(uart_port_t port, int rx, int tx, int queue_size, QueueHandle_t* queue, int flags);
 esp_err_t uart_driver_delete(uart_port_t port);
 esp_err_t uart_param_config(uart_port_t port, const uart_config_t* config);
+esp_err_t uart_set_rx_full_threshold(uart_port_t port, int threshold);
+esp_err_t uart_set_rx_timeout(uart_port_t port, const uint8_t tout_thresh);
 esp_err_t uart_set_pin(uart_port_t port, int tx, int rx, int rts, int cts);
 esp_err_t uart_wait_tx_done(uart_port_t port, uint32_t ticks);
 esp_err_t uart_set_baudrate(uart_port_t port, uint32_t baud);

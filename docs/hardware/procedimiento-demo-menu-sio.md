@@ -133,9 +133,11 @@ MOTOR (GPIO36) no se configura.
        - La página 146 numera los 13 pines: 1 = CLOCK IN … 8 = MOTOR CONTROL … 13 = INTERRUPT−.
        - Comprobado el 2026-11-21 en el texto de esas dos páginas.
      - **Consecuencia:**
-       - la fig. 9-4 se usa **directa** para la cara de un conector de equipo (el puerto SIO del 65XE o J1 de la
-         FujiNet);
-       - se usa **espejada** para la cara de acople de un conector de cable, como la del adaptador.
+       - se identifica primero qué cara real se fotografía: la de un conector de equipo o la cara de acople de un
+         conector de cable;
+       - para la cara de un conector de equipo (el puerto SIO del 65XE), se compara con la fig. 9-4 **directa**;
+       - para la cara de acople de un conector de cable, como la del adaptador, se compara con la fig. 9-4
+         **espejada**.
      - Si se usa otra figura (por ejemplo, la del manual de servicio del 65XE/130XE), se anotan en el registro:
        - la figura y la página;
        - el texto **literal** que identifica su vista.

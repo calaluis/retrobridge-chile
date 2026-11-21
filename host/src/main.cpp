@@ -28,13 +28,14 @@
 
 #include "file_identity.hpp"
 #include "host_clock.hpp"
-#include "host_image_repository.hpp"
+#include "rb/menu/host_image_repository.hpp"
 #include "jsonl_log.hpp"
-#include "menu_catalog.hpp"
-#include "menu_controller.hpp"
-#include "menu_image.hpp"
-#include "menu_sio_transport.hpp"
-#include "menu_sources.hpp"
+#include "rb/menu/menu_catalog.hpp"
+#include "rb/menu/menu_controller.hpp"
+#include "rb/menu/menu_image.hpp"
+#include "rb/menu/menu_sio_transport.hpp"
+#include "rb/menu/menu_sources.hpp"
+#include "rb/menu/menu_station.hpp"
 #include "rb/app/drive_bay.hpp"
 #include "rb/app/image_location.hpp"
 #include "rb/app/inline_drive_mailbox.hpp"
@@ -46,7 +47,7 @@
 #include "rb/sio/sio_session.hpp"
 #include "rb/storage/image_path.hpp"
 #include "rb/storage/stdio_image_repository.hpp"
-#include "sio_write_log.hpp"
+#include "rb/menu/sio_write_log.hpp"
 #include "tnfs_link.hpp"
 #include "tnfs_loader.hpp"
 #include "udp_datagram_port.hpp"
@@ -187,22 +188,24 @@ bool logNamesFolderAtr(const char* log, const char* folder)
 }
 
 // NetSIO observer of --images: logs every datagram and tells the menu about
-// each inbound COLD_RESET (FF), the only event that brings the menu back.
+// each inbound COLD_RESET (FF), the only event that brings the menu back. The
+// station is attached once built (it needs the NetSIO transport, which needs this).
 class ResetWatch final : public rb::netsio::NetSioObserver {
 public:
-    ResetWatch(rb::host::JsonlLog& log, rb::host::MenuController& controller) : log_(log), controller_(controller) {}
+    explicit ResetWatch(rb::host::JsonlLog& log) : log_(log) {}
+    void attach(rb::host::MenuStation& station) noexcept { station_ = &station; }
 
     void onDatagram(bool outbound, rb::core::Span<const uint8_t> datagram) override
     {
         log_.onDatagram(outbound, datagram);
-        if (!outbound && !datagram.empty() && datagram[0] == 0xFF) {
-            controller_.onColdReset();
+        if (!outbound && !datagram.empty() && datagram[0] == 0xFF && station_ != nullptr) {
+            station_->returnToMenu();
         }
     }
 
 private:
     rb::host::JsonlLog& log_;
-    rb::host::MenuController& controller_;
+    rb::host::MenuStation* station_ = nullptr;
 };
 
 class LogMenuEvents final : public rb::host::MenuEvents {
@@ -218,11 +221,12 @@ private:
 // drive context, right after the reply, so the drive shows why a write failed.
 class LogSioWrites final : public rb::host::SioWriteObserver {
 public:
-    LogSioWrites(rb::host::JsonlLog& log, rb::app::DriveBay& bay) : log_(log), bay_(bay) {}
+    explicit LogSioWrites(rb::host::JsonlLog& log) : log_(log) {}
+    void attach(const rb::app::DriveBay& bay) noexcept { bay_ = &bay; }
     void onSioWrite(const rb::host::SioWriteRecord& record) override
     {
         const auto number = rb::domain::DriveNumber::from(record.drive);
-        const rb::domain::VirtualDrive* drive = number.ok() ? bay_.find(number.value()) : nullptr;
+        const rb::domain::VirtualDrive* drive = number.ok() && bay_ != nullptr ? bay_->find(number.value()) : nullptr;
         char detail[96];
         rb::host::formatSioWrite(record, drive, detail, sizeof detail);
         log_.event("sio_write", detail);
@@ -230,7 +234,7 @@ public:
 
 private:
     rb::host::JsonlLog& log_;
-    rb::app::DriveBay& bay_;
+    const rb::app::DriveBay* bay_ = nullptr;
 };
 
 // Registers with the hub and runs the session until --seconds or a dead hub.
@@ -418,8 +422,6 @@ int runMenu(const Options& options)
     rb::host::JsonlLog log{logFile, clock};
     static rb::host::MenuImage menu;
     static rb::host::HostImageRepository repository{options.images, menu};
-    rb::app::DriveBay bay{rb::host::MenuController::kDrives};
-    rb::app::InlineDriveMailbox mailbox;
     LogMenuEvents events{log};
     // TNFS: one link per source 2..8, configured or not, so E can add one while
     // the host runs (menu-editar-servidor); and the loader thread. It is
@@ -435,7 +437,20 @@ int runMenu(const Options& options)
     rb::host::HeapImageMemory imageMemory;
     std::optional<rb::host::TnfsLoader> loader;
     loader.emplace(linkOf, repository.memory(), tnfsClock, imageMemory, nullptr, options.images);  // menu-xex
-    rb::host::MenuController controller{catalog, sources, repository, mailbox, &events, &*loader};
+    // The menu as D1, the same composition the firmware uses (menu-sio-fisico). The
+    // NetSIO transport under it is built now and opened below; SIO writes reach the
+    // images folder (menu-escritura-disco).
+    ResetWatch watch{log};
+    LogSioWrites writes{log};
+    rb::host::UdpDatagramPort port;
+    rb::netsio::NetSioConfig config;
+    config.profile = options.profile;
+    rb::netsio::NetSioSioTransport netsio{port, clock, config, &watch};
+    rb::host::MenuStation station{
+        netsio, clock, rb::host::MenuStationParts{catalog, sources, repository, &events, &*loader, &writes, true}};
+    watch.attach(station);
+    writes.attach(station.bay());
+    rb::host::MenuController& controller = station.controller();
     controller.setSourcesFile(options.sources);
     controller.setImagesFolder(options.images, catalog);  // N creates a blank ATR there
     if (!loader->ready() || !controller.ready()) {
@@ -445,29 +460,19 @@ int runMenu(const Options& options)
                      static_cast<unsigned>(rb::host::TnfsFolder::kCapacity));
         return 1;
     }
-    ResetWatch watch{log, controller};
 
-    rb::host::UdpDatagramPort port;
     if (!port.open(static_cast<uint16_t>(options.port)).ok()) {
         loader.reset();  // its thread is joined before the log closes
         std::fclose(logFile);
         std::fprintf(stderr, "retrobridge_host: cannot open UDP socket to 127.0.0.1:%u\n", options.port);
         return 1;
     }
-    rb::netsio::NetSioConfig config;
-    config.profile = options.profile;
-    rb::netsio::NetSioSioTransport netsio{port, clock, config, &watch};
-    LogSioWrites writes{log, bay};
-    rb::host::MenuSioTransport transport{netsio, clock, controller, &writes};
-    rb::sio::SioCommandDispatcher dispatcher{bay, true};  // writes to the images folder (menu-escritura-disco)
-    rb::app::ApplyDriveRequest apply{bay, mailbox};
-    rb::sio::SioSession session{transport, clock, dispatcher, apply};
 
     char detail[rb::storage::StdioImageRepository<2>::kMaxBasePath + 160];
     std::snprintf(detail, sizeof detail,
                   "images=%s entries=%u atr_seen=%u sources=%u drives=%u peer=%s local=127.0.0.1:%u hub=127.0.0.1:%u",
                   options.images, static_cast<unsigned>(catalog.count()), static_cast<unsigned>(catalog.atrSeen()),
-                  static_cast<unsigned>(sources.count()), static_cast<unsigned>(bay.driveCount()), peerName(options),
+                  static_cast<unsigned>(sources.count()), static_cast<unsigned>(station.bay().driveCount()), peerName(options),
                   port.localPort(), options.port);
     log.event("start", detail);
     for (std::size_t i = 0; i < catalog.count(); ++i) {  // numbered from 1, as the list shows them
@@ -483,12 +488,11 @@ int runMenu(const Options& options)
     std::printf("retrobridge_host: menu with %u image(s), %s\n", static_cast<unsigned>(catalog.count()), detail);
 
     // D1 starts with the menu, as after a cold reset.
-    controller.onColdReset();
-    controller.service();
-    return serve(options, clock, log, logFile, netsio, session, [&controller] { controller.service(); },
-                 [&transport, &log, &loader] {
+    station.start();
+    return serve(options, clock, log, logFile, netsio, station.session(), [&controller] { controller.service(); },
+                 [&station, &log, &loader] {
                      loader.reset();  // joins the loader thread while the log is still open
-                     const rb::host::MenuTransportStats& m = transport.stats();
+                     const rb::host::MenuTransportStats& m = station.stats();
                      char stats[160];
                      std::snprintf(stats, sizeof stats,
                                    "menu_commands=%u menu_retries=%u menu_naks=%u dropped_after_reset=%u "

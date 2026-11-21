@@ -10,7 +10,7 @@
 #include <string>
 
 #include "menu_tnfs_rig.hpp"
-#include "xex_loader.inc"
+#include "rb/menu/xex_loader.inc"
 
 namespace {
 

@@ -11,8 +11,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "sha256.hpp"
-#include "tnfs_folder.hpp"
+#include "rb/menu/sha256.hpp"
+#include "rb/menu/tnfs_folder.hpp"
 
 namespace rb::host {
 

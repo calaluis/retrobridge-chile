@@ -14,7 +14,7 @@
 #include <cstdint>
 #include <cstdio>
 
-#include "menu_controller.hpp"
+#include "rb/menu/menu_controller.hpp"
 #include "rb/app/ports/clock.hpp"
 #include "rb/core/span.hpp"
 #include "rb/net_tnfs/tnfs_client.hpp"

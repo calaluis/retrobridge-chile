@@ -1,4 +1,4 @@
-#include "tnfs_folder.hpp"
+#include "rb/menu/tnfs_folder.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -6,7 +6,7 @@
 #include <new>
 #include <utility>
 
-#include "menu_catalog.hpp"
+#include "rb/menu/menu_catalog.hpp"
 
 namespace rb::host {
 namespace {

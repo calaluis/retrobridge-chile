@@ -21,10 +21,10 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "menu_controller.hpp"
+#include "rb/menu/menu_controller.hpp"
 #include "rb/app/ports/clock.hpp"
 #include "rb/app/ports/sio_transport.hpp"
-#include "sio_write_log.hpp"
+#include "rb/menu/sio_write_log.hpp"
 
 namespace rb::host {
 

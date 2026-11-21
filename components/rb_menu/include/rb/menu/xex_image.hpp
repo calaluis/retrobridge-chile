@@ -12,7 +12,7 @@
 
 #include <cstdint>
 
-#include "memory_image_store.hpp"
+#include "rb/menu/memory_image_store.hpp"
 #include "rb/core/span.hpp"
 
 namespace rb::host {

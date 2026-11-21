@@ -10,7 +10,7 @@
 #include <cstring>
 #include <vector>
 
-#include "sha256.hpp"
+#include "rb/menu/sha256.hpp"
 #include "unity.h"
 
 using rb::core::Span;

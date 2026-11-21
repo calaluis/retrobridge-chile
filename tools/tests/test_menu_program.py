@@ -869,7 +869,7 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(cpu.screen()[message:message + 40], make_menu.screen_line(make_menu.NO_HOST_TEXT))
 
     def test_committed_include_matches_the_generator(self):
-        include = REPO / "host" / "src" / "menu_program.inc"
+        include = REPO / "components" / "rb_menu" / "include" / "rb" / "menu" / "menu_program.inc"
         result = subprocess.run([sys.executable, "-I", str(TOOLS / "make_menu.py"), "--check", str(include)],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)

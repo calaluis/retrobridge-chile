@@ -1,5 +1,5 @@
 // SHA-256 from FIPS 180-4 (see sha256.hpp). Section numbers refer to it.
-#include "sha256.hpp"
+#include "rb/menu/sha256.hpp"
 
 #include "rb/core/assert.hpp"
 

@@ -4,7 +4,7 @@
 #include <cstdio>
 #include <cstring>
 
-#include "menu_catalog.hpp"
+#include "rb/menu/menu_catalog.hpp"
 #include "unity.h"
 
 using rb::host::MenuCatalog;

@@ -26,6 +26,7 @@ add_subdirectory(${rb_root}/components/rb_hw_diag rb_hw_diag)
 add_subdirectory(${rb_root}/components/rb_netsio rb_netsio)
 add_subdirectory(${rb_root}/components/rb_net_tnfs rb_net_tnfs)
 add_subdirectory(${rb_root}/components/rb_cassette rb_cassette)
+add_subdirectory(${rb_root}/components/rb_menu rb_menu)
 
 # Unity v2.7.0, vendored (D-9). Third-party code: built with its own defaults.
 add_library(unity STATIC unity/src/unity.c)
@@ -78,6 +79,8 @@ rb_add_host_test(test_status_frame_encoder sio/test_status_frame_encoder.cpp)
 rb_add_host_test(test_sio_dispatcher sio/test_sio_dispatcher.cpp)
 rb_add_abort_test(test_dispatcher_execute_without_accept_aborts test_sio_dispatcher --execute-without-accept)
 rb_add_host_test(test_sio_session sio/test_sio_session.cpp)
+# SioLineTransport over a scripted line (menu-sio-fisico T3).
+rb_add_host_test(test_sio_line_transport sio/test_sio_line_transport.cpp)
 rb_add_host_test(test_sio_session_allocations sio/test_sio_session_allocations.cpp)
 rb_add_host_test(test_command_line_tracker sio/test_command_line_tracker.cpp)
 rb_add_host_test(test_sio_listener sio/test_sio_listener.cpp)
@@ -106,7 +109,7 @@ target_link_libraries(test_tnfs_client PRIVATE rb_net_tnfs)
 find_package(Threads REQUIRED)
 rb_add_host_test(test_udp_tnfs_port net_tnfs/test_udp_tnfs_port.cpp
                  ${rb_root}/host/src/udp_tnfs_port.cpp ${rb_root}/host/src/udp_datagram_port.cpp)
-target_include_directories(test_udp_tnfs_port PRIVATE ${rb_root}/host/src)
+target_include_directories(test_udp_tnfs_port PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 target_link_libraries(test_udp_tnfs_port PRIVATE rb_net_tnfs Threads::Threads)
 if(WIN32)
     target_link_libraries(test_udp_tnfs_port PRIVATE ws2_32)
@@ -174,51 +177,57 @@ add_test(NAME generate_menu_images
          COMMAND ${Python3_EXECUTABLE} -I ${rb_root}/tools/make_atr.py --out ${rb_menu_images} --demo)
 set_tests_properties(generate_menu_images PROPERTIES FIXTURES_SETUP menu_images)
 rb_add_host_test(test_host_menu menu/test_host_menu.cpp
-                 ${rb_root}/host/src/create_atr.cpp ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
-                 ${rb_root}/host/src/menu_controller.cpp ${rb_root}/host/src/menu_sio_transport.cpp
-                 ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_folder.cpp)
-target_include_directories(test_host_menu PRIVATE ${rb_root}/host/src)
+                 ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
+                 ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/menu_sio_transport.cpp
+                 ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/components/rb_menu/src/tnfs_folder.cpp)
+target_include_directories(test_host_menu PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_host_menu PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
+
+# MenuStation (menu-sio-fisico T2): the menu as D1 over any SioTransport, from rb_menu.
+rb_add_host_test(test_menu_station menu/test_menu_station.cpp)
+target_link_libraries(test_menu_station PRIVATE rb_menu)
+target_compile_definitions(test_menu_station PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
+set_tests_properties(test_menu_station PROPERTIES FIXTURES_REQUIRED menu_images)
 set_tests_properties(test_host_menu PROPERTIES FIXTURES_REQUIRED menu_images)
 # Disk writes with --images (menu-escritura-disco, W005).
 rb_add_host_test(test_host_write menu/test_host_write.cpp
-                 ${rb_root}/host/src/create_atr.cpp ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
-                 ${rb_root}/host/src/menu_controller.cpp ${rb_root}/host/src/menu_sio_transport.cpp
-                 ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_folder.cpp)
-target_include_directories(test_host_write PRIVATE ${rb_root}/host/src)
+                 ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
+                 ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/menu_sio_transport.cpp
+                 ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/components/rb_menu/src/tnfs_folder.cpp)
+target_include_directories(test_host_write PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_host_write PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}"
                            RB_TEST_WRITE_DIR="${CMAKE_CURRENT_BINARY_DIR}/write-images")
 target_link_libraries(test_host_write PRIVATE Threads::Threads)
 set_tests_properties(test_host_write PROPERTIES FIXTURES_REQUIRED menu_images)
 # E on the main screen: edit or add a server and rewrite --sources (menu-editar-servidor, M43).
 rb_add_host_test(test_menu_editar menu/test_menu_editar.cpp
-                 ${rb_root}/host/src/create_atr.cpp ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
-                 ${rb_root}/host/src/menu_controller.cpp ${rb_root}/host/src/menu_sio_transport.cpp
-                 ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_folder.cpp)
-target_include_directories(test_menu_editar PRIVATE ${rb_root}/host/src)
+                 ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
+                 ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/menu_sio_transport.cpp
+                 ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/components/rb_menu/src/tnfs_folder.cpp)
+target_include_directories(test_menu_editar PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_menu_editar PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
 set_tests_properties(test_menu_editar PROPERTIES FIXTURES_REQUIRED menu_images)
 # Memory slots for images brought over TNFS and the *tnfs*<n> locations (menu-tnfs T009).
 find_package(Threads REQUIRED)
-rb_add_host_test(test_memory_image_store menu/test_memory_image_store.cpp ${rb_root}/host/src/menu_image.cpp)
-target_include_directories(test_memory_image_store PRIVATE ${rb_root}/host/src)
+rb_add_host_test(test_memory_image_store menu/test_memory_image_store.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp)
+target_include_directories(test_memory_image_store PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_memory_image_store PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
 target_link_libraries(test_memory_image_store PRIVATE Threads::Threads)
 set_tests_properties(test_memory_image_store PROPERTIES FIXTURES_REQUIRED menu_images)
 
 # The listing of a TNFS folder: filter, order, 20 entries and display names (menu-tnfs T010).
 # The local list: up to 999 .atr names (menu-navegacion N002).
-rb_add_host_test(test_menu_catalog menu/test_menu_catalog.cpp ${rb_root}/host/src/menu_catalog.cpp)
-target_include_directories(test_menu_catalog PRIVATE ${rb_root}/host/src)
+rb_add_host_test(test_menu_catalog menu/test_menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp)
+target_include_directories(test_menu_catalog PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 # Creating a blank ATR from the menu (menu-formatear-disco, F003).
-rb_add_host_test(test_create_atr menu/test_create_atr.cpp ${rb_root}/host/src/create_atr.cpp
-                 ${rb_root}/host/src/menu_catalog.cpp)
-target_include_directories(test_create_atr PRIVATE ${rb_root}/host/src)
+rb_add_host_test(test_create_atr menu/test_create_atr.cpp ${rb_root}/components/rb_menu/src/create_atr.cpp
+                 ${rb_root}/components/rb_menu/src/menu_catalog.cpp)
+target_include_directories(test_create_atr PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_create_atr PRIVATE RB_TEST_CREATE_DIR="${CMAKE_CURRENT_BINARY_DIR}/create-images")
 
 # Checking a .xex and wrapping it with the 6502 loader (menu-xex X002).
-rb_add_host_test(test_xex_image menu/test_xex_image.cpp ${rb_root}/host/src/xex_image.cpp)
-target_include_directories(test_xex_image PRIVATE ${rb_root}/host/src)
+rb_add_host_test(test_xex_image menu/test_xex_image.cpp ${rb_root}/components/rb_menu/src/xex_image.cpp)
+target_include_directories(test_xex_image PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 
 # rb_cassette (cassette-cas C101): records and FSK runs of a .cas. Real tapes come from
 # RB_CAS_SAMPLES (outside the repo); without it those two cases are ignored.
@@ -253,48 +262,53 @@ rb_add_host_test(test_esp_data_in esp_cassette/test_esp_data_in.cpp
 target_include_directories(test_esp_data_in PRIVATE ${rb_root}/components/rb_esp_cassette/include)
 target_link_libraries(test_esp_data_in PRIVATE fake_idf rb_cassette rb_board)
 
+# EspSioUart against the fake ESP-IDF (menu-sio-fisico T4).
+rb_add_host_test(test_esp_sio_uart esp_sio/test_esp_sio_uart.cpp ${rb_root}/components/rb_esp_sio/src/esp_sio_uart.cpp)
+target_include_directories(test_esp_sio_uart PRIVATE ${rb_root}/components/rb_esp_sio/include)
+target_link_libraries(test_esp_sio_uart PRIVATE fake_idf)
 
-rb_add_host_test(test_tnfs_folder menu/test_tnfs_folder.cpp ${rb_root}/host/src/tnfs_folder.cpp
-                 ${rb_root}/host/src/menu_catalog.cpp)
-target_include_directories(test_tnfs_folder PRIVATE ${rb_root}/host/src)
+
+rb_add_host_test(test_tnfs_folder menu/test_tnfs_folder.cpp ${rb_root}/components/rb_menu/src/tnfs_folder.cpp
+                 ${rb_root}/components/rb_menu/src/menu_catalog.cpp)
+target_include_directories(test_tnfs_folder PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 
 # SHA-256 of the images loaded over TNFS (menu-tnfs T004). RB_REF_ATR, when set,
 # points at the spec's reference ATR (not in the repository).
-rb_add_host_test(test_sha256 menu/test_sha256.cpp ${rb_root}/host/src/sha256.cpp)
-target_include_directories(test_sha256 PRIVATE ${rb_root}/host/src)
+rb_add_host_test(test_sha256 menu/test_sha256.cpp ${rb_root}/components/rb_menu/src/sha256.cpp)
+target_include_directories(test_sha256 PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 
 # The TNFS loading thread: jobs, cancel, late results and errors (menu-tnfs T011).
-rb_add_host_test(test_tnfs_loader menu/test_tnfs_loader.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/host/src/xex_image.cpp
-                 ${rb_root}/host/src/tnfs_folder.cpp ${rb_root}/host/src/menu_catalog.cpp
-                 ${rb_root}/host/src/sha256.cpp)
-target_include_directories(test_tnfs_loader PRIVATE ${rb_root}/host/src)
+rb_add_host_test(test_tnfs_loader menu/test_tnfs_loader.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/components/rb_menu/src/xex_image.cpp
+                 ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp
+                 ${rb_root}/components/rb_menu/src/sha256.cpp)
+target_include_directories(test_tnfs_loader PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 target_link_libraries(test_tnfs_loader PRIVATE rb_net_tnfs Threads::Threads)
 
 # TNFS sources in the menu: MenuController with the loader over the fake server (menu-tnfs T012).
-rb_add_host_test(test_menu_tnfs menu/test_menu_tnfs.cpp ${rb_root}/host/src/menu_controller.cpp
-                 ${rb_root}/host/src/create_atr.cpp ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
-                 ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/host/src/xex_image.cpp
-                 ${rb_root}/host/src/tnfs_folder.cpp ${rb_root}/host/src/sha256.cpp)
-target_include_directories(test_menu_tnfs PRIVATE ${rb_root}/host/src)
+rb_add_host_test(test_menu_tnfs menu/test_menu_tnfs.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp
+                 ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
+                 ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/components/rb_menu/src/xex_image.cpp
+                 ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/sha256.cpp)
+target_include_directories(test_menu_tnfs PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_menu_tnfs PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
 target_link_libraries(test_menu_tnfs PRIVATE rb_net_tnfs Threads::Threads)
 set_tests_properties(test_menu_tnfs PROPERTIES FIXTURES_REQUIRED menu_images)
 
 # Choosing and booting a .xex (menu-xex X004), on the rig of test_menu_tnfs with its own folder.
-rb_add_host_test(test_menu_xex menu/test_menu_xex.cpp ${rb_root}/host/src/menu_controller.cpp
-                 ${rb_root}/host/src/create_atr.cpp ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
-                 ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/host/src/xex_image.cpp
-                 ${rb_root}/host/src/tnfs_folder.cpp ${rb_root}/host/src/sha256.cpp)
-target_include_directories(test_menu_xex PRIVATE ${rb_root}/host/src)
+rb_add_host_test(test_menu_xex menu/test_menu_xex.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp
+                 ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
+                 ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/components/rb_menu/src/xex_image.cpp
+                 ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/sha256.cpp)
+target_include_directories(test_menu_xex PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_menu_xex PRIVATE RB_TEST_MENU_DIR="${CMAKE_CURRENT_BINARY_DIR}/xex-images")
 target_link_libraries(test_menu_xex PRIVATE rb_net_tnfs Threads::Threads)
 
 # Cursor and pages in the lists (menu-navegacion N003), on the rig of test_menu_tnfs.
-rb_add_host_test(test_menu_navegacion menu/test_menu_navegacion.cpp ${rb_root}/host/src/menu_controller.cpp
-                 ${rb_root}/host/src/create_atr.cpp ${rb_root}/host/src/menu_catalog.cpp ${rb_root}/host/src/menu_image.cpp
-                 ${rb_root}/host/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/host/src/xex_image.cpp
-                 ${rb_root}/host/src/tnfs_folder.cpp ${rb_root}/host/src/sha256.cpp)
-target_include_directories(test_menu_navegacion PRIVATE ${rb_root}/host/src)
+rb_add_host_test(test_menu_navegacion menu/test_menu_navegacion.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp
+                 ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
+                 ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/components/rb_menu/src/xex_image.cpp
+                 ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/sha256.cpp)
+target_include_directories(test_menu_navegacion PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_menu_navegacion PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
 target_link_libraries(test_menu_navegacion PRIVATE rb_net_tnfs Threads::Threads)
 set_tests_properties(test_menu_navegacion PROPERTIES FIXTURES_REQUIRED menu_images)
@@ -302,11 +316,11 @@ set_tests_properties(test_menu_navegacion PROPERTIES FIXTURES_REQUIRED menu_imag
 # What main.cpp wires for TNFS: request trace, UDP link, shared JSONL log (menu-tnfs T013).
 rb_add_host_test(test_tnfs_link menu/test_tnfs_link.cpp ${rb_root}/host/src/tnfs_link.cpp
                  ${rb_root}/host/src/udp_tnfs_port.cpp ${rb_root}/host/src/udp_datagram_port.cpp
-                 ${rb_root}/host/src/jsonl_log.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/host/src/xex_image.cpp
-                 ${rb_root}/host/src/tnfs_folder.cpp ${rb_root}/host/src/sha256.cpp
-                 ${rb_root}/host/src/menu_controller.cpp ${rb_root}/host/src/create_atr.cpp ${rb_root}/host/src/menu_catalog.cpp
-                 ${rb_root}/host/src/menu_image.cpp ${rb_root}/host/src/menu_sources.cpp)
-target_include_directories(test_tnfs_link PRIVATE ${rb_root}/host/src)
+                 ${rb_root}/host/src/jsonl_log.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/components/rb_menu/src/xex_image.cpp
+                 ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/sha256.cpp
+                 ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp
+                 ${rb_root}/components/rb_menu/src/menu_image.cpp ${rb_root}/components/rb_menu/src/menu_sources.cpp)
+target_include_directories(test_tnfs_link PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_tnfs_link PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
 target_link_libraries(test_tnfs_link PRIVATE rb_net_tnfs rb_netsio Threads::Threads)
 if(WIN32)

@@ -10,8 +10,8 @@
 #include <system_error>
 #include <vector>
 
-#include "create_atr.hpp"
-#include "menu_catalog.hpp"
+#include "rb/menu/create_atr.hpp"
+#include "rb/menu/menu_catalog.hpp"
 #include "unity.h"
 
 using rb::domain::Density;

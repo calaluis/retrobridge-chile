@@ -7,6 +7,7 @@
 // an error, and rmt_tx_wait_all_done() that times out logs "flush timeout" every time.
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace fake_idf {
@@ -44,6 +45,25 @@ struct State {
     unsigned rmtDelChannelCalls = 0;
     unsigned rmtDelEncoderCalls = 0;
     bool failGpioReset = false;
+
+    // --- SIO line (menu-sio-fisico T4) ------------------------------------------------------
+    int64_t nowUs = 0;                   // esp_timer_get_time(); vTaskDelay, delays and reads advance it
+    int uartBaud = 0;                    // uart_param_config
+    int uartTxPin = -1;                  // uart_set_pin
+    int uartRxPin = -1;
+    std::vector<int> inputs;             // gpio_set_direction(INPUT)
+    std::vector<int> pullups;            // gpio_pullup_en
+    int commandPin = -1;                 // the pin gpio_get_level() reads as COMMAND
+    int64_t commandLowFromUs = -1;       // COMMAND is low in [from, until)
+    int64_t commandLowUntilUs = -1;
+    std::vector<uint8_t> rx;             // bytes received on DATA OUT, oldest first
+    std::vector<std::pair<int64_t, uint8_t>> rxAt;  // bytes still to arrive, at their time (ascending)
+    bool failUartRead = false;           // uart_read_bytes() returns -1
+    bool failUartWrite = false;          // uart_write_bytes() returns -1
+    bool failUartInstall = false;
+    unsigned uartFlushes = 0;
+    unsigned uartWaitTxDone = 0;
+    unsigned taskDelays = 0;
 };
 
 extern int g_channel;

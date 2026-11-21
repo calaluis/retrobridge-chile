@@ -1,4 +1,4 @@
-#include "menu_image.hpp"
+#include "rb/menu/menu_image.hpp"
 
 namespace rb::host {
 

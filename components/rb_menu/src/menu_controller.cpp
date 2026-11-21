@@ -1,12 +1,12 @@
-#include "menu_controller.hpp"
+#include "rb/menu/menu_controller.hpp"
 
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <optional>
 
-#include "host_image_repository.hpp"
-#include "memory_image_store.hpp"
+#include "rb/menu/host_image_repository.hpp"
+#include "rb/menu/memory_image_store.hpp"
 #include "rb/app/image_location.hpp"
 #include "rb/domain/disk_image.hpp"
 #include "rb/domain/drive_number.hpp"

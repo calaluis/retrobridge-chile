@@ -5,6 +5,9 @@
 #include "driver/rmt_tx.h"
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
+#include "esp_timer.h"
+#include "freertos/task.h"
 
 namespace fake_idf {
 
@@ -78,6 +81,9 @@ esp_err_t gpio_reset_pin(gpio_num_t gpio_num)
 
 esp_err_t uart_driver_install(uart_port_t, int, int, int, QueueHandle_t*, int)
 {
+    if (fake_idf::state().failUartInstall) {
+        return ESP_FAIL;
+    }
     fake_idf::state().uartInstalled = true;
     return ESP_OK;
 }
@@ -88,11 +94,21 @@ esp_err_t uart_driver_delete(uart_port_t)
     return ESP_OK;
 }
 
-esp_err_t uart_param_config(uart_port_t, const uart_config_t*) { return ESP_OK; }
+esp_err_t uart_param_config(uart_port_t, const uart_config_t* config)
+{
+    fake_idf::state().uartBaud = config->baud_rate;
+    return ESP_OK;
+}
 
-esp_err_t uart_set_pin(uart_port_t, int tx, int, int, int)
+esp_err_t uart_set_pin(uart_port_t, int tx, int rx, int, int)
 {
     auto& s = fake_idf::state();
+    if (tx >= 0) {
+        s.uartTxPin = tx;
+    }
+    if (rx >= 0) {
+        s.uartRxPin = rx;
+    }
     ++s.uartSetPinCalls;
     if (s.failUartSetPin) {
         return ESP_FAIL;  // the matrix is left as it was
@@ -102,14 +118,22 @@ esp_err_t uart_set_pin(uart_port_t, int tx, int, int, int)
     return ESP_OK;
 }
 
-esp_err_t uart_wait_tx_done(uart_port_t, uint32_t) { return ESP_OK; }
+esp_err_t uart_wait_tx_done(uart_port_t, uint32_t)
+{
+    ++fake_idf::state().uartWaitTxDone;
+    return ESP_OK;
+}
 
 esp_err_t uart_set_baudrate(uart_port_t, uint32_t) { return ESP_OK; }
 
 int uart_write_bytes(uart_port_t, const void* src, size_t size)
 {
     auto& s = fake_idf::state();
+    if (s.failUartWrite) {
+        return -1;
+    }
     const auto* bytes = static_cast<const uint8_t*>(src);
+    s.nowUs += static_cast<int64_t>((size * 10u * 1000000u + 19199u) / 19200u);
     s.written.insert(s.written.end(), bytes, bytes + size);
     return static_cast<int>(size);
 }
@@ -231,4 +255,100 @@ esp_err_t rmt_tx_register_event_callbacks(rmt_channel_handle_t, const rmt_tx_eve
     s.doneCallback = reinterpret_cast<void*>(cbs->on_trans_done);
     s.doneContext = user_data;
     return ESP_OK;
+}
+
+// --- SIO line (menu-sio-fisico T4) ----------------------------------------------------------
+
+esp_err_t gpio_set_direction(gpio_num_t gpio_num, gpio_mode_t mode)
+{
+    if (mode == GPIO_MODE_INPUT) {
+        fake_idf::state().inputs.push_back(gpio_num);
+    }
+    return ESP_OK;
+}
+
+esp_err_t gpio_pullup_en(gpio_num_t gpio_num)
+{
+    fake_idf::state().pullups.push_back(gpio_num);
+    return ESP_OK;
+}
+
+int gpio_get_level(gpio_num_t gpio_num)
+{
+    const auto& s = fake_idf::state();
+    if (gpio_num == s.commandPin) {
+        return s.nowUs >= s.commandLowFromUs && s.nowUs < s.commandLowUntilUs ? 0 : 1;
+    }
+    return 1;  // DATA OUT and the rest idle at mark
+}
+
+namespace {
+
+// Moves the scheduled bytes that have arrived by now into the receive buffer.
+void deliver(fake_idf::State& s)
+{
+    std::size_t i = 0;
+    while (i < s.rxAt.size() && s.rxAt[i].first <= s.nowUs) {
+        s.rx.push_back(s.rxAt[i].second);
+        ++i;
+    }
+    s.rxAt.erase(s.rxAt.begin(), s.rxAt.begin() + static_cast<std::ptrdiff_t>(i));
+}
+
+}  // namespace
+
+int uart_read_bytes(uart_port_t, void* buf, uint32_t length, uint32_t ticks)
+{
+    auto& s = fake_idf::state();
+    if (s.failUartRead) {
+        return -1;
+    }
+    if (!s.rxAt.empty()) {  // bytes on a timeline: wait for them until the deadline
+        const int64_t deadline = s.nowUs + static_cast<int64_t>(ticks) * 1000;
+        deliver(s);
+        while (s.rx.size() < length && !s.rxAt.empty() && s.rxAt.front().first <= deadline) {
+            s.nowUs = s.rxAt.front().first;
+            deliver(s);
+        }
+        if (s.rx.size() < length) {
+            s.nowUs = deadline;
+        }
+        const std::size_t n = s.rx.size() < length ? s.rx.size() : length;
+        auto* out = static_cast<uint8_t*>(buf);
+        for (std::size_t i = 0; i < n; ++i) {
+            out[i] = s.rx[i];
+        }
+        s.rx.erase(s.rx.begin(), s.rx.begin() + static_cast<std::ptrdiff_t>(n));
+        return static_cast<int>(n);
+    }
+    const std::size_t n = s.rx.size() < length ? s.rx.size() : length;
+    auto* out = static_cast<uint8_t*>(buf);
+    for (std::size_t i = 0; i < n; ++i) {
+        out[i] = s.rx[i];
+    }
+    s.rx.erase(s.rx.begin(), s.rx.begin() + static_cast<std::ptrdiff_t>(n));
+    // Fewer bytes than asked: the read waited its whole timeout.
+    s.nowUs += n == length ? static_cast<int64_t>((n * 10u * 1000000u + 19199u) / 19200u)
+                           : static_cast<int64_t>(ticks) * 1000;
+    return static_cast<int>(n);
+}
+
+esp_err_t uart_flush_input(uart_port_t)
+{
+    auto& s = fake_idf::state();
+    deliver(s);
+    s.rx.clear();
+    ++s.uartFlushes;
+    return ESP_OK;
+}
+
+int64_t esp_timer_get_time() { return fake_idf::state().nowUs; }
+
+void esp_rom_delay_us(uint32_t us) { fake_idf::state().nowUs += us; }
+
+void vTaskDelay(TickType_t ticks)
+{
+    auto& s = fake_idf::state();
+    s.nowUs += static_cast<int64_t>(ticks) * 1000;
+    ++s.taskDelays;
 }

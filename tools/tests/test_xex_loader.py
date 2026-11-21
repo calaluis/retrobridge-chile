@@ -301,7 +301,7 @@ class XexLoaderTest(unittest.TestCase):
 
     def test_include_is_up_to_date(self):
         result = subprocess.run([sys.executable, "-I", str(TOOLS / "make_xex_loader.py"), "--check",
-                                 str(REPO / "host" / "src" / "xex_loader.inc")], capture_output=True, text=True)
+                                 str(REPO / "components" / "rb_menu" / "include" / "rb" / "menu" / "xex_loader.inc")], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
 

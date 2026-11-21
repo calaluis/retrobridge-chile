@@ -5,8 +5,8 @@
 #include <vector>
 
 #include "unity.h"
-#include "xex_image.hpp"
-#include "xex_loader.inc"
+#include "rb/menu/xex_image.hpp"
+#include "rb/menu/xex_loader.inc"
 
 using rb::core::Span;
 using rb::host::ImageBuffer;

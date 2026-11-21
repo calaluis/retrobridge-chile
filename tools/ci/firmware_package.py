@@ -81,7 +81,7 @@ SECRET_VALUE = re.compile(r'^CONFIG_\w*(PASSWORD|PASSWD|PSK|SSID|SECRET|TOKEN)\w
 PRIVATE_KEY = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 TEXT_SUFFIXES = {".txt", ".json", ".csv", ".md", ""}
 IDENTITY_PATHS = ("main", "components", "partitions", "sdkconfig.defaults",
-                  "sdkconfig.board.fujinet-atari-v1x", "CMakeLists.txt")
+                  "sdkconfig.board.fujinet-atari-v1x", "CMakeLists.txt", "sdkconfig.bench-c8")
 
 # Bytes that exist only when a feature is linked in: string literals in the
 # application image (flash .rodata) and C++ symbols in the ELF symbol table.
@@ -94,8 +94,20 @@ FEATURE_MARKERS = {
         "app": (b"DATA IN on GPIO%d: records by UART2, FSK by RMT", b"cassette ready: MOTOR %s, DATA IN %s"),
         "elf": (b"_ZN2rb3esp9EspDataIn9configure", b"_ZN2rb3esp15CassetteService5start"),
     },
+    "bench_c8": {  # main/bench_c8.cpp: bench test C8 of DATA IN (H4-C), only with CONFIG_RB_BENCH_C8
+        "app": (b"C8 BENCH BEGIN: board '%s', H4 %s, M3a %s", b"C8 RESULT PASS"),
+        "elf": (b"_ZN2rb5bench6run_c8",),
+    },
 }
-FEATURE_LABELS = {"hw_diag": "diagnóstico incorporado", "cassette": "casetera incorporada"}
+FEATURE_LABELS = {"hw_diag": "diagnóstico incorporado", "cassette": "casetera incorporada",
+                  "bench_c8": "prueba de banco C8 incorporada"}
+BENCH_KCONFIG = "CONFIG_RB_BENCH_C8"
+BENCH_CHECK = "prueba de banco C8 (sdkconfig y aplicación)"
+BENCH_GRANT_CHECK = "concesión de banco solo en main/bench_c8.cpp (código)"
+BENCH_SOURCE = "main/bench_c8.cpp"
+BENCH_GRANT = re.compile(r"\bvalidate_for_bench_data_in\b")
+REGISTER_WRITE = re.compile(r"\b(REG_WRITE|REG_SET_BIT|REG_CLR_BIT|REG_SET_FIELD|REG_SET_BITS|WRITE_PERI_REG|"
+                            r"SET_PERI_REG_MASK|CLEAR_PERI_REG_MASK|SET_PERI_REG_BITS)\b")
 
 # The cassette package (C107) watches every GPIO, UART and RMT function by name, not only the calls of
 # FORBIDDEN_CALLS: any use of the identifier counts (a call, a call split over lines, a pointer), with
@@ -106,18 +118,18 @@ _DATA_IN = "components/rb_esp_cassette/src/esp_data_in.cpp"
 _SERVICE = "components/rb_esp_cassette/src/cassette_service.cpp"
 CASSETTE_SIO_CALLS = (
     (_DATA_IN, "uart_driver_install", 1), (_DATA_IN, "uart_param_config", 1), (_DATA_IN, "uart_set_pin", 3),
-    (_DATA_IN, "uart_driver_delete", 1), (_DATA_IN, "uart_wait_tx_done", 2), (_DATA_IN, "uart_set_baudrate", 1),
+    (_DATA_IN, "uart_driver_delete", 2), (_DATA_IN, "uart_wait_tx_done", 2), (_DATA_IN, "uart_set_baudrate", 1),
     (_DATA_IN, "uart_write_bytes", 1),
     (_DATA_IN, "rmt_new_tx_channel", 1), (_DATA_IN, "rmt_new_simple_encoder", 1), (_DATA_IN, "rmt_enable", 1),
     (_DATA_IN, "rmt_transmit", 1), (_DATA_IN, "rmt_tx_wait_all_done", 1), (_DATA_IN, "rmt_disable", 2),
     (_DATA_IN, "rmt_del_channel", 3), (_DATA_IN, "rmt_del_encoder", 2),
-    (_DATA_IN, "gpio_reset_pin", 1),  # H4-C C8: DATA IN left as an input when the UART refuses it
+    (_DATA_IN, "gpio_reset_pin", 2),  # H4-C C8: output off when the UART refuses the pin, and release()
     (_SERVICE, "gpio_config", 1), (_SERVICE, "gpio_get_level", 1),  # MOTOR, input only
 )
 # The same calls before H4-C C8 (firmware up to f405106, the commit the cassette-lectura job pins):
 # five uart_set_pin() and no gpio_reset_pin(). Accepted as a whole, never mixed with the set above.
 CASSETTE_SIO_CALLS_BEFORE_C8 = tuple(
-    (path, call, 5 if call == "uart_set_pin" else count)
+    (path, call, {"uart_set_pin": 5, "uart_driver_delete": 1}.get(call, count))
     for path, call, count in CASSETTE_SIO_CALLS if call != "gpio_reset_pin")
 # Every uart_set_pin() of the cassette puts TX on the granted DATA IN pin and nothing else.
 CASSETTE_UART_SET_PIN = re.compile(r"uart_set_pin\s*\(\s*kUart\s*,\s*(?:pins\.dataIn\(\)|pin_)\s*,"
@@ -151,6 +163,7 @@ class Variant:
     earlier_sio_calls: tuple = ()         # an older exact set also accepted (a pinned commit), or none
     gates: bool = False                   # H4 and M3a must be approved (profile and record)
     closed_gates: bool = False            # H4 and M3a must NOT be approved (profile and record)
+    bench: bool = False                   # the bench test C8 build (CONFIG_RB_BENCH_C8); every other variant refuses it
     profile_text: str = "microSD por SPI3 en GPIO 18/23/19/5; sin pines SIO"
 
     @property
@@ -182,6 +195,15 @@ VARIANTS = {
                                 earlier_sio_calls=CASSETTE_SIO_CALLS_BEFORE_C8, closed_gates=True,
                                 profile_text="microSD por SPI3 en GPIO 18/23/19/5; H4 y M3a sin aprobar: la casetera "
                                              "no configura DATA IN (GPIO21) ni MOTOR (GPIO36)"),
+    # Bench test C8 (H4-C): the read-only cassette plus, at boot, one run of DATA IN on the board alone
+    # (USB only, the Atari disconnected): GPIO21 UART2 -> RMT -> UART2, then released. H4 and M3a unsigned.
+    "bench-c8": Variant("retrobridge-fw-bench-c8-fujinet-atari-v1x",
+                        "firmware de prueba de banco C8 (DATA IN sin el Atari, H4 y M3a sin aprobar) para FujiNet "
+                        "Atari FN32ROV-1.3/1.5",
+                        features=("cassette", "bench_c8"), version_matches_commit=True, sio_calls=CASSETTE_SIO_CALLS,
+                        closed_gates=True, bench=True,
+                        profile_text="microSD por SPI3 en GPIO 18/23/19/5; H4 y M3a sin aprobar; prueba de banco C8: "
+                                     "GPIO21 por UART2 y RMT al arrancar, solo con el Atari desconectado, y luego liberado"),
 }
 
 
@@ -646,10 +668,36 @@ def check_variant(files: Files, variant: Variant, commit: str, log: CheckLog) ->
                         f"{feature}: " + (", ".join(missing_app) or "literales presentes en retrobridge.bin"))
             log.require(f"{label} (ELF)", not missing_elf,
                         f"{feature}: " + (", ".join(missing_elf) or "símbolos presentes en retrobridge.elf"))
+    sdk = parse_sdkconfig(files.sdkconfig.read_text(encoding="utf-8"))
+    bench_on = sdk.get(BENCH_KCONFIG) == "y"
+    bench_in_app = FEATURE_MARKERS["bench_c8"]["app"][0] in files.app.read_bytes()
+    log.require(BENCH_CHECK, bench_on == variant.bench and bench_in_app == variant.bench,
+                f"{BENCH_KCONFIG}={'y' if bench_on else 'no'}, prueba en la aplicación: {'sí' if bench_in_app else 'no'}"
+                f" (esperado: {'sí' if variant.bench else 'no'})")
     if variant.version_matches_commit:
         version = str(log.facts["app_desc"].get("version", ""))
         ok = len(version) >= 7 and all(c in "0123456789abcdef" for c in version) and commit.startswith(version)
         log.require("versión = commit fijado", ok, f"esp_app_desc={version!r}, commit={commit}")
+
+
+def check_bench_grant(src: Path):
+    """Returns (ok, detail): validate_for_bench_data_in() is called only from main/bench_c8.cpp (rb_board, which
+    defines it, and the tests aside), and main/bench_c8.cpp writes no register."""
+    wrong = []
+    for base in ("main", "components"):
+        root = src / base
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            rel = path.relative_to(src)
+            if path.suffix not in SOURCE_SUFFIXES or "test" in rel.parts or rel.parts[:2] == ("components", "rb_board"):
+                continue
+            text = strip_code(path.read_text(encoding="utf-8", errors="replace"))
+            if BENCH_GRANT.search(text) and rel.as_posix() != BENCH_SOURCE:
+                wrong.append(f"{rel.as_posix()}: validate_for_bench_data_in")
+            if rel.as_posix() == BENCH_SOURCE:
+                wrong += [f"{BENCH_SOURCE}: {m}" for m in sorted(set(REGISTER_WRITE.findall(text)))]
+    return not wrong, ", ".join(wrong) or "solo en main/bench_c8.cpp, sin escribir registros"
 
 
 def check_build(src: Path, build: Path, source: SourceState, baseline: str, variant: Variant = VARIANTS["h3c"]) -> CheckLog:
@@ -662,6 +710,8 @@ def check_build(src: Path, build: Path, source: SourceState, baseline: str, vari
         if earlier_ok:
             calls_ok, calls_detail = True, earlier_detail + " (anterior a H4-C C8)"
     log.require(variant.code_check, calls_ok, calls_detail)
+    grant_ok, grant_detail = check_bench_grant(src)
+    log.require(BENCH_GRANT_CHECK, grant_ok, grant_detail)
     if variant.gates:
         gates = profile_gates(src)
         log.require(PROFILE_CHECK, gates == (True, True),

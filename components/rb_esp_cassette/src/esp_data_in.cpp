@@ -69,13 +69,13 @@ bool EspDataIn::configure(const rb::board::CassetteOutputAssignment& pins) noexc
     config.stop_bits = UART_STOP_BITS_1;
     config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
     config.source_clk = UART_SCLK_DEFAULT;
-    if (uart_driver_install(kUart, kUartRxBuffer, kUartTxBuffer, 0, nullptr, 0) != ESP_OK) {
+    if (traced("uart_driver_install", uart_driver_install(kUart, kUartRxBuffer, kUartTxBuffer, 0, nullptr, 0)) != ESP_OK) {
         ESP_LOGE(kTag, "UART2 driver not installed: DATA IN not driven");
         return false;
     }
-    if (uart_param_config(kUart, &config) != ESP_OK ||
-        uart_set_pin(kUart, pins.dataIn(), UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK) {
-        (void)uart_driver_delete(kUart);
+    if (traced("uart_param_config", uart_param_config(kUart, &config)) != ESP_OK ||
+        traced("uart_set_pin", uart_set_pin(kUart, pins.dataIn(), UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE)) != ESP_OK) {
+        (void)traced("uart_driver_delete", uart_driver_delete(kUart));
         ESP_LOGE(kTag, "UART2 not set on GPIO%d: DATA IN not driven", pins.dataIn());
         return false;
     }
@@ -96,7 +96,7 @@ bool EspDataIn::setBaud(uint32_t baud)
     if (uart_wait_tx_done(kUart, 0) != ESP_OK) {
         return false;  // bytes still going out at the old rate: try again later
     }
-    if (uart_set_baudrate(kUart, baud) != ESP_OK) {
+    if (traced("uart_set_baudrate", uart_set_baudrate(kUart, baud)) != ESP_OK) {
         return false;
     }
     baud_ = baud;
@@ -112,7 +112,9 @@ bool EspDataIn::send(rb::core::Span<const uint8_t> bytes)
         return true;
     }
     const int written = uart_write_bytes(kUart, bytes.data(), bytes.size());
-    return written == static_cast<int>(bytes.size());
+    const bool all = written == static_cast<int>(bytes.size());
+    (void)traced("uart_write_bytes", all ? ESP_OK : ESP_FAIL);
+    return all;
 }
 
 bool EspDataIn::push(const rb::cassette::FskPortion& portion)
@@ -128,7 +130,7 @@ bool EspDataIn::idle() const
 void EspDataIn::stop()
 {
     if (channel_ != nullptr) {
-        (void)rmt_disable(as_channel(channel_));  // aborts the transmission in flight
+        (void)traced("rmt_disable", rmt_disable(as_channel(channel_)));  // aborts the transmission in flight
     }
     feed_.clear();
     releasePin();
@@ -195,7 +197,7 @@ bool EspDataIn::takePin() noexcept
     config.trans_queue_depth = 1;
     config.flags.init_level = 1;  // the RMT holds mark until the first symbol: DATA IN released
     rmt_channel_handle_t channel = nullptr;
-    if (rmt_new_tx_channel(&config, &channel) != ESP_OK) {
+    if (traced("rmt_new_tx_channel", rmt_new_tx_channel(&config, &channel)) != ESP_OK) {
         (void)pinToUart();
         return false;
     }
@@ -204,14 +206,14 @@ bool EspDataIn::takePin() noexcept
     simple.arg = &feed_;
     simple.min_chunk_size = 0;
     rmt_encoder_handle_t encoder = nullptr;
-    if (rmt_new_simple_encoder(&simple, &encoder) != ESP_OK) {
-        (void)rmt_del_channel(channel);
+    if (traced("rmt_new_simple_encoder", rmt_new_simple_encoder(&simple, &encoder)) != ESP_OK) {
+        (void)traced("rmt_del_channel", rmt_del_channel(channel));
         (void)pinToUart();
         return false;
     }
-    if (rmt_enable(channel) != ESP_OK) {
-        (void)rmt_del_encoder(encoder);
-        (void)rmt_del_channel(channel);
+    if (traced("rmt_enable", rmt_enable(channel)) != ESP_OK) {
+        (void)traced("rmt_del_encoder", rmt_del_encoder(encoder));
+        (void)traced("rmt_del_channel", rmt_del_channel(channel));
         (void)pinToUart();
         return false;
     }
@@ -226,7 +228,8 @@ bool EspDataIn::startTransmission() noexcept
     rmt_transmit_config_t config{};
     config.loop_count = 0;
     config.flags.eot_level = 1;  // mark after every transmission: DATA IN released
-    if (rmt_transmit(as_channel(channel_), as_encoder(encoder_), &dummy_, sizeof dummy_, &config) != ESP_OK) {
+    if (traced("rmt_transmit", rmt_transmit(as_channel(channel_), as_encoder(encoder_), &dummy_, sizeof dummy_, &config)) !=
+        ESP_OK) {
         return false;
     }
     sending_ = true;
@@ -239,9 +242,9 @@ void EspDataIn::releasePin() noexcept
     if (channel_ == nullptr) {
         return;
     }
-    (void)rmt_disable(as_channel(channel_));  // already disabled after stop(): harmless
-    (void)rmt_del_channel(as_channel(channel_));
-    (void)rmt_del_encoder(as_encoder(encoder_));
+    (void)traced("rmt_disable", rmt_disable(as_channel(channel_)));  // already disabled after stop(): harmless
+    (void)traced("rmt_del_channel", rmt_del_channel(as_channel(channel_)));
+    (void)traced("rmt_del_encoder", rmt_del_encoder(as_encoder(encoder_)));
     channel_ = nullptr;
     encoder_ = nullptr;
     sending_ = false;
@@ -251,11 +254,11 @@ void EspDataIn::releasePin() noexcept
 
 bool EspDataIn::pinToUart() noexcept
 {
-    if (uart_set_pin(kUart, pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) == ESP_OK) {
+    if (traced("uart_set_pin", uart_set_pin(kUart, pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE)) == ESP_OK) {
         return true;
     }
     // Nobody may drive DATA IN now: gpio_reset_pin() turns its output off with a pull-up, so the 74LS07 lets the line go.
-    const bool safe = gpio_reset_pin(static_cast<gpio_num_t>(pin_)) == ESP_OK;
+    const bool safe = traced("gpio_reset_pin", gpio_reset_pin(static_cast<gpio_num_t>(pin_))) == ESP_OK;
     feed_.clear();
     sending_ = false;
     started_ = false;
@@ -275,13 +278,35 @@ bool EspDataIn::recover() noexcept
     if (!faulted_) {
         return true;
     }
-    if (uart_set_pin(kUart, pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK) {
+    if (traced("uart_set_pin", uart_set_pin(kUart, pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE)) != ESP_OK) {
         ESP_LOGE(kTag, "recover: UART2 still refuses GPIO%d; DATA IN stays reset (output off)", pin_);
         return false;
     }
     faulted_ = false;
     ESP_LOGI(kTag, "recover: DATA IN back on UART2 (GPIO%d), at mark", pin_);
     return true;
+}
+
+void EspDataIn::release() noexcept
+{
+    if (!enabled()) {
+        return;
+    }
+    stop();  // an FSK run in flight ends; the pin goes back to the UART (or the driver faults)
+    (void)traced("uart_driver_delete", uart_driver_delete(kUart));
+    // No peripheral keeps the pin: output off, pull-up, so the 74LS07 lets DATA IN go.
+    (void)traced("gpio_reset_pin", gpio_reset_pin(static_cast<gpio_num_t>(pin_)));
+    ESP_LOGI(kTag, "DATA IN released: UART2 deleted, GPIO%d reset (output off)", pin_);
+    pin_ = -1;
+    faulted_ = false;
+}
+
+int EspDataIn::traced(const char* call, int err) const noexcept
+{
+    if (trace_ != nullptr) {
+        trace_(call, err);
+    }
+    return err;
 }
 
 }  // namespace rb::esp

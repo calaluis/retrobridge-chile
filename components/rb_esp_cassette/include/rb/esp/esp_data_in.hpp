@@ -72,11 +72,22 @@ public:
     // Explicit recovery: gives the pin back to the UART. True when not (or no longer) faulted.
     bool recover() noexcept;
 
+    // Undoes configure(): stops any run, deletes the UART2 driver and resets the pin (output off,
+    // pull-up). enabled() is false afterwards. Used by the bench test C8.
+    void release() noexcept;
+
+    // Optional trace of every ESP-IDF call that changes the pin or its peripherals, with its
+    // esp_err_t (0 = ESP_OK). Not called for the polling calls (uart_wait_tx_done,
+    // rmt_tx_wait_all_done) nor from the RMT interrupt. Set before configure(); nullptr: none.
+    using CallTrace = void (*)(const char* call, int err);
+    void setTrace(CallTrace trace) noexcept { trace_ = trace; }
+
 private:
     bool takePin() noexcept;      // UART -> RMT; false: the UART still has the pin
     void dropRun() noexcept;      // RMT failure: drop the queued run, pin back to the UART
     void releasePin() noexcept;   // RMT -> UART, line at mark
     bool pinToUart() noexcept;    // false: the UART refused it, the driver is faulted
+    int traced(const char* call, int err) const noexcept;  // reports err to the trace, returns it
     bool startTransmission() noexcept;
     bool transmitting() const noexcept;
 
@@ -90,6 +101,7 @@ private:
     uint32_t failures_ = 0;
     uint32_t pinFaults_ = 0;
     bool faulted_ = false;
+    CallTrace trace_ = nullptr;
     uint32_t lastSize_ = 0;     // feed size at the previous pump()
     uint8_t dummy_ = 0;         // rmt_transmit() wants a payload; the encoder reads the feed
     uint32_t slots_[kFeedPortions] = {};

@@ -73,6 +73,10 @@ hasta reiniciar la placa. Conectar `recover()` a la consola es un paso posterior
 **Comprobación física pendiente [P]**, por USB y sin el Atari: leer GPIO21, o medir el pin 3 de J1, en reposo, después
 de un tramo FSK y después de `cas eject`.
 
+**Prueba de banco C8 preparada** (`procedimiento-prueba-banco-c8.md`, paquete `bench-c8`): comprueba en el ESP32, por la
+matriz GPIO, que GPIO21 pasa de UART2 al RMT y vuelve a UART2 al terminar y al cancelar un tramo, y registra cada llamada
+de ESP-IDF. No mide el pin 3: la verificación eléctrica sigue [P].
+
 ## 4. Lo que sigue abierto
 
 - **C5:** MOTOR. Medición M3a por un tercero (ficha del responsable) o un adaptador que conserve MOTOR, validado.

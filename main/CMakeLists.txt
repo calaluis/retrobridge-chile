@@ -2,9 +2,14 @@
 # infrastructure adapters (ADR-002). H3b: diagnostic firmware, no SIO.
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/rb_build_flags.cmake)
 
+set(rb_main_srcs "app_main.cpp")
+if(CONFIG_RB_BENCH_C8)
+    list(APPEND rb_main_srcs "bench_c8.cpp")  # bench test C8 only (H4-C)
+endif()
+
 idf_component_register(
-    SRCS "app_main.cpp"
+    SRCS ${rb_main_srcs}
     REQUIRES rb_core rb_domain rb_application rb_sio rb_file_storage rb_board rb_esp_platform rb_esp_storage
-             rb_console rb_hw_diag rb_esp_cassette log)
+             rb_console rb_hw_diag rb_esp_cassette rb_cassette log freertos soc)
 
 rb_apply_build_flags(${COMPONENT_LIB})

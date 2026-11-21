@@ -911,5 +911,83 @@ class CassetteReadOnlyPackageTest(unittest.TestCase):
         self.assertTrue(ok, detail)
 
 
+
+BENCH_APP_MARKERS = CASSETTE_APP_MARKERS + (b"\x1b[0;33mW (%lu) %s: C8 BENCH BEGIN: board '%s', H4 %s, M3a %s; USB "
+                                            b"only\x1b[0m\n\0\x1b[0;32mI (%lu) %s: C8 RESULT PASS: GPIO21\x1b[0m\n\0")
+BENCH_ELF = CASSETTE_ELF + b"_ZN2rb5bench6run_c8ERKNS_5board12BoardProfileERNS_3esp9EspDataInE\0"
+BENCH_SOURCE = "void f() { (void)rb::board::validate_for_bench_data_in(kBoard); REG_READ(GPIO_ENABLE_REG); }\n"
+
+
+class BenchC8PackageTest(unittest.TestCase):
+    """bench-c8: the read-only cassette plus the bench test C8, only with H4 and M3a unsigned and the
+    bench option on; every other variant refuses the bench option and the bench code."""
+
+    def setUp(self):
+        CassetteReadOnlyPackageTest.setUp(self)
+        write(self.f.src / "main" / "bench_c8.cpp", BENCH_SOURCE)
+        write(self.f.build / "sdkconfig", SDKCONFIG + "CONFIG_RB_BENCH_C8=y\n")
+        write(self.f.build / "retrobridge.elf", BENCH_ELF)
+        write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=BENCH_ELF, extra=BENCH_APP_MARKERS))
+
+    tearDown = CassettePackageTest.tearDown
+    profile = CassettePackageTest.profile
+    gates = CassettePackageTest.gates
+    failed = CassettePackageTest.failed
+
+    def package(self, variant="bench-c8"):
+        return CassettePackageTest.package(self, variant)
+
+    def assert_refused(self, check_name, variant="bench-c8"):
+        CassettePackageTest.assert_refused(self, check_name, variant)
+
+    def test_bench_package_with_both_gates_unsigned(self):
+        log = self.package()
+        self.assertTrue(log.ok, self.failed(log))
+        provenance = json.loads((self.f.out / "PROVENANCE.json").read_text(encoding="utf-8"))
+        self.assertEqual(provenance["package"], "retrobridge-fw-bench-c8-fujinet-atari-v1x")
+        self.assertEqual(provenance["features"], ["cassette", "bench_c8"])
+        self.assertEqual(provenance["gates"], closed_record())
+        log = fp.verify_package(self.f.out)
+        self.assertTrue(log.ok, self.failed(log))
+
+    def test_bench_package_refuses_signed_gates(self):
+        self.profile(True, True)
+        self.gates(gate_record())
+        self.assert_refused(CLOSED_PROFILE)
+
+    def test_bench_package_needs_the_bench_option(self):
+        write(self.f.build / "sdkconfig", SDKCONFIG)
+        self.assert_refused(fp.BENCH_CHECK)
+
+    def test_bench_package_needs_the_bench_code(self):
+        write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=BENCH_ELF, extra=CASSETTE_APP_MARKERS))
+        self.assert_refused(fp.BENCH_CHECK)
+
+    def test_read_only_package_refuses_the_bench_option(self):
+        self.assert_refused(fp.BENCH_CHECK, variant="cassette-lectura")
+
+    def test_read_only_package_refuses_the_bench_code_without_the_option(self):
+        write(self.f.build / "sdkconfig", SDKCONFIG)
+        self.assert_refused(fp.BENCH_CHECK, variant="cassette-lectura")
+
+    def test_bench_grant_outside_the_bench_file_is_refused(self):
+        write(self.f.src / "main" / "app_main.cpp", BENCH_SOURCE)
+        self.assert_refused(fp.BENCH_GRANT_CHECK)
+
+    def test_bench_grant_in_a_comment_or_string_is_ignored(self):
+        write(self.f.src / "main" / "app_main.cpp",
+              '// validate_for_bench_data_in\nconst char* s = "validate_for_bench_data_in";\n')
+        log = self.package()
+        self.assertTrue(log.ok, self.failed(log))
+
+    def test_bench_file_must_not_write_registers(self):
+        write(self.f.src / "main" / "bench_c8.cpp", BENCH_SOURCE + "void g() { REG_WRITE(GPIO_ENABLE_REG, 0); }\n")
+        self.assert_refused(fp.BENCH_GRANT_CHECK)
+
+    def test_main_code_calls_the_bench_grant_only_from_the_bench_file(self):
+        repo = Path(__file__).resolve().parents[2]
+        ok, detail = fp.check_bench_grant(repo)
+        self.assertTrue(ok, detail)
+
 if __name__ == "__main__":
     unittest.main()

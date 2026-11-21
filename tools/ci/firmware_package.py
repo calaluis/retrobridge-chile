@@ -121,16 +121,20 @@ CASSETTE_SIO_CALLS = (
     (_DATA_IN, "uart_driver_delete", 2), (_DATA_IN, "uart_wait_tx_done", 2), (_DATA_IN, "uart_set_baudrate", 1),
     (_DATA_IN, "uart_write_bytes", 1),
     (_DATA_IN, "rmt_new_tx_channel", 1), (_DATA_IN, "rmt_new_simple_encoder", 1), (_DATA_IN, "rmt_enable", 1),
-    (_DATA_IN, "rmt_transmit", 1), (_DATA_IN, "rmt_tx_wait_all_done", 1), (_DATA_IN, "rmt_disable", 2),
+    (_DATA_IN, "rmt_transmit", 1), (_DATA_IN, "rmt_disable", 1),  # once per enable (bench test C8, d05bfe2)
+    (_DATA_IN, "rmt_tx_register_event_callbacks", 1),  # the end of a run comes from on_trans_done
     (_DATA_IN, "rmt_del_channel", 3), (_DATA_IN, "rmt_del_encoder", 2),
     (_DATA_IN, "gpio_reset_pin", 2),  # H4-C C8: output off when the UART refuses the pin, and release()
     (_SERVICE, "gpio_config", 1), (_SERVICE, "gpio_get_level", 1),  # MOTOR, input only
 )
 # The same calls before H4-C C8 (firmware up to f405106, the commit the cassette-lectura job pins):
-# five uart_set_pin() and no gpio_reset_pin(). Accepted as a whole, never mixed with the set above.
+# five uart_set_pin(), no gpio_reset_pin(), two rmt_disable() and the end of a run polled with
+# rmt_tx_wait_all_done() instead of on_trans_done. Accepted as a whole, never mixed with the set above.
 CASSETTE_SIO_CALLS_BEFORE_C8 = tuple(
-    (path, call, {"uart_set_pin": 5, "uart_driver_delete": 1}.get(call, count))
-    for path, call, count in CASSETTE_SIO_CALLS if call != "gpio_reset_pin")
+    (path, call, {"uart_set_pin": 5, "uart_driver_delete": 1, "rmt_disable": 2}.get(call, count))
+    for path, call, count in CASSETTE_SIO_CALLS
+    if call not in ("gpio_reset_pin", "rmt_tx_register_event_callbacks")) + (
+    (_DATA_IN, "rmt_tx_wait_all_done", 1),)
 # Every uart_set_pin() of the cassette puts TX on the granted DATA IN pin and nothing else.
 CASSETTE_UART_SET_PIN = re.compile(r"uart_set_pin\s*\(\s*kUart\s*,\s*(?:pins\.dataIn\(\)|pin_)\s*,"
                                    r"\s*UART_PIN_NO_CHANGE\s*,\s*UART_PIN_NO_CHANGE\s*,\s*UART_PIN_NO_CHANGE\s*\)")

@@ -30,3 +30,13 @@ esp_err_t rmt_disable(rmt_channel_handle_t channel);
 esp_err_t rmt_transmit(rmt_channel_handle_t channel, rmt_encoder_handle_t encoder, const void* payload,
                        size_t payload_bytes, const rmt_transmit_config_t* config);
 esp_err_t rmt_tx_wait_all_done(rmt_channel_handle_t channel, int timeout_ms);
+struct rmt_tx_done_event_data_t {
+    size_t num_symbols;
+};
+typedef bool (*rmt_tx_done_callback_t)(rmt_channel_handle_t tx_chan, const rmt_tx_done_event_data_t* edata,
+                                       void* user_ctx);
+struct rmt_tx_event_callbacks_t {
+    rmt_tx_done_callback_t on_trans_done;
+};
+esp_err_t rmt_tx_register_event_callbacks(rmt_channel_handle_t tx_channel, const rmt_tx_event_callbacks_t* cbs,
+                                          void* user_data);

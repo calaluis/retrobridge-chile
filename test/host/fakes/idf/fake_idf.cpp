@@ -36,7 +36,13 @@ std::size_t play_all()
             break;  // nothing more queued: the RMT would end the transmission (eot)
         }
     }
+    const bool wasBusy = s.rmtBusy;
     s.rmtBusy = false;
+    if (wasBusy && s.doneCallback != nullptr) {
+        const rmt_tx_done_event_data_t event{total};
+        reinterpret_cast<rmt_tx_done_callback_t>(s.doneCallback)(reinterpret_cast<rmt_channel_handle_t>(&g_channel),
+                                                                 &event, s.doneContext);
+    }
     return total;
 }
 
@@ -129,6 +135,8 @@ esp_err_t rmt_del_channel(rmt_channel_handle_t)
     s.rmtChannel = false;
     s.rmtEnabled = false;
     s.rmtBusy = false;
+    s.doneCallback = nullptr;
+    s.doneContext = nullptr;
     if (s.owner == Owner::Rmt) {
         s.owner = Owner::None;  // the RMT lets the pin go; nobody routes it until uart_set_pin
     }
@@ -165,6 +173,11 @@ esp_err_t rmt_enable(rmt_channel_handle_t)
 esp_err_t rmt_disable(rmt_channel_handle_t)
 {
     auto& s = fake_idf::state();
+    if (!s.rmtEnabled) {
+        ++s.rmtDisableRefused;  // IDF: "channel can't be disabled in state 0"
+        ++s.errorLogs;
+        return ESP_ERR_INVALID_STATE;
+    }
     s.rmtEnabled = false;
     s.rmtBusy = false;  // aborts the transmission in flight
     return ESP_OK;
@@ -185,5 +198,23 @@ esp_err_t rmt_transmit(rmt_channel_handle_t, rmt_encoder_handle_t, const void*, 
 
 esp_err_t rmt_tx_wait_all_done(rmt_channel_handle_t, int)
 {
-    return fake_idf::state().rmtBusy ? ESP_ERR_TIMEOUT : ESP_OK;
+    auto& s = fake_idf::state();
+    if (!s.rmtBusy) {
+        return ESP_OK;
+    }
+    ++s.rmtWaitTimeouts;  // IDF: "rmt_tx_wait_all_done(588): flush timeout", logged as an error
+    ++s.errorLogs;
+    return ESP_ERR_TIMEOUT;
+}
+
+esp_err_t rmt_tx_register_event_callbacks(rmt_channel_handle_t, const rmt_tx_event_callbacks_t* cbs, void* user_data)
+{
+    auto& s = fake_idf::state();
+    if (!s.rmtChannel || s.rmtEnabled) {
+        ++s.errorLogs;
+        return ESP_ERR_INVALID_STATE;  // IDF: only while the channel is in the init state
+    }
+    s.doneCallback = reinterpret_cast<void*>(cbs->on_trans_done);
+    s.doneContext = user_data;
+    return ESP_OK;
 }

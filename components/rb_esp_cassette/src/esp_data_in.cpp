@@ -55,6 +55,13 @@ size_t encode_from_feed(const void* /*data*/, size_t /*data_size*/, size_t /*sym
     return written;
 }
 
+// RMT "transmission done" interrupt: only raises the flag pump() reads. No I/O, no logging.
+bool on_tx_done(rmt_channel_handle_t /*channel*/, const rmt_tx_done_event_data_t* /*event*/, void* ctx)
+{
+    static_cast<std::atomic<bool>*>(ctx)->store(true, std::memory_order_release);
+    return false;  // no task woken
+}
+
 }  // namespace
 
 bool EspDataIn::configure(const rb::board::CassetteOutputAssignment& pins) noexcept
@@ -129,9 +136,7 @@ bool EspDataIn::idle() const
 
 void EspDataIn::stop()
 {
-    if (channel_ != nullptr) {
-        (void)traced("rmt_disable", rmt_disable(as_channel(channel_)));  // aborts the transmission in flight
-    }
+    disableChannel();  // aborts the transmission in flight before the feed is cleared
     feed_.clear();
     releasePin();
     sending_ = false;
@@ -169,9 +174,22 @@ void EspDataIn::pump() noexcept
     lastSize_ = feed_.size();
 }
 
+// The RMT says when a transmission ends (on_trans_done). Polling rmt_tx_wait_all_done(0) instead
+// logged "flush timeout" as an error on every tick of a run (bench test C8, d05bfe2).
 bool EspDataIn::transmitting() const noexcept
 {
-    return channel_ != nullptr && rmt_tx_wait_all_done(as_channel(channel_), 0) == ESP_ERR_TIMEOUT;
+    return channel_ != nullptr && !txDone_.load(std::memory_order_acquire);
+}
+
+void EspDataIn::disableChannel() noexcept
+{
+    // Once per enable: IDF refuses a second rmt_disable() (ESP_ERR_INVALID_STATE, bench test C8).
+    if (channel_ == nullptr || !rmtEnabled_) {
+        return;
+    }
+    if (traced("rmt_disable", rmt_disable(as_channel(channel_))) == ESP_OK) {
+        rmtEnabled_ = false;
+    }
 }
 
 void EspDataIn::dropRun() noexcept
@@ -211,7 +229,12 @@ bool EspDataIn::takePin() noexcept
         (void)pinToUart();
         return false;
     }
-    if (traced("rmt_enable", rmt_enable(channel)) != ESP_OK) {
+    rmt_tx_event_callbacks_t callbacks{};
+    callbacks.on_trans_done = &on_tx_done;
+    txDone_.store(false, std::memory_order_relaxed);
+    if (traced("rmt_tx_register_event_callbacks", rmt_tx_register_event_callbacks(channel, &callbacks, &txDone_)) !=
+            ESP_OK ||
+        traced("rmt_enable", rmt_enable(channel)) != ESP_OK) {
         (void)traced("rmt_del_encoder", rmt_del_encoder(encoder));
         (void)traced("rmt_del_channel", rmt_del_channel(channel));
         (void)pinToUart();
@@ -219,6 +242,7 @@ bool EspDataIn::takePin() noexcept
     }
     channel_ = channel;
     encoder_ = encoder;
+    rmtEnabled_ = true;
     started_ = false;
     return true;
 }
@@ -228,6 +252,7 @@ bool EspDataIn::startTransmission() noexcept
     rmt_transmit_config_t config{};
     config.loop_count = 0;
     config.flags.eot_level = 1;  // mark after every transmission: DATA IN released
+    txDone_.store(false, std::memory_order_release);  // before the RMT can notify this transmission
     if (traced("rmt_transmit", rmt_transmit(as_channel(channel_), as_encoder(encoder_), &dummy_, sizeof dummy_, &config)) !=
         ESP_OK) {
         return false;
@@ -242,11 +267,12 @@ void EspDataIn::releasePin() noexcept
     if (channel_ == nullptr) {
         return;
     }
-    (void)traced("rmt_disable", rmt_disable(as_channel(channel_)));  // already disabled after stop(): harmless
+    disableChannel();  // not again after stop()
     (void)traced("rmt_del_channel", rmt_del_channel(as_channel(channel_)));
     (void)traced("rmt_del_encoder", rmt_del_encoder(as_encoder(encoder_)));
     channel_ = nullptr;
     encoder_ = nullptr;
+    rmtEnabled_ = false;
     sending_ = false;
     // The UART takes the pin back; it idles high (mark).
     (void)pinToUart();

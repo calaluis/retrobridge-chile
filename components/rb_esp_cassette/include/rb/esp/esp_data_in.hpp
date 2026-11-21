@@ -27,6 +27,7 @@
 // The refill callback is not in IRAM: during a flash write (NVS, OTA) the RMT ISR waits and a run
 // may underrun. Nothing writes the flash while a tape plays today.
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -77,8 +78,8 @@ public:
     void release() noexcept;
 
     // Optional trace of every ESP-IDF call that changes the pin or its peripherals, with its
-    // esp_err_t (0 = ESP_OK). Not called for the polling calls (uart_wait_tx_done,
-    // rmt_tx_wait_all_done) nor from the RMT interrupt. Set before configure(); nullptr: none.
+    // esp_err_t (0 = ESP_OK). Not called for uart_wait_tx_done (a poll) nor from the RMT
+    // interrupts (refill, on_trans_done). Set before configure(); nullptr: none.
     using CallTrace = void (*)(const char* call, int err);
     void setTrace(CallTrace trace) noexcept { trace_ = trace; }
 
@@ -90,12 +91,16 @@ private:
     int traced(const char* call, int err) const noexcept;  // reports err to the trace, returns it
     bool startTransmission() noexcept;
     bool transmitting() const noexcept;
+    void disableChannel() noexcept;  // rmt_disable() once per enable
 
     int8_t pin_ = -1;
     uint32_t baud_ = kDefaultBaud;
     void* channel_ = nullptr;   // rmt_channel_handle_t while the pin belongs to the RMT
     void* encoder_ = nullptr;   // rmt_encoder_handle_t
     bool sending_ = false;      // a transmission was queued and has not been seen done
+    bool rmtEnabled_ = false;   // the channel is enabled: rmt_disable() is due exactly once
+    // Set by the RMT's on_trans_done interrupt, read by pump(): the transmission has ended.
+    std::atomic<bool> txDone_{false};
     bool started_ = false;      // this run has started once (a restart counts as an underrun)
     uint32_t underruns_ = 0;
     uint32_t failures_ = 0;

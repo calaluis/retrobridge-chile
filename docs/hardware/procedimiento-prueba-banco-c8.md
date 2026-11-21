@@ -111,6 +111,7 @@ I (…) c8: C8 [PASS] 2 after the bytes: GPIO21 out_sel=198 oe=1 -> UART2 TX
 I (…) c8: C8 [PASS] 3 run A queued (1500 x 200 us)
 I (…) c8: C8 call rmt_new_tx_channel -> 0
 I (…) c8: C8 call rmt_new_simple_encoder -> 0
+I (…) c8: C8 call rmt_tx_register_event_callbacks -> 0
 I (…) c8: C8 call rmt_enable -> 0
 I (…) c8: C8 call rmt_transmit -> 0
 I (…) c8: C8 [PASS] 3 run A started
@@ -121,7 +122,7 @@ I (…) c8: C8 call rmt_del_encoder -> 0
 I (…) c8: C8 call uart_set_pin -> 0
 I (…) c8: C8 [PASS] 4 run A played to its end
 I (…) c8: C8 [PASS] 4 run A ended: GPIO21 out_sel=198 oe=1 -> UART2 TX
-…   (run B: the same calls; then stop() adds one more rmt_disable)
+…   (run B: the same calls; stop() disables the channel once)
 I (…) c8: C8 [PASS] 6 run B cancelled: GPIO21 out_sel=198 oe=1 -> UART2 TX
 I (…) c8: C8 [PASS] 7 no fault (faulted, pinFaults, failures)
 I (…) c8: C8 counters: faulted=0 pinFaults=0 failures=0 underruns=0
@@ -145,6 +146,15 @@ caso se guarda la captura y se restaura `cassette-lectura` (§7).
 
 `underruns` mayor que 0 no hace fallar la prueba, pero se registra: indica que el RMT se quedó sin datos a mitad de un
 tramo.
+
+Cualquier línea `E (…) rmt:` se anota en el registro. Desde `fix/c8-rmt` no debe aparecer ninguna: el fin de un
+tramo llega por la notificación del RMT (`on_trans_done`) y el canal se desactiva una sola vez.
+
+### Historial
+
+| Fecha | Paquete | Resultado | Causa |
+|---|---|---|---|
+| 2026-11-21 | `bench-c8` `d05bfe2` | **FAIL** | La ruta de GPIO21 fue la esperada en los pasos 0–8. Falló una llamada: `stop()` desactivó el canal y `releasePin()` lo desactivó otra vez (`rmt_disable -> 259`, `ESP_ERR_INVALID_STATE`). Además, `rmt_tx_wait_all_done(0)` escribió «flush timeout» como error en cada consulta (unas 110 líneas). Corregido en `fix/c8-rmt`. |
 
 ## 7. Restaurar `cassette-lectura` (`f405106`)
 

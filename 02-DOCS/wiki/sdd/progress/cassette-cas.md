@@ -269,9 +269,45 @@ Rama `feat/cassette-output` (desde main 786ee39). Alcance limitado a C106/C107 p
   aprobación y la demo desde la microSD: `international_karate.cas` (AC10), Alien Ambush o Bruce Lee (AC11) y una cinta
   turbo solo `fsk ` elegida por el responsable (AC12).
 
+## C107 — empaquetado de la casetera (2026-11-21)
+
+Rama `feat/cassette-package` (desde main 7621040). Atiende la decisión bloqueante del empaquetado, con el alcance que
+fijó el responsable: la excepción solo para las llamadas de C107, con H4 y M3a comprobadas al generar y al verificar.
+
+- `tools/ci/firmware_package.py`: variante `cassette` (`retrobridge-fw-cassette-fujinet-atari-v1x`).
+  - Código: vigila todo identificador `gpio_*`, `uart_*`, `rmt_*`, `esp_rom_gpio_*`, `ledc_*`, `sigmadelta_*` y
+    `dedic_gpio_*` en `main/` y `components/` (sin comentarios ni cadenas; cuenta también llamadas partidas en dos
+    líneas y punteros). Solo admite los 26 usos de C107, archivo por archivo y en su número exacto (15 funciones en
+    `esp_data_in.cpp`; `gpio_config` y `gpio_get_level` de MOTOR en `cassette_service.cpp`). Además, cada
+    `uart_set_pin` debe ir a `pins.dataIn()`/`pin_` sin RX/RTS/CTS, y `kUart` debe ser `UART_NUM_2`.
+  - Puertas al generar: H4 y M3a en `true` en el perfil compilado (`fujinet_atari_v1x.hpp`, leído campo por campo; si
+    no se puede leer, rechaza; también rechaza `#if`/`#define` en esa cabecera, una segunda definición y un orden
+    de campos de `BoardProfile` distinto del esperado) y en `docs/mediciones/puertas.json` (JSON `true`, fecha y registro existente en
+    `docs/mediciones/` que nombra su puerta; sin claves repetidas en el JSON, con fecha real).
+  - Puertas al verificar: el paquete lleva `config/puertas.json`; `verify` lo vuelve a comprobar, lo compara con
+    `PROVENANCE.json` y exige registradas las comprobaciones de perfil, registro y código.
+  - Marcadores: `EspDataIn` y `CassetteService` en la aplicación y en el ELF; versión = commit fijado.
+  - `h3c` y `diag` sin cambios: siguen rechazando cualquier llamada del SIO y no leen las puertas.
+- `docs/mediciones/puertas.json`: H4 y M3a **no aprobadas**. El perfil real queda igual (`false`, `false`).
+- Controles:
+  - pruebas: 43 nuevas en `test_firmware_package.py`; `tools/tests` 210/210;
+  - RED: 26 de las 30 fallaron antes del código (las 4 que pasaban son las de `h3c`/`diag`, que ya rechazaban);
+  - mutantes: 6, todos atrapados (perfil solo H4, aprobación no estricta, `verify` sin comparar procedencia, llamadas
+    fuera de lista, `verify` sin exigir lo registrado, registro inexistente); tras la revisión, 10 más, todos
+    atrapados (la prueba de `#define` se reforzó porque al principio no lo atrapaba);
+  - contra el código real de main: 8 llamadas exactas; perfil leído `(false, false)`; registro rechazado;
+  - **no ejecutado**: empaquetar un build real (sin ESP-IDF aquí) y `rsc risk` (permiso denegado; tier 2).
+- Revisión (1 revisor de corrección, por economía de tokens). Corregido: un perfil aprobado escondido tras `#if 0` o
+  una segunda definición engañaba al lector del perfil; el escáner no veía `rmt_*`, `uart_write_bytes`, punteros ni
+  llamadas partidas; los comentarios contaban; `uart_set_pin` no fijaba el pin; JSON con clave repetida, fecha
+  imposible o registro que no nombra su puerta. Anotado: `h3c`/`diag` conservan su escáner por línea (límite previo,
+  sin cambios a pedido del responsable); `verify` de un paquete sin firma criptográfica solo comprueba coherencia
+  interna (quien edite el paquete y el manifiesto a la vez no se detecta).
+- Flasheo por COM3: espera la aprobación del responsable.
+
 ## Decision queue
 
-- **blocking (2026-11-21)** — `tools/ci/firmware_package.py` rechaza las llamadas a UART y GPIO de los pines del SIO
+- **resuelta en `feat/cassette-package` (2026-11-21)** — `tools/ci/firmware_package.py` rechaza las llamadas a UART y GPIO de los pines del SIO
   (`FORBIDDEN_CALLS`), y con eso el empaquetado del firmware para flashear. C106 (`gpio_config` de MOTOR) y C107 (UART2
   en DATA IN) las necesitan. Propuesta: permitirlas solo en `components/rb_esp_cassette/` cuando H4 y M3a estén
   firmadas, en un PR aparte. Decide el responsable.

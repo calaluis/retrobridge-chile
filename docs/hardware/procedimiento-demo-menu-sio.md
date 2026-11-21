@@ -118,21 +118,48 @@ MOTOR (GPIO36) no se configura.
    - **B1. Identificar la cara del conector.**
      - Anotar el tipo: **macho** (clavijas) o **hembra** (receptáculos).
      - Anotar la cara: **frente de acople** (la que entra en el otro conector) o **parte posterior** (la del cable).
-     - El conector SIO es trapezoidal, con dos filas: una de 7 contactos y otra de 6. Se orienta con la fila larga
-       arriba, como en la figura del manual.
-   - **B2. Identificar el contacto 8 con la figura de conexiones del manual de Atari** (C016555 §9, citada en la
-     mitigación §2), usando la figura que corresponde a **esa misma cara y ese mismo tipo** de conector.
+     - El conector SIO es trapezoidal, con dos filas: una de 7 contactos y otra de 6. El procedimiento **no fija**
+       qué fila va arriba. La orientación la da la figura que se use (B2).
+   - **B2. Identificar el contacto 8 con una figura de conexiones cuya vista esté identificada.**
+     - **Figura de referencia:** Atari C016555, sección 9, **fig. 9-4 «Serial Bus Connector Pin Descriptions»**,
+       página 146 del manual (página 131 del PDF):
+       <https://ftp.mirrorservice.org/sites/www.bitsavers.org/pdf/atari/400_800/CO16555_Atari_Home_Computer_Technical_Reference_Notes_1982.pdf#page=131>
+       Es la fuente ya registrada en `docs/fuentes.md` (entrada H4).
+     - **La vista de la fig. 9-4 no está declarada en su texto.** Se comprobó el 2026-11-21 extrayendo el texto de
+       esa página: la figura y el párrafo que la acompaña enumeran los 13 pines (1 = CLOCK IN … 8 = MOTOR CONTROL …
+       13 = INTERRUPT−), pero no dicen desde qué lado se mira el conector. La imagen escaneada no se pudo revisar en
+       ese momento.
+     - Por eso, antes de usar cualquier figura (la fig. 9-4 u otra, por ejemplo la del manual de servicio del
+       65XE/130XE), se anota en el registro:
+       - qué figura y qué página se usa;
+       - el texto **literal** de esa figura que identifica su vista (por ejemplo, si mira el conector del equipo
+         o el del cable, y desde qué lado).
+       Si la figura no trae ese texto, **no sirve para la vía B**.
+     - **La figura y la foto deben mostrar la misma cara:**
+       - si la figura mira la misma cara que se fotografía, se compara directamente;
+       - si la foto muestra la **cara de acople del cable** y la figura mira **el conector del equipo**, las dos
+         caras se ven en espejo. Se compara con la figura **espejada** (volteada de izquierda a derecha), rotulada
+         a mano «espejo de fig. … para la cara de acople del cable», y esa figura espejada también se fotografía;
+       - con cualquier otra combinación, o si no está claro cuál es, **se detiene**.
      - Si el conector trae los números moldeados, se usan como confirmación y se fotografían. No sustituyen a la
        figura.
      - Marcar el contacto 8 en el cuerpo del conector, junto a él.
-     - **Foto B2:** la cara identificada, con la marca visible y, al lado, la figura del manual en la misma
-       orientación.
-     - **Detener** si la figura no indica con claridad la cara que se mira, o si la cara del conector no se puede
-       determinar.
+     - **Foto B2:** la cara identificada, con la marca visible y, al lado, la figura usada (directa o espejada y
+       rotulada) en la misma orientación.
+     - **Detener la conexión** si:
+       - la figura no identifica su vista;
+       - la cara del conector no se puede determinar;
+       - la correspondencia entre la figura (directa o espejada) y la cara fotografiada queda dudosa.
+
+       En ese caso se usa la vía A o no se hace la demo.
    - **B3. Retirar** físicamente el contacto marcado: extraerlo o cortarlo, de forma que no pueda tocar ningún otro.
    - **B4. Comprobar por inspección:** los 12 contactos restantes están completos, rectos y bien asentados, y el
      hueco está en la posición 8 de la figura.
-   - **Evidencia B:** foto B2, las fotos comunes y, en el registro, qué figura se usó y qué cara se miró.
+   - **Evidencia B:** foto B2 y las fotos comunes. En el registro:
+     - la figura y la página usadas;
+     - el texto literal de su vista;
+     - si se espejó;
+     - el tipo y la cara del conector fotografiado.
 
    **Fotos comunes (las dos vías):**
    - **Foto C1:** las dos caras del adaptador de frente, con la vista indicada (macho o hembra; frente o parte

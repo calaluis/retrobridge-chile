@@ -16,7 +16,7 @@ Con H4 y M3a sin aprobar, acepto por escrito estos riesgos para una sola sesión
 | A1 | DATA IN (pin 3) se transmite sin medir su nivel en el 65XE | C8 superada en el ESP32; GPIO21 sale por un 74LS07 de colector abierto | El firmware libera DATA IN tras cada respuesta y tras cada error (criterio 6, pruebas de host) |
 | A2 | Reposo de DATA OUT (pin 5) y de COMMAND (pin 7) sin medir | Llegan al ESP32 a través de 74LS07 | El firmware registra su nivel al arrancar |
 | A3 | Corriente que toma la FujiNet del pin 10 sin medir (M6 pendiente) | USB y SIO entran por diodos Schottky | Se lee la tensión por GPIO35; la FujiNet se alimenta por USB |
-| A4 | Adaptador sin pin 8, sin mediciones con energía. Vía usada: **PENDIENTE** (A por continuidad o B por inspección) | Mitigación C (`mitigacion-c-motor-pin8.md` §2, §5.2 y §5.3); spec, «Evidencia para la demo física» | Vía A: contacto 8 identificado por continuidad con IO36 antes de retirarlo y abierto después. Vía B: figura del manual (C016555 §9) para la cara identificada y foto C1 sin ambigüedad. En las dos: si hay duda, no se conecta; FujiNet al final y J2 libre |
+| A4 | Adaptador sin pin 8, sin mediciones con energía. Vía usada: **PENDIENTE** (A por continuidad o B por inspección) | Mitigación C (`mitigacion-c-motor-pin8.md` §2, §5.2 y §5.3); spec, «Evidencia para la demo física» | Vía A: contacto 8 identificado por continuidad con IO36 antes de retirarlo y abierto después. Vía B: figura con vista identificada (fig. 9-4 de C016555 u otra; directa o espejada para la cara de acople del cable) y foto C1 sin ambigüedad. En las dos: si hay duda, no se conecta; FujiNet al final y J2 libre |
 
 | Campo | Valor |
 |---|---|
@@ -34,7 +34,7 @@ Con H4 y M3a sin aprobar, acepto por escrito estos riesgos para una sola sesión
 | §3.4 Vía A, A1: contacto 8 con continuidad con IO36 (FujiNet desenergizada); 4 y 6 a masa | PENDIENTE (o «no aplica») | foto A1; multímetro (modelo) |
 | §3.4 Vía A, A3: pin 8 abierto de extremo a extremo y contra los otros 12; 1–7 y 9–13 con continuidad | PENDIENTE (o «no aplica») | lecturas |
 | §3.4 Vía A, A3: en J1 desenergizada, posición 8 contra IO36 abierta; 4 y 6 a masa | PENDIENTE (o «no aplica») | lecturas |
-| §3.4 Vía B, B1–B2: tipo y cara del conector; figura del manual usada | PENDIENTE (o «no aplica») | foto B2 |
+| §3.4 Vía B, B1–B2: tipo y cara del conector; figura y página usadas; texto literal de su vista; directa o espejada | PENDIENTE (o «no aplica») | foto B2 |
 | §3.4 Vía B, B4: 12 contactos completos y hueco en la posición 8 de la figura | PENDIENTE (o «no aplica») | |
 | §3.4 Foto C1 (hueco del 8 visible sin ambigüedad) y foto C2 (rótulo) | PENDIENTE | fotos C1 y C2 |
 | §4 `write_flash` + `verify_flash` del paquete `menu-sio` | PENDIENTE | |

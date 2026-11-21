@@ -122,18 +122,23 @@ MOTOR (GPIO36) no se configura.
        qué fila va arriba. La orientación la da la figura que se use (B2).
    - **B2. Identificar el contacto 8 con una figura de conexiones cuya vista esté identificada.**
      - **Figura de referencia:** Atari C016555, sección 9, **fig. 9-4 «Serial Bus Connector Pin Descriptions»**,
-       página 146 del manual (página 131 del PDF):
-       <https://ftp.mirrorservice.org/sites/www.bitsavers.org/pdf/atari/400_800/CO16555_Atari_Home_Computer_Technical_Reference_Notes_1982.pdf#page=131>
+       páginas 145–146 del manual (páginas 130–131 del PDF):
+       <https://ftp.mirrorservice.org/sites/www.bitsavers.org/pdf/atari/400_800/CO16555_Atari_Home_Computer_Technical_Reference_Notes_1982.pdf#page=130>
        Es la fuente ya registrada en `docs/fuentes.md` (entrada H4).
-     - **La vista de la fig. 9-4 no está declarada en su texto.** Se comprobó el 2026-11-21 extrayendo el texto de
-       esa página: la figura y el párrafo que la acompaña enumeran los 13 pines (1 = CLOCK IN … 8 = MOTOR CONTROL …
-       13 = INTERRUPT−), pero no dicen desde qué lado se mira el conector. La imagen escaneada no se pudo revisar en
-       ese momento.
-     - Por eso, antes de usar cualquier figura (la fig. 9-4 u otra, por ejemplo la del manual de servicio del
-       65XE/130XE), se anota en el registro:
-       - qué figura y qué página se usa;
-       - el texto **literal** de esa figura que identifica su vista (por ejemplo, si mira el conector del equipo
-         o el del cable, y desde qué lado).
+     - **Vista de la fig. 9-4:** la identifica el último párrafo de la página 145, justo antes de la figura.
+       - La figura es una vista del extremo del conector del bus serie **en el computador o en el periférico**, es
+         decir, del conector del equipo.
+       - El mismo párrafo advierte que los conectores del cable se ven en espejo: «the cable connectors would of
+         course be a mirror image».
+       - La página 146 numera los 13 pines: 1 = CLOCK IN … 8 = MOTOR CONTROL … 13 = INTERRUPT−.
+       - Comprobado el 2026-11-21 en el texto de esas dos páginas.
+     - **Consecuencia:**
+       - la fig. 9-4 se usa **directa** para la cara de un conector de equipo (el puerto SIO del 65XE o J1 de la
+         FujiNet);
+       - se usa **espejada** para la cara de acople de un conector de cable, como la del adaptador.
+     - Si se usa otra figura (por ejemplo, la del manual de servicio del 65XE/130XE), se anotan en el registro:
+       - la figura y la página;
+       - el texto **literal** que identifica su vista.
        Si la figura no trae ese texto, **no sirve para la vía B**.
      - **La figura y la foto deben mostrar la misma cara:**
        - si la figura mira la misma cara que se fotografía, se compara directamente;

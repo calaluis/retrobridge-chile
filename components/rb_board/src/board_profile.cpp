@@ -172,4 +172,17 @@ Result<MotorAssignment> validate_for_motor(const BoardProfile& profile) noexcept
     return MotorAssignment{profile.motor};
 }
 
+Result<CassetteOutputAssignment> validate_for_cassette_output(const BoardProfile& profile) noexcept
+{
+    const auto sio = validate_for_sio(profile, SioMode::ReceiveTransmit);
+    if (!sio.ok()) {
+        return Failure{sio.error()};
+    }
+    const auto motor = validate_for_motor(profile);
+    if (!motor.ok()) {
+        return Failure{motor.error()};
+    }
+    return CassetteOutputAssignment{sio.value().pins.tx, motor.value().pin()};
+}
+
 }  // namespace rb::board

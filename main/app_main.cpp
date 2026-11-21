@@ -64,9 +64,10 @@ rb::app::ReadSector g_read{g_bay};
 rb::esp::EspSystemProbe g_system{kBoard.name};
 rb::hwdiag::DiagnosticsRecorder g_diagnostics{rb::console::kSectorReadBudgetUs};
 
-// The cassette (cassette-cas C106): MOTOR only behind M3a, DATA IN never driven before H4.
+// The cassette (cassette-cas C106/C107): MOTOR only behind M3a; DATA IN only behind H4 and M3a.
 rb::esp::EspMotorIn g_motor;
-rb::esp::CassetteService g_cassette{"/sd/", g_motor};
+rb::esp::EspDataIn g_dataIn;
+rb::esp::CassetteService g_cassette{"/sd/", g_motor, g_dataIn};
 
 rb::console::ConsoleContext g_console{kBoard,    g_storage, g_repository, g_inspect, g_verify,
                                       g_benchmark, g_mount, g_unmount,    g_collect, g_apply,
@@ -99,6 +100,11 @@ extern "C" void app_main(void)
 
     // The cassette needs the microSD (its tapes) and PSRAM (its bank).
     (void)g_motor.configure(kBoard);
+    // DATA IN only with both gates signed; otherwise no SIO pin is touched.
+    const auto output = rb::board::validate_for_cassette_output(kBoard);
+    if (output.ok()) {
+        (void)g_dataIn.configure(output.value());
+    }
     if (mounted.ok() && !g_cassette.start()) {
         ESP_LOGW(kTag, "cassette not started");
     }

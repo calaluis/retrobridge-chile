@@ -242,7 +242,39 @@ b-e0\m49-cas\c003`.
 - Falta para cerrar C106: compilar en el CI, M3a (medición del responsable), firmar M3a en el perfil, flashear con
   aprobación y ver `cas status` seguir a `CLOAD` (AC9).
 
+## C107 — salida a DATA IN (UART y RMT), en curso (2026-11-21)
+
+Rama `feat/cassette-output` (desde main 786ee39). Alcance limitado a C106/C107 por el responsable.
+
+- `rb_board`: `validate_for_cassette_output()` y `CassetteOutputAssignment`: exige `validate_for_sio(ReceiveTransmit)`
+  (H4) y `validate_for_motor()` (M3a). El perfil real no tiene ninguna de las dos firmada: no se maneja nada.
+- `rb_cassette`: `FskSymbolFeed`, cola sin bloqueo (un productor, un consumidor) entre el bucle de la casetera y la
+  interrupción de recarga del RMT; dos porciones por símbolo, cola impar con `duration1 = 0` (código propio, PR #1756).
+- `rb_esp_cassette`: `EspDataIn` (ByteOut y WaveOut en el mismo pin): registros por UART2 8N1 a 600 baudios (escrito de
+  cero), FSK por RMT a 1 MHz con un canal por tirada, el pin vuelve a la UART al terminar o en `stop()`; fin de
+  transmisión en marca. `CassetteService` usa `EspDataIn` solo si se configuró; si no, las salidas que descartan.
+  `app_main`: `EspDataIn::configure()` solo con `validate_for_cassette_output()` aceptado.
+- Controles:
+  - pruebas: `test_cassette_output_assignment` 6/6, `test_fsk_symbol_feed` 9/9 (incluye productor y consumidor en dos
+    hilos); `ctest` 76/76;
+  - RED: las dos pruebas fallaron al compilar antes del código; una regla de `fill` cambió tras un fallo (no cortar la
+    transmisión si se escribieron símbolos enteros);
+  - **no ejecutado**: `idf.py build` (lo compila el CI), `rsc risk` (permiso denegado; tier del plan: 2) y la demo;
+  - seguridad: sin H4 y M3a firmadas ningún pin del SIO se configura (`app_main` y `EspDataIn`).
+- Revisión (1 revisor de corrección, por economía de tokens; tier 2 pedía 3). Sin bloqueos. Corregido: el RMT arrancaba en espacio antes del primer símbolo (`init_level = 1`); un fallo del RMT reintentaba cada tick y colgaba al reproductor (ahora la tirada se descarta, el pin vuelve a la UART y se cuenta); el margen al productor se perdía entre bloques de 32 símbolos. Anotado: canal RMT creado por tirada (asigna memoria, como la beta) y la recarga fuera de IRAM (una escritura en flash durante una tirada podría cortarla).
+- Hallazgo: `tools/ci/firmware_package.py` prohíbe `uart_driver_install`, `uart_param_config`, `uart_set_pin` y
+  `gpio_config` en `main/` y `components/` (puerta H4). Ya fallaba con `gpio_config` de C106; ahora también con la UART
+  de C107. No lo debilité: ver la cola de decisiones.
+- Falta para cerrar C107: compilar en el CI, M3a, H4 (parte de DATA IN), firmar ambas en el perfil, flashear con
+  aprobación y la demo desde la microSD: `international_karate.cas` (AC10), Alien Ambush o Bruce Lee (AC11) y una cinta
+  turbo solo `fsk ` elegida por el responsable (AC12).
+
 ## Decision queue
+
+- **blocking (2026-11-21)** — `tools/ci/firmware_package.py` rechaza las llamadas a UART y GPIO de los pines del SIO
+  (`FORBIDDEN_CALLS`), y con eso el empaquetado del firmware para flashear. C106 (`gpio_config` de MOTOR) y C107 (UART2
+  en DATA IN) las necesitan. Propuesta: permitirlas solo en `components/rb_esp_cassette/` cuando H4 y M3a estén
+  firmadas, en un PR aparte. Decide el responsable.
 
 - **review-after (2026-11-20)** — AC5 dice «sin perder ni repetir». Para tiradas FSK, si MOTOR cae con la señal en
   marcha, la tirada se repite desde su pausa. Así lo hace el código propio (PR #1804/#1756), que funciona con cintas

@@ -46,7 +46,10 @@ bool EspMotorIn::on() const
     return pin_ >= 0 && gpio_get_level(static_cast<gpio_num_t>(pin_)) == 1;
 }
 
-CassetteService::CassetteService(const char* root, EspMotorIn& motor) noexcept : motor_(motor), files_(root) {}
+CassetteService::CassetteService(const char* root, EspMotorIn& motor, EspDataIn& dataIn) noexcept
+    : motor_(motor), dataIn_(dataIn), files_(root)
+{
+}
 
 void CassetteService::release() noexcept
 {
@@ -100,6 +103,11 @@ bool CassetteService::start() noexcept
         new (&tableB_[i]) rb::cassette::CasSegment{};
     }
     loader_.bind(rb::core::Span<uint8_t>(bank_, kBankBytes));
+    driving_ = dataIn_.enabled();
+    if (driving_) {
+        byteOut_ = &dataIn_;
+        waveOut_ = &dataIn_;
+    }
     commands_ = new (commandsStorage_) rb::cassette::CassetteCommands(
         player_, loader_, files_, rb::core::Span<rb::cassette::CasSegment>(tableA_, kSegments),
         rb::core::Span<rb::cassette::CasSegment>(tableB_, kSegments));
@@ -116,8 +124,9 @@ bool CassetteService::start() noexcept
         ESP_LOGE(kTag, "cassette tasks could not start");
         return false;
     }
-    ESP_LOGI(kTag, "cassette ready: MOTOR %s, DATA IN not driven (H4)",
-             motor_.enabled() ? "on GPIO input" : "not read (M3a not signed)");
+    ESP_LOGI(kTag, "cassette ready: MOTOR %s, DATA IN %s",
+             motor_.enabled() ? "on GPIO input" : "not read (M3a not signed)",
+             driving_ ? "driven (UART and RMT)" : "not driven (H4 or M3a not signed)");
     return true;
 }
 
@@ -168,11 +177,14 @@ void CassetteService::loop() noexcept
     for (;;) {
         // The request is a copy: a caller that gave up cannot change it underneath.
         if (xQueueReceive(requests_, &request, 0) == pdTRUE) {
-            commands_->run(request.line, motor_, wave_, rb::core::Span<char>(reply.text, sizeof reply.text));
+            commands_->run(request.line, motor_, *waveOut_, rb::core::Span<char>(reply.text, sizeof reply.text));
             reply.sequence = request.sequence;
             (void)xQueueOverwrite(replies_, &reply);  // a reply nobody waits for is replaced
         }
-        player_.tick(static_cast<uint64_t>(esp_timer_get_time()), motor_, bytes_, wave_);
+        player_.tick(static_cast<uint64_t>(esp_timer_get_time()), motor_, *byteOut_, *waveOut_);
+        if (driving_) {
+            dataIn_.pump();
+        }
         vTaskDelay(kLoopPeriod);
     }
 }

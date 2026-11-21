@@ -34,12 +34,15 @@ MOTOR (GPIO36) no se configura.
 ## 2. Condiciones (obligatorias)
 
 - **Aceptación de riesgo firmada** por el responsable en `docs/mediciones/menu-sio-fisico-registro.md` §1.
-- **Adaptador SIO sin el pin 8** (`mitigacion-c-motor-pin8.md`), con el contacto 8 **identificado eléctricamente**
-  antes de retirarlo y **comprobado** después (§3.4).
-  - Hace falta un **multímetro** con prueba de continuidad. Sin él, la demo no se hace.
-  - Esto endurece la spec, que aceptaba construir el adaptador sin instrumentos. Motivo: la disposición de los 13
-    contactos se ve invertida según la cara y el tipo de conector, y la mitigación (§2) exige identificar cada
-    contacto por medición, nunca solo por su posición.
+- **Adaptador SIO sin el pin 8** (`mitigacion-c-motor-pin8.md`), con el contacto 8 identificado y comprobado por
+  una de estas dos vías (§3.4):
+  - **Vía A, por continuidad (recomendada):** con multímetro, frente a IO36 en la FujiNet desenergizada. Es la
+    identificación que pide la mitigación (§2 y §5.3).
+  - **Vía B, por inspección (la de la spec, sin instrumentos):** con la figura de conexiones del manual de Atari, la
+    cara del conector identificada y una foto que muestre sin ambigüedad que falta el contacto 8. Queda como riesgo
+    aceptado por escrito (A4), no como medición.
+  - La disposición de los 13 contactos se ve invertida según la cara y el tipo de conector. Por eso, en las dos vías,
+    **si queda cualquier duda sobre qué contacto falta, no se conecta nada.**
   - Rótulo: «SIN PIN 8 (MOTOR) — SOLO FUJINET AL FINAL — J2 LIBRE».
 - **Topología:** 65XE → adaptador → J1 de la FujiNet. La FujiNet va al final de la cadena y **J2 queda libre**. No hay
   otros equipos SIO.
@@ -89,36 +92,61 @@ MOTOR (GPIO36) no se configura.
    - Si es la microSD de la casetera, antes se mueve a una carpeta todo lo que haya en su raíz. Se anota qué se movió,
      para devolverlo en §8.
    - Si hay otra microSD, se prefiere usar esa.
-4. **[CONFIRMAR] Adaptador: identificar el pin 8, retirarlo y comprobarlo.** Todo con la FujiNet **desenergizada**:
-   sin USB, sin Atari y con S5 apagado. El 65XE no participa.
+4. **[CONFIRMAR] Adaptador: identificar el pin 8, retirarlo y comprobarlo.** Se elige **una** vía y se anota en el
+   registro (A4). El 65XE no participa. Ningún otro contacto se toca.
 
-   **a) Identificar el contacto 8 antes de tocar nada.** La referencia es eléctrica, no visual:
-   - Enchufar el cable o el conector que será el adaptador, todavía sin modificar, en **J1** de la FujiNet.
-   - En el extremo libre, buscar con el multímetro en continuidad el contacto que conecta con **IO36** (pin 4 del
-     módulo ESP32; ruta SIO_MCTL de la 1.3). **Ese contacto es el pin 8**, se mire desde la cara que se mire.
-   - Comprobar la orientación con las masas: los contactos 4 y 6 del extremo libre dan continuidad con la masa de
-     la placa, y el contacto 8 **no**.
-   - Marcar el contacto 8 en el cuerpo del conector, junto a él.
-   - **Foto 1:** la punta del multímetro en el contacto identificado, con la marca visible y la lectura en pantalla.
-   - **Detener** si ningún contacto da continuidad con IO36, si da más de uno o si las masas no cuadran.
+   **Vía A — por continuidad (recomendada).** Todo con la FujiNet **desenergizada**: sin USB, sin Atari y con S5
+   apagado.
+   - **A1. Identificar antes de tocar nada.**
+     - Enchufar el cable o conector que será el adaptador, todavía sin modificar, en **J1** de la FujiNet.
+     - En el extremo libre, buscar en continuidad el contacto que conecta con **IO36** (pin 4 del módulo ESP32;
+       ruta SIO_MCTL de la 1.3). **Ese contacto es el pin 8**, se mire desde la cara que se mire.
+     - Comprobar la orientación con las masas: los contactos 4 y 6 dan continuidad con la masa de la placa, y el
+       contacto 8 **no**.
+     - Marcar el contacto 8 en el cuerpo del conector, junto a él.
+     - **Foto A1:** la punta del multímetro en el contacto identificado, con la marca y la lectura visibles.
+     - **Detener** si ningún contacto da continuidad con IO36, si da más de uno o si las masas no cuadran.
+   - **A2. Retirar** físicamente el contacto marcado: extraerlo o cortarlo, de forma que no pueda tocar ningún otro.
+   - **A3. Comprobar lo retirado** (mitigación §5.2 y §5.3):
+     - con el adaptador **solo**: el pin 8 da **abierto** («OL») de extremo a extremo y contra cada uno de los otros
+       12, en los dos extremos; los pines 1–7 y 9–13 dan continuidad de extremo a extremo;
+     - con el adaptador enchufado en **J1** de la FujiNet desenergizada: desde el extremo libre, la posición 8 contra
+       IO36 da **abierto**, y los contactos 4 y 6 contra la masa dan continuidad.
+   - **Evidencia A:** foto A1, las fotos comunes (abajo), el modelo del multímetro y cada lectura en el registro.
 
-   **b) Retirar** físicamente el contacto marcado: extraerlo o cortarlo, de forma que no pueda tocar ningún otro.
-   Ningún otro contacto se toca.
+   **Vía B — por inspección (sin instrumentos).**
+   - **B1. Identificar la cara del conector.**
+     - Anotar el tipo: **macho** (clavijas) o **hembra** (receptáculos).
+     - Anotar la cara: **frente de acople** (la que entra en el otro conector) o **parte posterior** (la del cable).
+     - El conector SIO es trapezoidal, con dos filas: una de 7 contactos y otra de 6. Se orienta con la fila larga
+       arriba, como en la figura del manual.
+   - **B2. Identificar el contacto 8 con la figura de conexiones del manual de Atari** (C016555 §9, citada en la
+     mitigación §2), usando la figura que corresponde a **esa misma cara y ese mismo tipo** de conector.
+     - Si el conector trae los números moldeados, se usan como confirmación y se fotografían. No sustituyen a la
+       figura.
+     - Marcar el contacto 8 en el cuerpo del conector, junto a él.
+     - **Foto B2:** la cara identificada, con la marca visible y, al lado, la figura del manual en la misma
+       orientación.
+     - **Detener** si la figura no indica con claridad la cara que se mira, o si la cara del conector no se puede
+       determinar.
+   - **B3. Retirar** físicamente el contacto marcado: extraerlo o cortarlo, de forma que no pueda tocar ningún otro.
+   - **B4. Comprobar por inspección:** los 12 contactos restantes están completos, rectos y bien asentados, y el
+     hueco está en la posición 8 de la figura.
+   - **Evidencia B:** foto B2, las fotos comunes y, en el registro, qué figura se usó y qué cara se miró.
 
-   **c) Comprobar lo retirado** (mitigación §5.2 y §5.3):
-   - Con el adaptador **solo**: el pin 8 de extremo a extremo da **abierto** («OL»), y también contra cada uno de los
-     otros 12, en los dos extremos. Los pines 1–7 y 9–13 dan continuidad de extremo a extremo.
-   - Con el adaptador enchufado en **J1** de la FujiNet desenergizada: desde el extremo libre, la posición 8 contra
-     IO36 da **abierto**, y los contactos 4 y 6 contra la masa dan continuidad.
-   - **Foto 2:** las dos caras del adaptador de frente, con la vista indicada (macho o hembra, frente o parte
-     posterior), donde se vea el hueco del contacto 8 junto a su marca.
-   - **Foto 3:** el rótulo.
-   - **Detener** si el pin 8 da continuidad con algo, si otro pin queda abierto, si hay un corto o si hay cualquier
-     duda sobre qué contacto falta. En ese caso, no se conecta nada.
+   **Fotos comunes (las dos vías):**
+   - **Foto C1:** las dos caras del adaptador de frente, con la vista indicada (macho o hembra; frente o parte
+     posterior). Debe verse **sin ambigüedad** el hueco del contacto 8 junto a su marca y la fila larga del
+     trapecio, para poder contar las posiciones.
+   - **Foto C2:** el rótulo.
+   - Se guardan en `D:\GitHub\Respaldos\FujiNet-RB-menu-sio\`.
 
-   **Evidencia:**
-   - las tres fotos y el modelo del multímetro, en `D:\GitHub\Respaldos\FujiNet-RB-menu-sio\`;
-   - cada lectura, en el registro (§2, filas del adaptador).
+   **Detener la conexión, en las dos vías,** si:
+   - queda cualquier duda sobre qué contacto falta;
+   - la foto C1 no permite contar las posiciones hasta el hueco;
+   - en la vía A, el pin 8 da continuidad con algo, otro pin queda abierto o hay un corto.
+
+   En ese caso no se conecta nada al 65XE.
 
 ## 4. Instalación (FujiNet solo por USB, SIO desconectado)
 
@@ -194,8 +222,8 @@ Sin el Atari, COMMAND y DATA OUT pueden leerse en cualquier nivel. Se anotan, pe
 
 ## 6. Conexión y demo en el 65XE
 
-1. Apagar el 65XE. Dejar la FujiNet por USB, con la consola de §5 abierta. Escribir `sio status` y anotar los
-   contadores: son la referencia de la demo.
+1. Apagar el 65XE. Dejar la FujiNet por USB, con la consola de §5 abierta. Escribir `sio status`: es la
+   **lectura L0** (antes de encender).
 2. **[CONFIRMAR] Conectar** el cable SIO del 65XE al adaptador y el adaptador a J1. J2 queda libre.
 3. Retirar cualquier cartucho. Para que no interfiera el BASIC, encender el 65XE con **OPTION** pulsado.
    - *Suposición:* la regresión en Altirra no registró el estado del BASIC.
@@ -205,20 +233,27 @@ Sin el Atari, COMMAND y DATA OUT pueden leerse en cualquier nivel. Se anotan, pe
 
    | Paso | Tecla | Pantalla esperada | Captura de Altirra |
    |---|---|---|---|
-   | 1 | (encender) | Menú principal | `1-menu.png` |
+   | 1 | (encender) | Menú principal. **Antes de pulsar ninguna tecla:** `sio status` = **lectura L1** | `1-menu.png` |
    | 2 | `1` | Lista de la fuente 1 (microSD): las tres ATR | `2-lista.png` |
    | 3 | `A` | `DEMO-DOS.ATR` elegida | `3-elegida.png` |
    | 4 | `1` | `DEMO-DOS.ATR` asignada a D1 | `4-asignada-d1.png` |
    | 5 | `A` | El 65XE arranca la ATR y muestra **`DEMO DOS OK`** | `5-arranca-a.png` |
 
    En la consola debe aparecer `D1: DEMO-DOS.ATR` (o el nombre que muestre el menú).
-5. Escribir `sio status`. Anotar:
+5. Con `DEMO DOS OK` en pantalla, escribir `sio status`: es la **lectura L2**. En las tres lecturas se anota:
    - tramas;
    - errores;
    - liberaciones;
    - latencia última y máxima;
    - órdenes, reintentos y NAK del menú;
    - +5 V del SIO.
+
+   **Cómo se usan las lecturas:**
+   - **L0 → L1, arranque del 65XE y carga del menú:** se registra aparte. Al encender, COMMAND cambia de nivel y
+     `command_pegado` puede subir. Este tramo no decide por los contadores: lo decide que aparezca el menú
+     (criterio 1).
+   - **L1 → L2, navegación y arranque de la ATR:** es el tramo que se evalúa. `err_rx`, `err_tx` y
+     `command_pegado` **no deben subir**. `tramas` y las órdenes del menú sí suben.
 6. **Vuelta al menú (criterio 4).** Cada prueba parte de una ATR en D1. Si D1 ya es el menú, la orden o el botón
    imprimen su línea sin demostrar nada.
    - **Botón A:**
@@ -239,8 +274,8 @@ Sin el Atari, COMMAND y DATA OUT pueden leerse en cualquier nivel. Se anotan, pe
 - Aparece `DEMO DOS OK` (paso 5).
 - El menú vuelve con el botón A y con `menu`, cada vez desde una ATR en D1 (paso 6).
 - La consola no muestra reinicios ni brownouts.
-- Entre el `sio status` anterior a encender el 65XE y el del paso 5, `err_rx`, `err_tx` y `command_pegado` no suben.
-  Se comparan con la línea base de §5.
+- Entre L1 (menú en pantalla) y L2 (`DEMO DOS OK`), `err_rx`, `err_tx` y `command_pegado` no suben. L0 y la línea
+  base de §5 se registran, pero no deciden.
 
 ### No pasa si
 
@@ -249,7 +284,7 @@ Sin el Atari, COMMAND y DATA OUT pueden leerse en cualquier nivel. Se anotan, pe
 - El 65XE muestra `BOOT ERROR`.
 - La FujiNet se reinicia o hay un brownout durante la demo. El reinicio conocido solo se acepta al arrancar,
   una vez (§5).
-- `err_rx`, `err_tx` o `command_pegado` suben durante la demo.
+- `err_rx`, `err_tx` o `command_pegado` suben entre L1 y L2.
 
 En ese caso: se apaga el 65XE, se desconecta el SIO, se guarda la captura y se sigue con §8.
 

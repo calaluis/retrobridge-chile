@@ -185,4 +185,17 @@ Result<CassetteOutputAssignment> validate_for_cassette_output(const BoardProfile
     return CassetteOutputAssignment{sio.value().pins.tx, motor.value().pin()};
 }
 
+Result<CassetteOutputAssignment> validate_for_bench_data_in(const BoardProfile& profile) noexcept
+{
+    if (!profile.hardwareConfirmed) {
+        return Failure{ErrorCode::BoardNotConfirmed};
+    }
+    // The same pin rules as transmitting on the SIO: a wired, output-capable TX that collides with nothing.
+    const auto checked = check_sio_pins(profile, SioMode::ReceiveTransmit);
+    if (!checked.ok()) {
+        return Failure{checked.error()};
+    }
+    return CassetteOutputAssignment{profile.sio.tx, kNoPin};
+}
+
 }  // namespace rb::board

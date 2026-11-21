@@ -15,6 +15,7 @@ using rb::board::CassetteOutputAssignment;
 using rb::board::fujinet_atari_v1x_profile;
 using rb::board::kNoPin;
 using rb::board::unconfirmed_profile;
+using rb::board::validate_for_bench_data_in;
 using rb::board::validate_for_cassette_output;
 using rb::core::ErrorCode;
 
@@ -95,6 +96,42 @@ static void test_bad_pins_are_refused(void)
     expectError(ErrorCode::InvalidPinAssignment, p);
 }
 
+// --- Bench test C8: DATA IN alone, no gate, no MOTOR ---
+
+static void test_bench_grants_data_in_without_gates_or_motor(void)
+{
+    const BoardProfile real = fujinet_atari_v1x_profile();
+    TEST_ASSERT_FALSE(real.sioGateApproved);  // the real profile: H4 and M3a stay unsigned
+    TEST_ASSERT_FALSE(real.motorGateApproved);
+    const auto result = validate_for_bench_data_in(real);
+    TEST_ASSERT_TRUE(result.ok());
+    TEST_ASSERT_EQUAL_INT8(21, result.value().dataIn());
+    TEST_ASSERT_EQUAL_INT8(kNoPin, result.value().motor());
+}
+
+static void test_bench_refuses_unconfirmed_hardware(void)
+{
+    TEST_ASSERT_EQUAL(static_cast<int>(ErrorCode::BoardNotConfirmed),
+                      static_cast<int>(validate_for_bench_data_in(unconfirmed_profile()).error()));
+    BoardProfile p = fujinet_atari_v1x_profile();
+    p.hardwareConfirmed = false;
+    TEST_ASSERT_FALSE(validate_for_bench_data_in(p).ok());
+}
+
+static void test_bench_refuses_bad_pins(void)
+{
+    BoardProfile p = fujinet_atari_v1x_profile();
+    p.sio.tx = kNoPin;
+    TEST_ASSERT_EQUAL(static_cast<int>(ErrorCode::InvalidPinAssignment),
+                      static_cast<int>(validate_for_bench_data_in(p).error()));
+    p = fujinet_atari_v1x_profile();
+    p.sio.tx = 34;  // input only
+    TEST_ASSERT_FALSE(validate_for_bench_data_in(p).ok());
+    p = fujinet_atari_v1x_profile();
+    p.sio.tx = 36;  // the MOTOR pin
+    TEST_ASSERT_FALSE(validate_for_bench_data_in(p).ok());
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -104,5 +141,8 @@ int main(void)
     RUN_TEST(test_m3a_alone_is_not_enough);
     RUN_TEST(test_unconfirmed_hardware_is_refused);
     RUN_TEST(test_bad_pins_are_refused);
+    RUN_TEST(test_bench_grants_data_in_without_gates_or_motor);
+    RUN_TEST(test_bench_refuses_unconfirmed_hardware);
+    RUN_TEST(test_bench_refuses_bad_pins);
     return UNITY_END();
 }

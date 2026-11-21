@@ -1,0 +1,6 @@
+# Bench test C8 (H4-C): DATA IN hand-over on the FujiNet alone, USB only, the Atari disconnected.
+# Applied after the board fragment, only for the bench-c8 package:
+#   idf.py -B build-bench -D SDKCONFIG=build-bench/sdkconfig \
+#          -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board.fujinet-atari-v1x;sdkconfig.bench-c8" build
+# H4 and M3a stay unsigned: the bench grant covers GPIO21 only, at boot, then releases it.
+CONFIG_RB_BENCH_C8=y

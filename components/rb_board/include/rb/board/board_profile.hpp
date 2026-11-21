@@ -187,7 +187,14 @@ class CassetteOutputAssignment;
 // ReceiveTransmit) (H4 signed) and validate_for_motor(profile) (M3a signed). Errors: as theirs.
 rb::core::Result<CassetteOutputAssignment> validate_for_cassette_output(const BoardProfile& profile) noexcept;
 
-// The pins the cassette output may use. Only validate_for_cassette_output() creates one.
+// Bench test C8 only (H4-C): DATA IN on the board alone, USB only, the Atari disconnected. Grants
+// the SIO TX line with no gate and no MOTOR (motor() == kNoPin). Nothing approves H4 or M3a here:
+// only the bench build (CONFIG_RB_BENCH_C8, main/bench_c8.cpp) may call it, which the firmware
+// packager checks. Errors: BoardNotConfirmed (hardware not confirmed), InvalidPinAssignment.
+rb::core::Result<CassetteOutputAssignment> validate_for_bench_data_in(const BoardProfile& profile) noexcept;
+
+// The pins the cassette output may use. Only validate_for_cassette_output() and
+// validate_for_bench_data_in() create one.
 class CassetteOutputAssignment {
 public:
     int8_t dataIn() const noexcept { return dataIn_; }
@@ -197,6 +204,8 @@ private:
     constexpr CassetteOutputAssignment(int8_t dataIn, int8_t motor) noexcept : dataIn_(dataIn), motor_(motor) {}
 
     friend rb::core::Result<CassetteOutputAssignment> validate_for_cassette_output(
+        const BoardProfile& profile) noexcept;
+    friend rb::core::Result<CassetteOutputAssignment> validate_for_bench_data_in(
         const BoardProfile& profile) noexcept;
 
     int8_t dataIn_;

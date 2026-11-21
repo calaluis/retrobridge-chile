@@ -27,6 +27,9 @@
 #include "rb/esp/sd_card_storage.hpp"
 #include "rb/hwdiag/diagnostics_recorder.hpp"
 #include "sdkconfig.h"
+#if CONFIG_RB_BENCH_C8
+#include "bench_c8.hpp"
+#endif
 
 namespace {
 
@@ -100,11 +103,16 @@ extern "C" void app_main(void)
 
     // The cassette needs the microSD (its tapes) and PSRAM (its bank).
     (void)g_motor.configure(kBoard);
+#if CONFIG_RB_BENCH_C8
+    // Bench test C8 (H4-C): DATA IN on the board alone, then released. The cassette never drives it.
+    (void)rb::bench::run_c8(kBoard, g_dataIn);
+#else
     // DATA IN only with both gates signed; otherwise no SIO pin is touched.
     const auto output = rb::board::validate_for_cassette_output(kBoard);
     if (output.ok()) {
         (void)g_dataIn.configure(output.value());
     }
+#endif
     if (mounted.ok() && !g_cassette.start()) {
         ESP_LOGW(kTag, "cassette not started");
     }

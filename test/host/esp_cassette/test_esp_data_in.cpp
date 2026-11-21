@@ -5,7 +5,10 @@
 // or that the real IDF behaves as the model. That is the physical check of DATA IN, still pending.
 
 #include <cstdint>
+#include <cstring>
 #include <new>
+#include <string>
+#include <vector>
 
 #include "fakes/idf/fake_idf.hpp"
 #include "rb/board/board_profile.hpp"
@@ -76,7 +79,21 @@ void expectRefusesEverything()
 
 }  // namespace
 
-void setUp() { fake_idf::reset(); }
+// --- Release and call trace (bench test C8) ---
+
+namespace {
+std::vector<std::string> g_trace;
+void record(const char* call, int err)
+{
+    g_trace.push_back(std::string(call) + "=" + std::to_string(err));
+}
+}  // namespace
+
+void setUp()
+{
+    fake_idf::reset();
+    g_trace.clear();
+}
 void tearDown() {}
 
 // --- The normal hand-over (regression) ---
@@ -219,6 +236,64 @@ static void test_stop_leaves_bytes_already_handed_to_the_uart(void)
     TEST_ASSERT_FALSE(g_dataIn->faulted());
 }
 
+static void test_release_after_a_run_resets_the_pin_and_disables(void)
+{
+    configured();
+    startRun();
+    (void)fake_idf::play_all();
+    g_dataIn->pump();
+    TEST_ASSERT_TRUE(fake_idf::state().owner == Owner::Uart);
+    g_dataIn->release();
+    TEST_ASSERT_FALSE(g_dataIn->enabled());
+    TEST_ASSERT_FALSE(fake_idf::state().uartInstalled);
+    TEST_ASSERT_TRUE(fake_idf::state().owner == Owner::Gpio);
+    TEST_ASSERT_TRUE(fake_idf::line_released());
+    const uint8_t byte = 1;
+    TEST_ASSERT_FALSE(g_dataIn->send(rb::core::Span<const uint8_t>(&byte, 1)));
+    TEST_ASSERT_FALSE(g_dataIn->push(FskPortion{false, 200}));
+}
+
+static void test_release_mid_run_stops_it_first(void)
+{
+    configured();
+    startRun();
+    g_dataIn->release();
+    TEST_ASSERT_FALSE(fake_idf::state().rmtChannel);
+    TEST_ASSERT_TRUE(fake_idf::state().owner == Owner::Gpio);
+    TEST_ASSERT_FALSE(g_dataIn->enabled());
+}
+
+static void test_release_without_configure_does_nothing(void)
+{
+    g_dataIn = new (g_storage) EspDataIn();
+    g_dataIn->release();
+    TEST_ASSERT_EQUAL_UINT(0, fake_idf::state().gpioResets);
+}
+
+static void test_trace_reports_each_hand_over_call_with_its_result(void)
+{
+    g_dataIn = new (g_storage) EspDataIn();
+    g_dataIn->setTrace(&record);
+    TEST_ASSERT_TRUE(g_dataIn->configure(granted()));
+    startRun();
+    (void)fake_idf::play_all();
+    g_dataIn->pump();
+    fake_idf::state().failUartSetPin = true;  // a failure is traced with its code
+    startRun();
+    g_dataIn->stop();
+    const std::vector<std::string> expected = {
+        "uart_driver_install=0", "uart_param_config=0", "uart_set_pin=0",
+        "rmt_new_tx_channel=0", "rmt_new_simple_encoder=0", "rmt_enable=0", "rmt_transmit=0",
+        "rmt_disable=0", "rmt_del_channel=0", "rmt_del_encoder=0", "uart_set_pin=0",
+        "rmt_new_tx_channel=0", "rmt_new_simple_encoder=0", "rmt_enable=0", "rmt_transmit=0",
+        "rmt_disable=0", "rmt_disable=0", "rmt_del_channel=0", "rmt_del_encoder=0", "uart_set_pin=-1",
+        "gpio_reset_pin=0"};
+    TEST_ASSERT_EQUAL_UINT(expected.size(), g_trace.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        TEST_ASSERT_EQUAL_STRING(expected[i].c_str(), g_trace[i].c_str());
+    }
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -233,5 +308,9 @@ int main()
     RUN_TEST(test_recover_gives_the_pin_back_to_the_uart_and_accepts_again);
     RUN_TEST(test_recover_without_a_fault_changes_nothing);
     RUN_TEST(test_stop_leaves_bytes_already_handed_to_the_uart);
+    RUN_TEST(test_release_after_a_run_resets_the_pin_and_disables);
+    RUN_TEST(test_release_mid_run_stops_it_first);
+    RUN_TEST(test_release_without_configure_does_nothing);
+    RUN_TEST(test_trace_reports_each_hand_over_call_with_its_result);
     return UNITY_END();
 }

@@ -27,4 +27,15 @@ menu "RetroBridge Chile"
                 (docs/hardware/procedimiento-instalacion-recuperacion.md).
     endchoice
 
+    config RB_BENCH_C8
+        bool "Bench test C8: DATA IN hand-over on the board alone (Atari disconnected)"
+        depends on RB_BOARD_FUJINET_ATARI_V1X
+        default n
+        help
+            Bench build only (H4-C, criterion C8). At boot, drives DATA IN (GPIO21)
+            through UART2 and the RMT with a test signal, logs each step and every
+            ESP-IDF call, then releases the pin. It does not read MOTOR and never
+            gives DATA IN to the cassette. H4 and M3a stay unsigned. Flash it only
+            with the FujiNet on USB and the SIO cable disconnected from the Atari.
+
 endmenu

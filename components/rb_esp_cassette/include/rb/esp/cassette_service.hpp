@@ -7,9 +7,10 @@
 // - CassetteService owns the tape files on the microSD, the FSK loader, the player and the
 //   `cas` commands. Two tasks: the cassette loop (commands and CassettePlayer::tick(), the
 //   same task as CassetteCommands requires) and the loader's producer (FskLoader::step()).
-// - Until H4 is approved no SIO pin is an output: the player plays into DiscardByteOut and
-//   DiscardWaveOut. The tape moves with MOTOR, so `cas status` follows a load attempt, but
-//   DATA IN gets nothing (C107 brings UART and RMT).
+// - DATA IN (C107): with EspDataIn configured (H4 and M3a signed, validate_for_cassette_output)
+//   the player plays into it: records by UART, FSK by RMT, and the loop pumps it every tick.
+//   Otherwise the player plays into DiscardByteOut and DiscardWaveOut: the tape moves with
+//   MOTOR, so `cas status` follows a load attempt, but DATA IN gets nothing.
 //
 // Memory (ADR-011): the loader bank and the two segment tables are reserved once in PSRAM by
 // start(); nothing is allocated afterwards.
@@ -27,6 +28,7 @@
 #include "rb/cassette/discard_outputs.hpp"
 #include "rb/cassette/fsk_loader.hpp"
 #include "rb/cassette/stdio_tape_files.hpp"
+#include "rb/esp/esp_data_in.hpp"
 
 namespace rb::esp {
 
@@ -49,13 +51,15 @@ public:
     static constexpr std::size_t kLineMax = 160;
     static constexpr std::size_t kReplyMax = 160;
 
-    // `root`: prefix for tape paths, e.g. "/sd/".
-    CassetteService(const char* root, EspMotorIn& motor) noexcept;
+    // `root`: prefix for tape paths, e.g. "/sd/". `dataIn` is used only if it is enabled when
+    // start() runs; the choice is fixed from then on.
+    CassetteService(const char* root, EspMotorIn& motor, EspDataIn& dataIn) noexcept;
 
     // Reserves the memory and starts both tasks. False if PSRAM or the tasks are missing.
     bool start() noexcept;
     bool started() const noexcept { return commands_ != nullptr; }
     bool motorEnabled() const noexcept { return motor_.enabled(); }
+    bool outputEnabled() const noexcept { return driving_; }
 
     // Console task: runs `cas <args>` on the cassette loop and copies the reply.
     // False if not started or no reply in time.
@@ -78,11 +82,15 @@ private:
     void release() noexcept;
 
     EspMotorIn& motor_;
+    EspDataIn& dataIn_;
     rb::cassette::StdioTapeFiles files_;
     rb::cassette::FskLoader loader_;
     rb::cassette::CassettePlayer player_{loader_};
     rb::cassette::DiscardByteOut bytes_;
     rb::cassette::DiscardWaveOut wave_;
+    rb::cassette::ByteOut* byteOut_ = &bytes_;
+    rb::cassette::WaveOut* waveOut_ = &wave_;
+    bool driving_ = false;  // the outputs are dataIn_
     alignas(rb::cassette::CassetteCommands) unsigned char commandsStorage_[sizeof(rb::cassette::CassetteCommands)];
     rb::cassette::CassetteCommands* commands_ = nullptr;
 

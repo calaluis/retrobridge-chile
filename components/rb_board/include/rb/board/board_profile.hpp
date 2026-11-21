@@ -180,4 +180,27 @@ private:
     int8_t pin_;
 };
 
+class CassetteOutputAssignment;
+
+// Authorizes the cassette to drive DATA IN (cassette-cas C107): records by UART, FSK by RMT, on
+// the SIO TX line, while it follows MOTOR. Needs both gates: exactly validate_for_sio(profile,
+// ReceiveTransmit) (H4 signed) and validate_for_motor(profile) (M3a signed). Errors: as theirs.
+rb::core::Result<CassetteOutputAssignment> validate_for_cassette_output(const BoardProfile& profile) noexcept;
+
+// The pins the cassette output may use. Only validate_for_cassette_output() creates one.
+class CassetteOutputAssignment {
+public:
+    int8_t dataIn() const noexcept { return dataIn_; }
+    int8_t motor() const noexcept { return motor_; }
+
+private:
+    constexpr CassetteOutputAssignment(int8_t dataIn, int8_t motor) noexcept : dataIn_(dataIn), motor_(motor) {}
+
+    friend rb::core::Result<CassetteOutputAssignment> validate_for_cassette_output(
+        const BoardProfile& profile) noexcept;
+
+    int8_t dataIn_;
+    int8_t motor_;
+};
+
 }  // namespace rb::board

@@ -6,10 +6,15 @@ set(rb_main_srcs "app_main.cpp")
 if(CONFIG_RB_BENCH_C8)
     list(APPEND rb_main_srcs "bench_c8.cpp")  # bench test C8 only (H4-C)
 endif()
+set(rb_main_requires rb_core rb_domain rb_application rb_sio rb_file_storage rb_board rb_esp_platform rb_esp_storage
+    rb_console rb_hw_diag rb_esp_cassette rb_cassette log freertos soc)
+if(CONFIG_RB_MENU_SIO)
+    list(APPEND rb_main_srcs "menu_sio.cpp")  # test package menu-sio only (menu-sio-fisico)
+    list(APPEND rb_main_requires rb_menu rb_esp_sio console esp_adc esp_driver_gpio esp_timer heap)
+endif()
 
 idf_component_register(
     SRCS ${rb_main_srcs}
-    REQUIRES rb_core rb_domain rb_application rb_sio rb_file_storage rb_board rb_esp_platform rb_esp_storage
-             rb_console rb_hw_diag rb_esp_cassette rb_cassette log freertos soc)
+    REQUIRES ${rb_main_requires})
 
 rb_apply_build_flags(${COMPONENT_LIB})

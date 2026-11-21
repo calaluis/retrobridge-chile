@@ -30,6 +30,9 @@
 #if CONFIG_RB_BENCH_C8
 #include "bench_c8.hpp"
 #endif
+#if CONFIG_RB_MENU_SIO
+#include "menu_sio.hpp"
+#endif
 
 namespace {
 
@@ -101,6 +104,17 @@ extern "C" void app_main(void)
         }
     }
 
+#if CONFIG_RB_MENU_SIO
+    // Test package menu-sio (menu-sio-fisico): the menu as D1 on the physical SIO. The cassette is
+    // not started: it would share UART2 and GPIO21 (DATA IN), and MOTOR is not read.
+    if (!rb::console::start_diagnostic_console(g_console)) {
+        ESP_LOGE(kTag, "diagnostic console could not start");
+    }
+    if (!rb::menusio::start(kBoard, mounted.ok())) {
+        ESP_LOGE(kTag, "menu-sio: the menu is not served");
+    }
+    return;
+#endif
     // The cassette needs the microSD (its tapes) and PSRAM (its bank).
     (void)g_motor.configure(kBoard);
 #if CONFIG_RB_BENCH_C8

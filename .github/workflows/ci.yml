@@ -58,7 +58,19 @@ jobs:
           grep -q '^CONFIG_RB_BOARD_FUJINET_ATARI_V1X=y' build-fujinet/sdkconfig
           grep -q '^CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y' build-fujinet/sdkconfig
           grep -q '^CONFIG_PARTITION_TABLE_CUSTOM=y' build-fujinet/sdkconfig
+          # The normal FujiNet build never serves SIO (H4): the menu-sio test package is off.
+          # (`if`, not `! grep`: bash -e does not stop on a negated command.)
+          if grep -q '^CONFIG_RB_MENU_SIO=y' build-fujinet/sdkconfig; then echo "menu-sio in the normal build"; exit 1; fi
           idf.py -B build-fujinet -D SDKCONFIG=build-fujinet/sdkconfig size
+      - name: Build firmware (test package menu-sio, compile only; H4 not approved)
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          idf.py -B build-menu-sio -D SDKCONFIG=build-menu-sio/sdkconfig \
+                 -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board.fujinet-atari-v1x;sdkconfig.menu-sio" build
+          grep -q '^CONFIG_RB_MENU_SIO=y' build-menu-sio/sdkconfig
+          if grep -q '^CONFIG_RB_BENCH_C8=y' build-menu-sio/sdkconfig; then echo "bench-c8 in menu-sio"; exit 1; fi
+          idf.py -B build-menu-sio -D SDKCONFIG=build-menu-sio/sdkconfig size
 
   # Read-only cassette firmware (cassette-cas, variant "cassette-lectura") for the FujiNet Atari
   # FN32ROV-1.3/1.5: `cas mount` and `cas status` over USB, with H4 and M3a unsigned, so DATA IN and

@@ -28,14 +28,14 @@
 #include <thread>
 #include <vector>
 
-#include "memory_image_store.hpp"
-#include "menu_loader.hpp"
+#include "rb/menu/memory_image_store.hpp"
+#include "rb/menu/menu_loader.hpp"
 #include "rb/core/result.hpp"
 #include "rb/net_tnfs/tnfs_client.hpp"
 #include "rb/net_tnfs/tnfs_codec.hpp"
 #include "rb/netsio/datagram_port.hpp"
-#include "sha256.hpp"
-#include "tnfs_folder.hpp"
+#include "rb/menu/sha256.hpp"
+#include "rb/menu/tnfs_folder.hpp"
 
 namespace rb::host {
 

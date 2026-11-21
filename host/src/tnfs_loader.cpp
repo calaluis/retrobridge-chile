@@ -1,6 +1,6 @@
 #include "tnfs_loader.hpp"
 
-#include "xex_image.hpp"
+#include "rb/menu/xex_image.hpp"
 
 #include <algorithm>
 #include <chrono>

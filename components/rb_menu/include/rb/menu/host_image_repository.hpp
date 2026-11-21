@@ -12,8 +12,8 @@
 #include <cstddef>
 #include <cstring>
 
-#include "memory_image_store.hpp"
-#include "menu_image.hpp"
+#include "rb/menu/memory_image_store.hpp"
+#include "rb/menu/menu_image.hpp"
 #include "rb/app/ports/image_repository.hpp"
 #include "rb/storage/stdio_image_repository.hpp"
 

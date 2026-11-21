@@ -26,6 +26,7 @@ PURE_LAYERS = {
     "rb_netsio": ("rb/core/", "rb/app/", "rb/netsio/"),  # NetSIO transport (ADR-016): no sockets, no rb_sio
     "rb_net_tnfs": ("rb/core/", "rb/netsio/", "rb/net_tnfs/"),  # read-only TNFS client (menu-tnfs): no sockets
     "rb_cassette": ("rb/core/", "rb/cassette/"),  # the cassette (cassette-cas): no RMT, UART or GPIO
+    "rb_menu": ("rb/core/", "rb/domain/", "rb/app/", "rb/sio/", "rb/storage/", "rb/menu/"),  # boot menu (menu-sio-fisico)
 }
 
 FORBIDDEN_PLATFORM = re.compile(

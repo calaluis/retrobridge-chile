@@ -48,11 +48,11 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "create_atr.hpp"
-#include "menu_catalog.hpp"
-#include "menu_image.hpp"
-#include "menu_loader.hpp"
-#include "menu_sources.hpp"
+#include "rb/menu/create_atr.hpp"
+#include "rb/menu/menu_catalog.hpp"
+#include "rb/menu/menu_image.hpp"
+#include "rb/menu/menu_loader.hpp"
+#include "rb/menu/menu_sources.hpp"
 #include "rb/app/inline_drive_mailbox.hpp"
 #include "rb/app/ports/image_repository.hpp"
 #include "rb/app/usecases/collect_drive_reply.hpp"

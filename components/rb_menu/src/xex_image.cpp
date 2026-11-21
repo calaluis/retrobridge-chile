@@ -1,4 +1,4 @@
-#include "xex_image.hpp"
+#include "rb/menu/xex_image.hpp"
 
 #include <cstring>
 #include <utility>
@@ -7,7 +7,7 @@ namespace rb::host {
 
 namespace {
 
-#include "xex_loader.inc"
+#include "rb/menu/xex_loader.inc"
 
 static_assert(kXexLoaderSectors * XexImage::kSectorSize == sizeof kXexLoaderBlock, "the loader is whole sectors");
 static_assert(kXexLoaderLengthOffset + 3 <= sizeof kXexLoaderBlock, "the length fits in the loader");

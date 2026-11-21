@@ -38,4 +38,15 @@ menu "RetroBridge Chile"
             gives DATA IN to the cassette. H4 and M3a stay unsigned. Flash it only
             with the FujiNet on USB and the SIO cable disconnected from the Atari.
 
+    config RB_MENU_SIO
+        bool "Test package menu-sio: serve the RetroBridge menu as D1 over the physical SIO"
+        depends on RB_BOARD_FUJINET_ATARI_V1X && !RB_BENCH_C8
+        default n
+        help
+            Test package only (menu-sio-fisico). Serves the boot menu as D1 over
+            UART2 (DATA IN GPIO21, DATA OUT GPIO33) and COMMAND (GPIO39); reads
+            ButtonA (GPIO0) and the SIO +5 V (GPIO35, ADC). The cassette is not
+            started. H4 and M3a stay unsigned: use it only with the owner's
+            written risk acceptance and the SIO adapter without pin 8.
+
 endmenu

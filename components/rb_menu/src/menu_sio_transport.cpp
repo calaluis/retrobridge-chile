@@ -1,6 +1,6 @@
-#include "menu_sio_transport.hpp"
+#include "rb/menu/menu_sio_transport.hpp"
 
-#include "menu_image.hpp"
+#include "rb/menu/menu_image.hpp"
 #include "rb/sio/sio_checksum.hpp"
 #include "rb/sio/sio_codes.hpp"
 #include "rb/sio/sio_session.hpp"

@@ -24,10 +24,10 @@
 #include "fakes/fake_clock.hpp"
 #include "fakes/fake_tnfs_server.hpp"
 #include "fakes/gated_port.hpp"
-#include "memory_image_store.hpp"
+#include "rb/menu/memory_image_store.hpp"
 #include "rb/net_tnfs/tnfs_codec.hpp"
-#include "sha256.hpp"
-#include "tnfs_folder.hpp"
+#include "rb/menu/sha256.hpp"
+#include "rb/menu/tnfs_folder.hpp"
 #include "tnfs_loader.hpp"
 #include "unity.h"
 

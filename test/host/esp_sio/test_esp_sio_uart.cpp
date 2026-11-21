@@ -43,6 +43,9 @@ void test_begin_sets_uart2_at_19200_on_the_sio_pins()
     const auto& s = fake_idf::state();
     TEST_ASSERT_TRUE(s.uartInstalled);
     TEST_ASSERT_EQUAL_INT(19200, s.uartBaud);
+    // Each byte reaches the driver at once: with the defaults a command frame arrived after kFrameReadUs.
+    TEST_ASSERT_EQUAL_INT(1, s.uartRxFullThreshold);
+    TEST_ASSERT_EQUAL_INT(1, s.uartRxTimeout);
     TEST_ASSERT_EQUAL_INT(21, s.uartTxPin);
     TEST_ASSERT_EQUAL_INT(33, s.uartRxPin);
     TEST_ASSERT_TRUE(contains(s.inputs, 39));

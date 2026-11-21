@@ -999,7 +999,8 @@ constexpr uart_port_t kUart = UART_NUM_2;
 bool begin() {
     if (gpio_set_direction(static_cast<gpio_num_t>(pins_.command), GPIO_MODE_INPUT) != ESP_OK) return false;
     if (uart_driver_install(kUart, 1024, 0, 0, nullptr, 0) != ESP_OK) return false;
-    if (uart_param_config(kUart, &config) != ESP_OK ||
+    if (uart_param_config(kUart, &config) != ESP_OK || uart_set_rx_full_threshold(kUart, 1) != ESP_OK ||
+        uart_set_rx_timeout(kUart, 1) != ESP_OK ||
         uart_set_pin(kUart, pins_.dataIn, pins_.dataOut, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK ||
         gpio_pullup_en(static_cast<gpio_num_t>(pins_.dataOut)) != ESP_OK) {
         (void)uart_driver_delete(kUart);

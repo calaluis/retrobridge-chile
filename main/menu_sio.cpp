@@ -1,6 +1,7 @@
 #include "menu_sio.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <new>
@@ -253,8 +254,17 @@ bool start(const rb::board::BoardProfile& board, bool sdMounted)
         ESP_LOGE(kTag, "no memory for the catalog");
         return false;
     }
-    if (!sdMounted || !rb::host::readCatalog(rb::esp::SdCardStorage::kMountPoint, *g_catalog)) {
-        ESP_LOGW(kTag, "microSD catalog not read: the menu lists no images");
+    if (!sdMounted) {
+        ESP_LOGW(kTag, "microSD not mounted: the menu lists no images");
+    } else {
+        errno = 0;
+        if (!rb::host::readCatalog(rb::esp::SdCardStorage::kMountPoint, *g_catalog)) {
+            if (errno == ENOMEM) {
+                ESP_LOGE(kTag, "microSD catalog not read: no memory for the 4 KB path buffer");
+            } else {
+                ESP_LOGW(kTag, "microSD catalog not read (%s): the menu lists no images", std::strerror(errno));
+            }
+        }
     }
     ESP_LOGI(kTag, "catalog: %u image(s) on the microSD root", static_cast<unsigned>(g_catalog->count()));
 
@@ -288,6 +298,7 @@ bool start(const rb::board::BoardProfile& board, bool sdMounted)
         return false;
     }
     ESP_LOGI(kTag, "D1: menu. Switch the 65XE on.");
+    ESP_LOGI(kTag, "app_main stack: %u B never used", static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     return true;
 }
 

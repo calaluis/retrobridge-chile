@@ -20,13 +20,17 @@
 
 | Dato | Valor |
 |---|---|
-| Paquete | `retrobridge-fw-menu-sio-fujinet-atari-v1x-e65c2bd` (PR #74, ejecución de CI 44941501900) |
-| SHA-256 del zip | `b1b7455da60583d7f0387b314a6d56c34d1262fc0dab1eee61af88c66ecaa902` |
-| SHA-256 de `firmware/retrobridge.bin` | `5794655f19cdba1c53bcfa62daccdd9b0d5389b19b18c43dd9d064c909aa4928` |
-| SHA-256 del ELF | `bdea655d6b843d4e2d58dd4e37fdafedfd57bd9d6cb213ae0c35f9afffd83158` |
-| Versión (esp_app_desc) | `e65c2bd`; aplicación de 432208 B |
+| Paquete | `retrobridge-fw-menu-sio-fujinet-atari-v1x-b8e6152` (PR #76, ejecución de CI 44959033575, artefacto 14728158699) |
+| SHA-256 del zip | `a220c1c37dc6b8968da22458cef9b75e6df74bcad09a77d4c13e9c03ccc10f2d` |
+| SHA-256 de `firmware/retrobridge.bin` | `6012fb554f6eb473baa77afa1f145a0892d3e09db37573d4d892068b2c370fcc` |
+| SHA-256 del ELF | `9505126750597ece42717c62e586acebdedbbbca709ba5e3d885400c46519698` |
+| Versión (esp_app_desc) | `b8e6152`; aplicación de 433360 B |
 | Línea SIO | UART2 19200 8N1: TX en DATA IN (GPIO21), RX en DATA OUT (GPIO33), COMMAND en GPIO39 (solo entrada) |
 | Otras entradas | botón A (GPIO0, solo entrada, leído tras el arranque); +5 V del SIO por GPIO35 (ADC) |
+
+`b8e6152` sustituye a `e65c2bd` (PR #74), que no pasó el banco: pánico por desbordamiento de pila al leer el
+catálogo y, una vez corregido (`e9c0f2b`), ninguna trama completa por los umbrales RX de la UART. Detalle en el
+registro, §4.
 
 El firmware lee al arrancar el catálogo de la **raíz** de la microSD y sirve el menú como D1. La casetera no arranca:
 MOTOR (GPIO36) no se configura.
@@ -60,15 +64,16 @@ MOTOR (GPIO36) no se configura.
 ## 3. Preparación (sin escribir en la placa ni conectar el Atari)
 
 1. **Paquete.**
-   - Descargar el artefacto de la ejecución 44941501900.
-   - Guardarlo en `D:\GitHub\Respaldos\FujiNet-RB-menu-sio\` y descomprimirlo allí.
+   - Descargar el artefacto 14728158699 de la ejecución 44959033575.
+   - Guardarlo como `artifact.zip` en `D:\GitHub\Respaldos\FujiNet-RB-menu-sio-b8e6152\` y descomprimirlo en
+     `pkg\` dentro de esa carpeta.
    - Comprobar el zip:
 
      ```powershell
-     (Get-FileHash D:\GitHub\Respaldos\FujiNet-RB-menu-sio\retrobridge-fw-menu-sio-fujinet-atari-v1x-e65c2bd.zip -Algorithm SHA256).Hash
+     (Get-FileHash D:\GitHub\Respaldos\FujiNet-RB-menu-sio-b8e6152\artifact.zip -Algorithm SHA256).Hash
      ```
 
-     Debe dar `B1B7455DA60583D7F0387B314A6D56C34D1262FC0DAB1EEE61AF88C66ECAA902`.
+     Debe dar `A220C1C37DC6B8968DA22458CEF9B75E6DF74BCAD09A77D4C13E9C03CCC10F2D`.
    - En la carpeta del paquete, ejecutar `verify`:
 
      ```powershell
@@ -80,7 +85,7 @@ MOTOR (GPIO36) no se configura.
 2. **Imágenes de prueba.** Son las mismas de la regresión en Altirra (`D:\rb-e0\m50-sio-fisico\images`):
 
    ```powershell
-   python -I D:\GitHub\retrobridge-chile\tools\make_atr.py --out D:\GitHub\Respaldos\FujiNet-RB-menu-sio\atr --demo
+   python -I D:\GitHub\retrobridge-chile\tools\make_atr.py --out D:\GitHub\Respaldos\FujiNet-RB-menu-sio-b8e6152\atr --demo
    ```
 
    `demo-dos.atr` debe medir 92176 B y su SHA-256 debe ser
@@ -173,7 +178,7 @@ MOTOR (GPIO36) no se configura.
      posterior). Debe verse **sin ambigüedad** el hueco del contacto 8 junto a su marca y la fila larga del
      trapecio, para poder contar las posiciones.
    - **Foto C2:** el rótulo.
-   - Se guardan en `D:\GitHub\Respaldos\FujiNet-RB-menu-sio\`.
+   - Se guardan en `D:\GitHub\Respaldos\FujiNet-RB-menu-sio-b8e6152\`.
 
    **Detener la conexión, en las dos vías,** si:
    - queda cualquier duda sobre qué contacto falta;
@@ -206,7 +211,7 @@ demo depende de ello.
 1. Abrir la consola sin tocar RTS ni DTR. La salida queda también en un archivo:
 
    ```powershell
-   & $py -m serial.tools.miniterm COM3 115200 --rts 0 --dtr 0 --raw 2>&1 | Tee-Object -FilePath D:\GitHub\Respaldos\FujiNet-RB-menu-sio\consola-banco.txt
+   & $py -m serial.tools.miniterm COM3 115200 --rts 0 --dtr 0 --raw 2>&1 | Tee-Object -FilePath D:\GitHub\Respaldos\FujiNet-RB-menu-sio-b8e6152\consola-banco.txt
    ```
 
    **Pendiente de comprobar:** que este comando no reinicie la placa y que el archivo reciba la salida. Si falla,
@@ -262,6 +267,11 @@ Sin el Atari, COMMAND y DATA OUT pueden leerse en cualquier nivel. Se anotan, pe
 3. Retirar cualquier cartucho. Para que no interfiera el BASIC, encender el 65XE con **OPTION** pulsado.
    - *Suposición:* la regresión en Altirra no registró el estado del BASIC.
    - Si con OPTION no aparece el menú, se repite sin OPTION y se anota.
+   - **Orden:** el 65XE se enciende **después** de que la consola muestre `D1: menu`. Si la FujiNet se reinicia con el
+     65XE encendido (por ejemplo, al abrir la consola con reinicio por RTS), el Atari ya pasó su arranque: se apaga,
+     se esperan 5 s y se vuelve a encender.
+   - **Flechas:** en el teclado del 65XE son CONTROL + `-` `=` `+` `*`. Sin CONTROL no mueven el cursor (spec
+     `menu-navegacion`). También sirven el joystick del puerto 1 y las letras o números de cada pantalla.
 4. **[CONFIRMAR] Encender el 65XE.** Fotografiar cada pantalla con el número de la captura de Altirra
    (`D:\rb-e0\m50-sio-fisico\`):
 

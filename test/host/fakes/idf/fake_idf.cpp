@@ -100,6 +100,18 @@ esp_err_t uart_param_config(uart_port_t, const uart_config_t* config)
     return ESP_OK;
 }
 
+esp_err_t uart_set_rx_full_threshold(uart_port_t, int threshold)
+{
+    fake_idf::state().uartRxFullThreshold = threshold;
+    return ESP_OK;
+}
+
+esp_err_t uart_set_rx_timeout(uart_port_t, const uint8_t tout_thresh)
+{
+    fake_idf::state().uartRxTimeout = tout_thresh;
+    return ESP_OK;
+}
+
 esp_err_t uart_set_pin(uart_port_t, int tx, int rx, int, int)
 {
     auto& s = fake_idf::state();

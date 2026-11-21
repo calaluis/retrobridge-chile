@@ -62,6 +62,11 @@ struct BoardProfile {
     int8_t cardDetect;       // input, or kNoPin
     bool sioGateApproved;    // H4 checklist signed (docs/hardware/h4-puerta-sio.md section 7)
     SioPins sio;             // all kNoPin until the SIO pinout is assigned
+    // SIO pin 8 (MOTOR CONTROL), input only. On the FujiNet it reaches the GPIO with no buffer or
+    // divider, so nothing may read it until M3a has measured its level on the Atari alone
+    // (docs/hardware/procedimiento-medicion-pasiva-sio.md, M3a) and the gate is signed here.
+    int8_t motor;            // input-only GPIO 34-39, or kNoPin
+    bool motorGateApproved;  // M3a signed (cassette-cas C106)
 };
 
 // The only profile until the board is identified: blocks the microSD bus and
@@ -76,7 +81,9 @@ constexpr BoardProfile unconfirmed_profile() noexcept
                         SpiHost::None,
                         kNoPin,
                         false,
-                        SioPins{kNoPin, kNoPin, kNoPin}};
+                        SioPins{kNoPin, kNoPin, kNoPin},
+                        kNoPin,
+                        false};
 }
 
 // Warning flags returned by validate_for_storage().
@@ -149,6 +156,28 @@ private:
     int8_t command_;
     int8_t rx_;
     uint8_t warnings_;
+};
+
+class MotorAssignment;
+
+// Authorizes reading the MOTOR line (cassette-cas C106): the hardware must be confirmed and M3a
+// signed. The pin must be an input-only GPIO 34-39, so it can never be driven by mistake, and must
+// not collide with the microSD or SIO pins. Errors:
+//   BoardNotConfirmed    - hardware not confirmed, or M3a not signed
+//   InvalidPinAssignment - no pin, not input-only, flash/PSRAM pin, or a collision
+rb::core::Result<MotorAssignment> validate_for_motor(const BoardProfile& profile) noexcept;
+
+// The MOTOR pin a driver may read. Only validate_for_motor() creates one.
+class MotorAssignment {
+public:
+    int8_t pin() const noexcept { return pin_; }
+
+private:
+    constexpr explicit MotorAssignment(int8_t pin) noexcept : pin_(pin) {}
+
+    friend rb::core::Result<MotorAssignment> validate_for_motor(const BoardProfile& profile) noexcept;
+
+    int8_t pin_;
 };
 
 }  // namespace rb::board

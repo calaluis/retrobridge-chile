@@ -57,7 +57,7 @@ public:
 
 private:
     bool psram_;
-    std::array<int8_t, 12> used_{};  // up to 7 microSD pins plus 3 SIO pins
+    std::array<int8_t, 13> used_{};  // up to 7 microSD pins, 3 SIO pins and MOTOR
     std::size_t count_ = 0;
     uint8_t warnings_ = 0;
 };
@@ -113,6 +113,10 @@ Result<uint8_t> check_sio_pins(const BoardProfile& profile, SioMode mode) noexce
     if (profile.sio.tx != kNoPin || mode == SioMode::ReceiveTransmit) {
         ok = ok && checker.add({profile.sio.tx, true});
     }
+    // MOTOR is SIO pin 8: no other SIO line may share its GPIO (cassette-cas C106).
+    if (profile.motor != kNoPin) {
+        ok = ok && checker.add({profile.motor, false});
+    }
     if (!ok) {
         return Failure{ErrorCode::InvalidPinAssignment};
     }
@@ -144,6 +148,28 @@ Result<SioListenAssignment> validate_for_sio_listen(const BoardProfile& profile)
     }
     const SioAssignment& assignment = granted.value();
     return SioListenAssignment{assignment.pins.command, assignment.pins.rx, assignment.warnings};
+}
+
+Result<MotorAssignment> validate_for_motor(const BoardProfile& profile) noexcept
+{
+    if (!profile.hardwareConfirmed || !profile.motorGateApproved) {
+        return Failure{ErrorCode::BoardNotConfirmed};
+    }
+    if (!is_input_only(profile.motor)) {
+        return Failure{ErrorCode::InvalidPinAssignment};  // also kNoPin
+    }
+    PinChecker checker{profile.hasPsram};
+    bool ok = profile.sdInterface == SdInterface::None || add_storage_pins(checker, profile);
+    for (const int8_t pin : {profile.sio.command, profile.sio.rx, profile.sio.tx}) {
+        if (pin != kNoPin) {
+            ok = ok && checker.add({pin, false});  // registered only to catch a collision
+        }
+    }
+    ok = ok && checker.add({profile.motor, false});
+    if (!ok) {
+        return Failure{ErrorCode::InvalidPinAssignment};
+    }
+    return MotorAssignment{profile.motor};
 }
 
 }  // namespace rb::board

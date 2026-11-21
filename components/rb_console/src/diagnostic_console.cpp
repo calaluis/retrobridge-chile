@@ -463,6 +463,38 @@ int cmd_crc_selftest(int, char**)
     return crc == 0xCBF43926u ? 0 : 1;
 }
 
+// cas mount <path> | status | eject | rewind (cassette-cas C106, AC8). The path is relative to
+// the microSD; a name with spaces can be quoted or typed as is.
+int cmd_cas(int argc, char** argv)
+{
+    char line[rb::esp::CassetteService::kLineMax];
+    std::size_t used = 0;
+    line[0] = '\0';
+    for (int i = 1; i < argc; ++i) {
+        const int written = std::snprintf(line + used, sizeof line - used, "%s%s", i > 1 ? " " : "", argv[i]);
+        if (written < 0 || static_cast<std::size_t>(written) >= sizeof line - used) {
+            std::printf("line too long\n");
+            return 1;
+        }
+        used += static_cast<std::size_t>(written);
+    }
+    rb::esp::CassetteService& cassette = g_context->cassette;
+    if (!cassette.started()) {
+        std::printf("cassette disabled (no PSRAM or no microSD profile)\n");
+        return 1;
+    }
+    char reply[rb::esp::CassetteService::kReplyMax];
+    if (!cassette.request(line, reply, sizeof reply)) {
+        std::printf("cassette busy: no reply\n");
+        return 1;
+    }
+    std::printf("%s\n", reply);
+    if (!cassette.motorEnabled()) {
+        std::printf("(MOTOR not read: M3a not signed; DATA IN not driven: H4)\n");
+    }
+    return 0;
+}
+
 bool register_command(const char* name, const char* help, esp_console_cmd_func_t func)
 {
     esp_console_cmd_t command{};
@@ -498,6 +530,8 @@ bool start_diagnostic_console(ConsoleContext& context)
         register_command("atr", "atr info|crc <path> | atr bench <path> [seq|rand] [count]", cmd_atr) &&
         register_command("drive", "drive mount <path>|unmount|read <n>|status (contexts in sequence, H3-7)",
                          cmd_drive) &&
+        register_command("cas", "cas mount <path>|status|eject|rewind: the cassette (paths on the microSD)",
+                         cmd_cas) &&
         register_command("mem", "Show heap figures", cmd_mem) &&
         register_command("diag",
                          "diag status|memory|storage|events|report: internal diagnostics (report is CRC-framed; "

@@ -12,6 +12,7 @@
 #include "rb/app/usecases/unmount_disk_image.hpp"
 #include "rb/app/ports/clock.hpp"
 #include "rb/board/board_profile.hpp"
+#include "rb/esp/cassette_service.hpp"
 #include "rb/esp/sd_card_storage.hpp"
 #include "rb/hwdiag/diagnostics_recorder.hpp"
 #include "rb/hwdiag/system_probe.hpp"
@@ -45,6 +46,8 @@ struct ConsoleContext {
     rb::hwdiag::DiagnosticsRecorder& diagnostics;
     const rb::hwdiag::SystemProbe& system;
     rb::app::Clock& clock;
+    // The cassette (cassette-cas C106): `cas ...` runs on its own loop task.
+    rb::esp::CassetteService& cassette;
 };
 
 // CRC-32 of the ROM (esp_rom_crc32_le), as a Crc32Function for VerifySectors.

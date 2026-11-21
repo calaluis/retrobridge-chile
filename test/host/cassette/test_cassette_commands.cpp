@@ -325,7 +325,7 @@ void test_mount_missing_file_keeps_the_tape()
 void test_status_without_tape()
 {
     Rig rig;
-    TEST_ASSERT_EQUAL_STRING("no tape", rig.run("status"));
+    TEST_ASSERT_EQUAL_STRING("no tape, motor on", rig.run("status"));
 }
 
 void test_status_shows_segment_phase_and_motor()
@@ -367,7 +367,7 @@ void test_eject()
     TEST_ASSERT_FALSE(rig.cas->mounted());
     TEST_ASSERT_FALSE(rig.player.loaded());
     TEST_ASSERT_EQUAL_INT(0, rig.files.openNow);
-    TEST_ASSERT_EQUAL_STRING("no tape", rig.run("status"));
+    TEST_ASSERT_EQUAL_STRING("no tape, motor on", rig.run("status"));
     TEST_ASSERT_EQUAL_STRING("no tape", rig.run("eject"));
 }
 
@@ -392,17 +392,17 @@ void test_unknown_or_empty_is_usage()
     TEST_ASSERT_EQUAL_STRING(usage, rig.run(nullptr));
     TEST_ASSERT_EQUAL_STRING(usage, rig.run("play"));
     TEST_ASSERT_EQUAL_STRING(usage, rig.run("statusx"));
-    TEST_ASSERT_EQUAL_STRING("no tape", rig.run("  status  "));
+    TEST_ASSERT_EQUAL_STRING("no tape, motor on", rig.run("  status  "));
 }
 
 void test_reply_is_cut_to_the_buffer()
 {
     Rig rig;
     char small[8];
-    rig.cas->run("status", rig.motor, rig.wave, Span<char>(small, sizeof(small)));
+    rig.cas->run("eject", rig.motor, rig.wave, Span<char>(small, sizeof(small)));
     TEST_ASSERT_EQUAL_STRING("no tape", small);
     char tiny[4];
-    rig.cas->run("status", rig.motor, rig.wave, Span<char>(tiny, sizeof(tiny)));
+    rig.cas->run("eject", rig.motor, rig.wave, Span<char>(tiny, sizeof(tiny)));
     TEST_ASSERT_EQUAL_STRING("no ", tiny);
     rig.cas->run("status", rig.motor, rig.wave, Span<char>());  // nothing to write into: no crash
 }
@@ -448,7 +448,7 @@ void test_eject_while_loading_closes_after_the_producer_stops()
     TEST_ASSERT_EQUAL_STRING("ejected fsk.cas", rig.run("eject"));
     TEST_ASSERT_EQUAL_INT(1, rig.files.openNow);
     (void)rig.loader.step();
-    TEST_ASSERT_EQUAL_STRING("no tape", rig.run("status"));
+    TEST_ASSERT_EQUAL_STRING("no tape, motor on", rig.run("status"));
     TEST_ASSERT_EQUAL_INT(0, rig.files.openNow);
 }
 

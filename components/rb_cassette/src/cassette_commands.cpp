@@ -176,11 +176,11 @@ void CassetteCommands::mount(const char* args, WaveOut& wave, rb::core::Span<cha
 
 void CassetteCommands::status(const MotorIn& motor, rb::core::Span<char> out) const noexcept
 {
+    const char* motorText = motor.on() ? "on" : "off";
     if (source_ == nullptr) {
-        reply(out, "no tape");
+        reply(out, "no tape, motor %s", motorText);  // MOTOR is worth seeing before a tape (AC9)
         return;
     }
-    const char* motorText = motor.on() ? "on" : "off";
     if (player_.atEnd()) {
         reply(out, "%s: end, motor %s", name_, motorText);
         return;

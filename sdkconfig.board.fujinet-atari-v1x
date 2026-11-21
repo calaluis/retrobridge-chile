@@ -16,5 +16,9 @@ CONFIG_ESPTOOLPY_FLASHFREQ_40M=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions/retrobridge-16mb.csv"
 
-# PSRAM stays disabled in H3c: the diagnostics do not need it. GPIO16/17 remain
-# reserved by the board profile regardless.
+# PSRAM (ESP32-WROVER-B, GPIO16/17, reserved by the board profile): the cassette's
+# loader bank and segment tables live there (cassette-cas C106, ADR-011: reserved once).
+# The diagnostics of H3c did not need it.
+CONFIG_SPIRAM=y
+# A board without PSRAM still boots; the cassette then reports it is disabled.
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y

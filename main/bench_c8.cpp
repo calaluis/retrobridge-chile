@@ -46,7 +46,9 @@ void trace(const char* call, int err)
 // What drives the pin, read from the GPIO matrix: output signal and output enable.
 Owner route(int pin, uint32_t& signal, bool& enabled)
 {
-    signal = REG_GET_FIELD(GPIO_FUNC0_OUT_SEL_CFG_REG + 4u * static_cast<uint32_t>(pin), GPIO_FUNC0_OUT_SEL);
+    // A volatile load, not REG_GET_FIELD: its DPORT check needs a constant address, and the GPIO matrix is not DPORT.
+    const uint32_t cfg = GPIO_FUNC0_OUT_SEL_CFG_REG + 4u * static_cast<uint32_t>(pin);
+    signal = (*reinterpret_cast<const volatile uint32_t*>(cfg) >> GPIO_FUNC0_OUT_SEL_S) & GPIO_FUNC0_OUT_SEL_V;
     enabled = ((REG_READ(GPIO_ENABLE_REG) >> pin) & 1u) != 0;
     if (!enabled) {
         return Owner::Released;

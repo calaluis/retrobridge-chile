@@ -3,3 +3,8 @@
 #   idf.py -B build-menu-sio -D SDKCONFIG=build-menu-sio/sdkconfig #          -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board.fujinet-atari-v1x;sdkconfig.menu-sio" build
 # H4 and M3a stay unsigned: written risk acceptance and the adapter without pin 8 before any connection.
 CONFIG_RB_MENU_SIO=y
+# Boot time (fix/menu-sio-arranque-temprano): powered only from the SIO, the ESP32 starts with the 65XE
+# and D1 must be ready for its first boot attempt. The PSRAM memory test costs ~0.9 s and the bootloader
+# log ~0.1 s at 115200 baud; neither is needed to serve the menu.
+# CONFIG_SPIRAM_MEMTEST is not set
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y

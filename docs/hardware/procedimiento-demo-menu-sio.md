@@ -34,11 +34,13 @@ MOTOR (GPIO36) no se configura.
 ## 2. Condiciones (obligatorias)
 
 - **Aceptación de riesgo firmada** por el responsable en `docs/mediciones/menu-sio-fisico-registro.md` §1.
-- **Adaptador SIO sin el pin 8** (`mitigacion-c-motor-pin8.md`):
-  - contacto 8 retirado físicamente;
-  - foto y rótulo «SIN PIN 8 (MOTOR) — SOLO FUJINET AL FINAL — J2 LIBRE».
-  Sin multímetro, el adaptador queda como riesgo aceptado, no como medición (spec, «Evidencia para la demo física»).
-  Si hay multímetro, se registra §5.2 de la mitigación.
+- **Adaptador SIO sin el pin 8** (`mitigacion-c-motor-pin8.md`), con el contacto 8 **identificado eléctricamente**
+  antes de retirarlo y **comprobado** después (§3.4).
+  - Hace falta un **multímetro** con prueba de continuidad. Sin él, la demo no se hace.
+  - Esto endurece la spec, que aceptaba construir el adaptador sin instrumentos. Motivo: la disposición de los 13
+    contactos se ve invertida según la cara y el tipo de conector, y la mitigación (§2) exige identificar cada
+    contacto por medición, nunca solo por su posición.
+  - Rótulo: «SIN PIN 8 (MOTOR) — SOLO FUJINET AL FINAL — J2 LIBRE».
 - **Topología:** 65XE → adaptador → J1 de la FujiNet. La FujiNet va al final de la cadena y **J2 queda libre**. No hay
   otros equipos SIO.
 - **Alimentación:** la FujiNet, por USB al PC (COM3). El 65XE, por su fuente.
@@ -87,10 +89,36 @@ MOTOR (GPIO36) no se configura.
    - Si es la microSD de la casetera, antes se mueve a una carpeta todo lo que haya en su raíz. Se anota qué se movió,
      para devolverlo en §8.
    - Si hay otra microSD, se prefiere usar esa.
-4. **[CONFIRMAR] Adaptador.**
-   - Construirlo según §2.
-   - Fotografiarlo con el rótulo.
-   - Guardar la foto en `D:\GitHub\Respaldos\FujiNet-RB-menu-sio\`.
+4. **[CONFIRMAR] Adaptador: identificar el pin 8, retirarlo y comprobarlo.** Todo con la FujiNet **desenergizada**:
+   sin USB, sin Atari y con S5 apagado. El 65XE no participa.
+
+   **a) Identificar el contacto 8 antes de tocar nada.** La referencia es eléctrica, no visual:
+   - Enchufar el cable o el conector que será el adaptador, todavía sin modificar, en **J1** de la FujiNet.
+   - En el extremo libre, buscar con el multímetro en continuidad el contacto que conecta con **IO36** (pin 4 del
+     módulo ESP32; ruta SIO_MCTL de la 1.3). **Ese contacto es el pin 8**, se mire desde la cara que se mire.
+   - Comprobar la orientación con las masas: los contactos 4 y 6 del extremo libre dan continuidad con la masa de
+     la placa, y el contacto 8 **no**.
+   - Marcar el contacto 8 en el cuerpo del conector, junto a él.
+   - **Foto 1:** la punta del multímetro en el contacto identificado, con la marca visible y la lectura en pantalla.
+   - **Detener** si ningún contacto da continuidad con IO36, si da más de uno o si las masas no cuadran.
+
+   **b) Retirar** físicamente el contacto marcado: extraerlo o cortarlo, de forma que no pueda tocar ningún otro.
+   Ningún otro contacto se toca.
+
+   **c) Comprobar lo retirado** (mitigación §5.2 y §5.3):
+   - Con el adaptador **solo**: el pin 8 de extremo a extremo da **abierto** («OL»), y también contra cada uno de los
+     otros 12, en los dos extremos. Los pines 1–7 y 9–13 dan continuidad de extremo a extremo.
+   - Con el adaptador enchufado en **J1** de la FujiNet desenergizada: desde el extremo libre, la posición 8 contra
+     IO36 da **abierto**, y los contactos 4 y 6 contra la masa dan continuidad.
+   - **Foto 2:** las dos caras del adaptador de frente, con la vista indicada (macho o hembra, frente o parte
+     posterior), donde se vea el hueco del contacto 8 junto a su marca.
+   - **Foto 3:** el rótulo.
+   - **Detener** si el pin 8 da continuidad con algo, si otro pin queda abierto, si hay un corto o si hay cualquier
+     duda sobre qué contacto falta. En ese caso, no se conecta nada.
+
+   **Evidencia:**
+   - las tres fotos y el modelo del multímetro, en `D:\GitHub\Respaldos\FujiNet-RB-menu-sio\`;
+   - cada lectura, en el registro (§2, filas del adaptador).
 
 ## 4. Instalación (FujiNet solo por USB, SIO desconectado)
 
@@ -121,7 +149,12 @@ demo depende de ello.
 
    **Pendiente de comprobar:** que este comando no reinicie la placa y que el archivo reciba la salida. Si falla,
    se usa cualquier monitor serie con registro a archivo, sin reinicio al abrir, y se anota cuál.
-2. Reiniciar la placa con su botón de reset (EN). En el arranque deben aparecer, en este orden:
+2. Reiniciar la placa con su botón de reset (EN).
+   - **Reinicio conocido:** la ROM puede fallar la primera lectura de la flash y reiniciarse sola:
+     `flash read err, 1000` → `rst:0x10 (RTCWDT_RTC_RESET)` → arranque normal
+     (`docs/mediciones/arranque-rom-conocido-2026-10-25.md`). Si ocurre **una vez** y el arranque llega a
+     `D1: menu`, se registra y se sigue.
+   - En el arranque deben aparecer, en este orden:
 
    ```text
    W (…) rb_menu_sio: menu-sio TEST PACKAGE: transmits on SIO DATA IN. H4 and M3a NOT approved. Use only with the owner's written risk acceptance and the SIO adapter without pin 8.
@@ -133,19 +166,27 @@ demo depende de ello.
    ```
 
    Las marcas de tiempo varían.
-3. Escribir `sio status`. Debe mostrar:
+3. Escribir `sio status` dos veces, con unos segundos entre ambas. Debe mostrar:
    - `D1: menu`;
    - los niveles de COMMAND y DATA OUT;
-   - contadores en 0;
    - `SIO +5V (pin 10): 0 mV (GPIO35 … mV) sin alimentacion del Atari`.
+
+   **Contadores sin Atari = línea base**, no un criterio:
+   - Sin el Atari, los 74LS07 pueden quedar sin alimentar y COMMAND puede leerse bajo.
+   - En ese caso cada espera ve una «caída» y `command_pegado` sube en cada vuelta. También pueden subir `cortas`
+     o `err_rx`.
+   - Se anotan los dos `sio status`, sin juzgarlos.
 4. Pulsar el **botón A** de la FujiNet.
    - Como D1 ya es el menú, puede no aparecer ninguna línea; no es un fallo.
    - `sio status` debe seguir mostrando `D1: menu`.
 
 **Detener aquí** si:
 - falta alguna línea;
-- aparece `board profile has no SIO pins`, `no memory`, `SIO task not created` o un reinicio;
-- `catalog` no da 3.
+- aparece `board profile has no SIO pins`, `no memory` o `SIO task not created`;
+- `catalog` no da 3;
+- el reinicio conocido se repite;
+- hay un brownout (`Brownout detector was triggered`);
+- hay cualquier otro reinicio: pánico, watchdog o reinicio sin pulsar EN.
 
 Si se detiene, se guarda la captura y se restaura `f405106` (§8).
 
@@ -153,7 +194,8 @@ Sin el Atari, COMMAND y DATA OUT pueden leerse en cualquier nivel. Se anotan, pe
 
 ## 6. Conexión y demo en el 65XE
 
-1. Apagar el 65XE. Dejar la FujiNet por USB, con la consola de §5 abierta.
+1. Apagar el 65XE. Dejar la FujiNet por USB, con la consola de §5 abierta. Escribir `sio status` y anotar los
+   contadores: son la referencia de la demo.
 2. **[CONFIRMAR] Conectar** el cable SIO del 65XE al adaptador y el adaptador a J1. J2 queda libre.
 3. Retirar cualquier cartucho. Para que no interfiera el BASIC, encender el 65XE con **OPTION** pulsado.
    - *Suposición:* la regresión en Altirra no registró el estado del BASIC.
@@ -177,10 +219,17 @@ Sin el Atari, COMMAND y DATA OUT pueden leerse en cualquier nivel. Se anotan, pe
    - latencia última y máxima;
    - órdenes, reintentos y NAK del menú;
    - +5 V del SIO.
-6. **Vuelta al menú (criterio 4).**
-   - Pulsar el **botón A** de la FujiNet. Debe aparecer `D1 back to the menu (button A)`.
-   - Apagar y encender el 65XE. Debe aparecer el menú (`6-vuelve-menu.png`).
-   - Repetir con la orden `menu` en lugar del botón. Debe aparecer `D1 back to the menu (console)`.
+6. **Vuelta al menú (criterio 4).** Cada prueba parte de una ATR en D1. Si D1 ya es el menú, la orden o el botón
+   imprimen su línea sin demostrar nada.
+   - **Botón A:**
+     - con `DEMO-DOS.ATR` en D1 (paso 5), pulsar el **botón A** de la FujiNet. Debe aparecer
+       `D1 back to the menu (button A)`;
+     - apagar y encender el 65XE. Debe aparecer el menú (`6-vuelve-menu.png`).
+   - **Orden `menu`:**
+     - volver a arrancar la ATR: `1`, `A`, `1`, `A` hasta `DEMO DOS OK`. En la consola debe aparecer
+       `D1: DEMO-DOS.ATR`, y `sio status` debe mostrar D1 con la ATR;
+     - escribir `menu`. Debe aparecer `D1 back to the menu (console)`;
+     - apagar y encender el 65XE. Debe aparecer el menú.
 7. Apagar el 65XE. Desconectar el SIO. Cerrar la consola con Ctrl+].
 
 ### Pasa si
@@ -188,16 +237,19 @@ Sin el Atari, COMMAND y DATA OUT pueden leerse en cualquier nivel. Se anotan, pe
 - El menú aparece al encender (paso 1).
 - Las pantallas 2–4 coinciden con Altirra.
 - Aparece `DEMO DOS OK` (paso 5).
-- El menú vuelve con el botón A y con `menu` (paso 6).
-- La consola no muestra reinicios, brownouts ni errores de la línea SIO.
+- El menú vuelve con el botón A y con `menu`, cada vez desde una ATR en D1 (paso 6).
+- La consola no muestra reinicios ni brownouts.
+- Entre el `sio status` anterior a encender el 65XE y el del paso 5, `err_rx`, `err_tx` y `command_pegado` no suben.
+  Se comparan con la línea base de §5.
 
 ### No pasa si
 
 - No aparece el menú.
 - La pantalla queda en negro o en el BASIC.
 - El 65XE muestra `BOOT ERROR`.
-- La FujiNet se reinicia.
-- `sio status` muestra errores en aumento.
+- La FujiNet se reinicia o hay un brownout durante la demo. El reinicio conocido solo se acepta al arrancar,
+  una vez (§5).
+- `err_rx`, `err_tx` o `command_pegado` suben durante la demo.
 
 En ese caso: se apaga el 65XE, se desconecta el SIO, se guarda la captura y se sigue con §8.
 

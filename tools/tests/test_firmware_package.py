@@ -715,7 +715,7 @@ class CassettePackageTest(unittest.TestCase):
 
     def test_main_code_has_exactly_the_cassette_calls(self):
         repo = Path(__file__).resolve().parents[2]
-        ok, detail = fp.check_sio_calls(repo, fp.CASSETTE_SIO_CALLS)
+        ok, detail = fp.check_sio_calls(repo, fp.CASSETTE_SIO_CALLS, fp.MENU_SIO_SOURCES)
         self.assertTrue(ok, detail)
 
     # the diagnostic packages keep their controls
@@ -987,6 +987,190 @@ class BenchC8PackageTest(unittest.TestCase):
     def test_main_code_calls_the_bench_grant_only_from_the_bench_file(self):
         repo = Path(__file__).resolve().parents[2]
         ok, detail = fp.check_bench_grant(repo)
+        self.assertTrue(ok, detail)
+
+
+MENU_APP_MARKERS = CASSETTE_APP_MARKERS + (b"\x1b[0;33mW (%lu) %s: menu-sio TEST PACKAGE: transmits on SIO DATA IN. H4 "
+                                           b"and M3a NOT approved.\x1b[0m\n\0\x1b[0;32mI (%lu) %s: D1: menu. Switch the "
+                                           b"65XE on.\x1b[0m\n\0")
+MENU_ELF = CASSETTE_ELF + b"_ZN2rb3esp10EspSioUart5beginEv\0_ZN2rb7menusio5startERKNS_5board12BoardProfileEb\0"
+SIO_UART_SOURCE = """#include "driver/uart.h"  // gpio_set_level( in a comment is ignored
+constexpr uart_port_t kUart = UART_NUM_2;
+bool begin() {
+    if (gpio_set_direction(static_cast<gpio_num_t>(pins_.command), GPIO_MODE_INPUT) != ESP_OK) return false;
+    if (uart_driver_install(kUart, 1024, 0, 0, nullptr, 0) != ESP_OK) return false;
+    if (uart_param_config(kUart, &config) != ESP_OK ||
+        uart_set_pin(kUart, pins_.dataIn, pins_.dataOut, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK ||
+        gpio_pullup_en(static_cast<gpio_num_t>(pins_.dataOut)) != ESP_OK) {
+        (void)uart_driver_delete(kUart);
+        return false;
+    }
+    return true;
+}
+void end() { (void)uart_driver_delete(kUart); }
+bool commandHigh() { return gpio_get_level(static_cast<gpio_num_t>(pins_.command)) != 0; }
+bool dataOutHigh() { return gpio_get_level(static_cast<gpio_num_t>(pins_.dataOut)) != 0; }
+int read() { return uart_read_bytes(kUart, out, n, ticks); }
+int write() { (void)uart_write_bytes(kUart, b, n); return uart_wait_tx_done(kUart, 10); }
+void flushInput() { (void)uart_flush_input(kUart); }
+void idleLine() { (void)uart_wait_tx_done(kUart, 2); }
+"""
+MENU_MAIN_SOURCE = """constexpr gpio_num_t kButtonA = GPIO_NUM_0;  // "gpio_set_level(" in a string is ignored
+void task() { const bool down = gpio_get_level(kButtonA) == 0; }
+void start() {
+    (void)gpio_set_direction(kButtonA, GPIO_MODE_INPUT);
+    (void)gpio_pullup_en(kButtonA);
+}
+"""
+MENU_SIO_CHECK = "paquete de prueba menu-sio (sdkconfig, aplicación y ELF)"
+
+
+class MenuSioPackageTest(unittest.TestCase):
+    """menu-sio: the read-only cassette plus the menu as D1 on the physical SIO, only with H4 and M3a unsigned and
+    CONFIG_RB_MENU_SIO on; its UART2 and button calls exact and on the board's pins; every other variant refuses
+    the option and the code, and leaves its two sources out of the scan."""
+
+    def setUp(self):
+        CassetteReadOnlyPackageTest.setUp(self)
+        write(self.f.src / "components" / "rb_esp_sio" / "src" / "esp_sio_uart.cpp", SIO_UART_SOURCE)
+        write(self.f.src / "main" / "menu_sio.cpp", MENU_MAIN_SOURCE)
+        self.build(menu_option=True, app=MENU_APP_MARKERS, elf=MENU_ELF)
+
+    tearDown = CassettePackageTest.tearDown
+    profile = CassettePackageTest.profile
+    gates = CassettePackageTest.gates
+    failed = CassettePackageTest.failed
+
+    def build(self, menu_option, app, elf):
+        write(self.f.build / "sdkconfig", SDKCONFIG + ("CONFIG_RB_MENU_SIO=y\n" if menu_option else ""))
+        write(self.f.build / "retrobridge.elf", elf)
+        write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=elf, extra=app))
+
+    def package(self, variant="menu-sio"):
+        return CassettePackageTest.package(self, variant)
+
+    def assert_refused(self, check_name, variant="menu-sio"):
+        CassettePackageTest.assert_refused(self, check_name, variant)
+
+    def edit(self, rel, old, new):
+        path = self.f.src / rel
+        text = path.read_text(encoding="utf-8")
+        self.assertIn(old, text)
+        path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+    # positive case
+
+    def test_menu_sio_package_with_both_gates_unsigned(self):
+        log = self.package()
+        self.assertTrue(log.ok, self.failed(log))
+        provenance = json.loads((self.f.out / "PROVENANCE.json").read_text(encoding="utf-8"))
+        self.assertEqual(provenance["package"], "retrobridge-fw-menu-sio-fujinet-atari-v1x")
+        self.assertEqual(provenance["variant"], "menu-sio")
+        self.assertEqual(provenance["features"], ["cassette", "menu_sio"])
+        self.assertEqual(provenance["gates"], closed_record())
+        self.assertIn("GPIO/UART del SIO solo en rb_esp_cassette y menu-sio (código)", [c["name"] for c in provenance["checks"]])
+        self.assertIn("menu-sio", (self.f.out / "LEEME.md").read_text(encoding="utf-8"))
+        log = fp.verify_package(self.f.out)
+        self.assertTrue(log.ok, self.failed(log))
+
+    # gates, option and code
+
+    def test_menu_sio_package_refuses_signed_gates(self):
+        self.profile(True, True)
+        self.gates(gate_record())
+        self.assert_refused(CLOSED_PROFILE)
+
+    def test_menu_sio_package_needs_the_option(self):
+        self.build(menu_option=False, app=MENU_APP_MARKERS, elf=MENU_ELF)
+        self.assert_refused(MENU_SIO_CHECK)
+
+    def test_menu_sio_package_needs_the_code_in_the_application(self):
+        self.build(menu_option=True, app=CASSETTE_APP_MARKERS, elf=MENU_ELF)
+        self.assert_refused(MENU_SIO_CHECK)
+
+    def test_menu_sio_package_needs_the_code_in_the_elf(self):
+        self.build(menu_option=True, app=MENU_APP_MARKERS, elf=CASSETTE_ELF)
+        self.assert_refused(MENU_SIO_CHECK)
+
+    def test_menu_sio_package_refuses_the_bench_option(self):
+        write(self.f.build / "sdkconfig", SDKCONFIG + "CONFIG_RB_MENU_SIO=y\nCONFIG_RB_BENCH_C8=y\n")
+        self.assert_refused(fp.BENCH_CHECK)
+
+    # every other variant refuses menu-sio, but its sources alone do not fail them
+
+    def test_other_variants_accept_the_menu_sources_when_not_built_in(self):
+        self.build(menu_option=False, app=CASSETTE_APP_MARKERS, elf=CASSETTE_ELF)
+        log = CassettePackageTest.package(self, "cassette-lectura")
+        self.assertTrue(log.ok, self.failed(log))
+
+    def test_read_only_package_refuses_the_menu_sio_build(self):
+        self.assert_refused(MENU_SIO_CHECK, variant="cassette-lectura")
+
+    def test_read_only_package_refuses_menu_symbols_without_the_option(self):
+        self.build(menu_option=False, app=CASSETTE_APP_MARKERS, elf=MENU_ELF)
+        self.assert_refused(MENU_SIO_CHECK, variant="cassette-lectura")
+
+    def test_read_only_package_refuses_menu_literals_without_the_option(self):
+        self.build(menu_option=False, app=MENU_APP_MARKERS, elf=CASSETTE_ELF)
+        self.assert_refused(MENU_SIO_CHECK, variant="cassette-lectura")
+
+    def test_bench_package_refuses_the_menu_option(self):
+        write(self.f.src / "main" / "bench_c8.cpp", BENCH_SOURCE)
+        write(self.f.build / "sdkconfig", SDKCONFIG + "CONFIG_RB_MENU_SIO=y\nCONFIG_RB_BENCH_C8=y\n")
+        write(self.f.build / "retrobridge.elf", BENCH_ELF)
+        write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=BENCH_ELF, extra=BENCH_APP_MARKERS))
+        self.assert_refused(MENU_SIO_CHECK, variant="bench-c8")
+
+    def test_menu_calls_outside_the_two_sources_fail_every_variant(self):
+        write(self.f.src / "main" / "app_main.cpp", "void f() { (void)uart_write_bytes(kUart, b, 1); }\n")
+        self.assert_refused(fp.MENU_CODE_CHECK)
+        self.build(menu_option=False, app=CASSETTE_APP_MARKERS, elf=CASSETTE_ELF)
+        self.assert_refused(fp.CASSETTE_CODE_CHECK, variant="cassette-lectura")
+
+    # the menu-sio calls: exact, and only on the board's SIO pins and button A
+
+    def test_uart_pins_other_than_data_in_and_data_out_are_refused(self):
+        self.edit("components/rb_esp_sio/src/esp_sio_uart.cpp", "UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK",
+                  "pins_.command, UART_PIN_NO_CHANGE) != ESP_OK")
+        self.assert_refused(fp.MENU_CODE_CHECK)
+
+    def test_uart_port_other_than_uart2_is_refused(self):
+        self.edit("components/rb_esp_sio/src/esp_sio_uart.cpp", "UART_NUM_2", "UART_NUM_1")
+        self.assert_refused(fp.MENU_CODE_CHECK)
+
+    def test_gpio_on_data_in_is_refused(self):
+        self.edit("components/rb_esp_sio/src/esp_sio_uart.cpp", "gpio_pullup_en(static_cast<gpio_num_t>(pins_.dataOut))",
+                  "gpio_pullup_en(static_cast<gpio_num_t>(pins_.dataIn))")
+        self.assert_refused(fp.MENU_CODE_CHECK)
+
+    def test_command_must_be_an_input(self):
+        self.edit("components/rb_esp_sio/src/esp_sio_uart.cpp", "(pins_.command), GPIO_MODE_INPUT",
+                  "(pins_.command), GPIO_MODE_OUTPUT")
+        self.assert_refused(fp.MENU_CODE_CHECK)
+
+    def test_an_extra_uart_call_is_refused(self):
+        self.edit("components/rb_esp_sio/src/esp_sio_uart.cpp", "void end() {",
+                  "void end() { (void)uart_set_baudrate(kUart, 57600);")
+        self.assert_refused(fp.MENU_CODE_CHECK)
+
+    def test_button_on_another_pin_is_refused(self):
+        self.edit("main/menu_sio.cpp", "GPIO_NUM_0;", "GPIO_NUM_2;")
+        self.assert_refused(fp.MENU_CODE_CHECK)
+
+    def test_button_must_be_an_input(self):
+        self.edit("main/menu_sio.cpp", "gpio_set_direction(kButtonA, GPIO_MODE_INPUT)",
+                  "gpio_set_direction(kButtonA, GPIO_MODE_INPUT_OUTPUT)")
+        self.assert_refused(fp.MENU_CODE_CHECK)
+
+    def test_gpio_in_menu_main_on_another_pin_is_refused(self):
+        self.edit("main/menu_sio.cpp", "(void)gpio_pullup_en(kButtonA);", "(void)gpio_pullup_en(GPIO_NUM_21);")
+        self.assert_refused(fp.MENU_CODE_CHECK)
+
+    # the real tree
+
+    def test_real_tree_has_exactly_the_cassette_and_menu_sio_calls(self):
+        repo = Path(__file__).resolve().parents[2]
+        ok, detail = fp.check_sio_calls(repo, fp.VARIANTS["menu-sio"].sio_calls)
         self.assertTrue(ok, detail)
 
 if __name__ == "__main__":

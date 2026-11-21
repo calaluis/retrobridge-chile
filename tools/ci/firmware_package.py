@@ -81,7 +81,7 @@ SECRET_VALUE = re.compile(r'^CONFIG_\w*(PASSWORD|PASSWD|PSK|SSID|SECRET|TOKEN)\w
 PRIVATE_KEY = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 TEXT_SUFFIXES = {".txt", ".json", ".csv", ".md", ""}
 IDENTITY_PATHS = ("main", "components", "partitions", "sdkconfig.defaults",
-                  "sdkconfig.board.fujinet-atari-v1x", "CMakeLists.txt", "sdkconfig.bench-c8")
+                  "sdkconfig.board.fujinet-atari-v1x", "CMakeLists.txt", "sdkconfig.bench-c8", "sdkconfig.menu-sio")
 
 # Bytes that exist only when a feature is linked in: string literals in the
 # application image (flash .rodata) and C++ symbols in the ELF symbol table.
@@ -98,9 +98,13 @@ FEATURE_MARKERS = {
         "app": (b"C8 BENCH BEGIN: board '%s', H4 %s, M3a %s", b"C8 RESULT PASS"),
         "elf": (b"_ZN2rb5bench6run_c8",),
     },
+    "menu_sio": {  # main/menu_sio.cpp + rb_esp_sio: the menu served as D1 on the physical SIO (menu-sio-fisico)
+        "app": (b"menu-sio TEST PACKAGE: transmits on SIO DATA IN", b"D1: menu. Switch the 65XE on."),
+        "elf": (b"_ZN2rb3esp10EspSioUart5begin", b"_ZN2rb7menusio5start"),
+    },
 }
 FEATURE_LABELS = {"hw_diag": "diagnóstico incorporado", "cassette": "casetera incorporada",
-                  "bench_c8": "prueba de banco C8 incorporada"}
+                  "bench_c8": "prueba de banco C8 incorporada", "menu_sio": "menú por SIO físico incorporado"}
 BENCH_KCONFIG = "CONFIG_RB_BENCH_C8"
 BENCH_CHECK = "prueba de banco C8 (sdkconfig y aplicación)"
 BENCH_GRANT_CHECK = "concesión de banco solo en main/bench_c8.cpp (código)"
@@ -141,6 +145,35 @@ CASSETTE_UART_SET_PIN = re.compile(r"uart_set_pin\s*\(\s*kUart\s*,\s*(?:pins\.da
 # The one gpio_reset_pin() of the cassette resets the granted DATA IN pin and nothing else.
 CASSETTE_GPIO_RESET = re.compile(r"gpio_reset_pin\s*\(\s*static_cast\s*<\s*gpio_num_t\s*>\s*\(\s*pin_\s*\)\s*\)")
 CASSETTE_UART_PORT = "constexpr uart_port_t kUart = UART_NUM_2;"
+
+# menu-sio test package (menu-sio-fisico): the menu served as D1 on the physical SIO. Its two sources are the only
+# other place with watched calls: UART2 on the board's SIO pins (rb_esp_sio) and button A (GPIO0, input). Every
+# other variant leaves these two files out of the call scan, but must prove they are not built in: no
+# CONFIG_RB_MENU_SIO, and none of the menu-sio literals or symbols in the application or the ELF.
+_SIO_UART = "components/rb_esp_sio/src/esp_sio_uart.cpp"
+_MENU_MAIN = "main/menu_sio.cpp"
+MENU_SIO_SOURCES = (_SIO_UART, _MENU_MAIN)
+MENU_SIO_CALLS = (
+    (_SIO_UART, "gpio_set_direction", 1), (_SIO_UART, "gpio_pullup_en", 1), (_SIO_UART, "gpio_get_level", 2),
+    (_SIO_UART, "uart_driver_install", 1), (_SIO_UART, "uart_param_config", 1), (_SIO_UART, "uart_set_pin", 1),
+    (_SIO_UART, "uart_driver_delete", 2), (_SIO_UART, "uart_read_bytes", 1), (_SIO_UART, "uart_write_bytes", 1),
+    (_SIO_UART, "uart_wait_tx_done", 2), (_SIO_UART, "uart_flush_input", 1),
+    (_MENU_MAIN, "gpio_set_direction", 1), (_MENU_MAIN, "gpio_pullup_en", 1), (_MENU_MAIN, "gpio_get_level", 1),
+)
+# TX on DATA IN and RX on DATA OUT of the board profile, UART2, no RTS/CTS; GPIO only on COMMAND (input) and
+# DATA OUT (pull-up, read); button A only on GPIO0, as an input.
+MENU_UART_SET_PIN = re.compile(r"uart_set_pin\s*\(\s*kUart\s*,\s*pins_\.dataIn\s*,\s*pins_\.dataOut\s*,"
+                               r"\s*UART_PIN_NO_CHANGE\s*,\s*UART_PIN_NO_CHANGE\s*\)")
+MENU_UART_GPIO = re.compile(r"\bgpio_(?:set_direction|pullup_en|get_level)\s*\(\s*static_cast\s*<\s*gpio_num_t\s*>"
+                            r"\s*\(\s*pins_\.(?:command|dataOut)\s*\)")
+MENU_UART_COMMAND_INPUT = re.compile(r"gpio_set_direction\s*\(\s*static_cast\s*<\s*gpio_num_t\s*>\s*\(\s*"
+                                     r"pins_\.command\s*\)\s*,\s*GPIO_MODE_INPUT\s*\)")
+MENU_BUTTON_GPIO = re.compile(r"\bgpio_\w+\s*\(\s*kButtonA\b")
+MENU_BUTTON_PIN = "constexpr gpio_num_t kButtonA = GPIO_NUM_0;"
+MENU_BUTTON_INPUT = "gpio_set_direction(kButtonA, GPIO_MODE_INPUT)"
+MENU_SIO_KCONFIG = "CONFIG_RB_MENU_SIO"
+MENU_SIO_CHECK = "paquete de prueba menu-sio (sdkconfig, aplicación y ELF)"
+MENU_CODE_CHECK = "GPIO/UART del SIO solo en rb_esp_cassette y menu-sio (código)"
 BOARD_PROFILE_HEADER = "components/rb_board/include/rb/board/board_profile.hpp"
 CODE_CHECK = "sin GPIO/UART del SIO (código)"
 CASSETTE_CODE_CHECK = "GPIO/UART del SIO solo en rb_esp_cassette (código)"
@@ -168,11 +201,12 @@ class Variant:
     gates: bool = False                   # H4 and M3a must be approved (profile and record)
     closed_gates: bool = False            # H4 and M3a must NOT be approved (profile and record)
     bench: bool = False                   # the bench test C8 build (CONFIG_RB_BENCH_C8); every other variant refuses it
+    menu_sio: bool = False                # the menu-sio test package (CONFIG_RB_MENU_SIO); every other variant refuses it
     profile_text: str = "microSD por SPI3 en GPIO 18/23/19/5; sin pines SIO"
 
     @property
     def code_check(self) -> str:
-        return CASSETTE_CODE_CHECK if self.sio_calls else CODE_CHECK
+        return MENU_CODE_CHECK if self.menu_sio else CASSETTE_CODE_CHECK if self.sio_calls else CODE_CHECK
 
 
 VARIANTS = {
@@ -208,6 +242,17 @@ VARIANTS = {
                         closed_gates=True, bench=True,
                         profile_text="microSD por SPI3 en GPIO 18/23/19/5; H4 y M3a sin aprobar; prueba de banco C8: "
                                      "GPIO21 por UART2 y RMT al arrancar, solo con el Atari desconectado, y luego liberado"),
+    # menu-sio test package (menu-sio-fisico E1): the menu served as D1 on the physical SIO (UART2: TX DATA IN
+    # GPIO21, RX DATA OUT GPIO33; COMMAND GPIO39 input), with H4 and M3a unsigned, under the owner's written risk
+    # acceptance and the SIO adapter without pin 8. The read-only cassette code stays linked but is not started.
+    "menu-sio": Variant("retrobridge-fw-menu-sio-fujinet-atari-v1x",
+                        "firmware de prueba menu-sio (menú como D1 por el SIO físico, H4 y M3a sin aprobar) para "
+                        "FujiNet Atari FN32ROV-1.3/1.5",
+                        features=("cassette", "menu_sio"), version_matches_commit=True,
+                        sio_calls=CASSETTE_SIO_CALLS + MENU_SIO_CALLS, closed_gates=True, menu_sio=True,
+                        profile_text="microSD por SPI3 en GPIO 18/23/19/5; H4 y M3a sin aprobar; paquete de prueba "
+                                     "menu-sio: UART2 TX en DATA IN (GPIO21), RX en DATA OUT (GPIO33), COMMAND en GPIO39; "
+                                     "solo con aceptación de riesgo escrita y el adaptador sin pin 8"),
 }
 
 
@@ -352,14 +397,15 @@ def scan_sources(src: Path):
     return [f"{path}:{number}" for path, number, _call in scan_calls(src)]
 
 
-def scan_calls(src: Path):
+def scan_calls(src: Path, skip: tuple = ()):
     hits = []
     for base in ("main", "components"):
         root = src / base
         if not root.is_dir():
             continue
         for path in sorted(root.rglob("*")):
-            if path.suffix not in SOURCE_SUFFIXES or "test" in path.relative_to(src).parts:
+            if (path.suffix not in SOURCE_SUFFIXES or "test" in path.relative_to(src).parts
+                    or path.relative_to(src).as_posix() in skip):
                 continue
             for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
                 for match in FORBIDDEN_CALLS.finditer(line):
@@ -374,12 +420,13 @@ def strip_code(text: str) -> str:
     return token.sub(lambda m: " " if m.group(0).startswith("/") else '""', text)
 
 
-def check_sio_calls(src: Path, allowed: tuple):
+def check_sio_calls(src: Path, allowed: tuple, skip: tuple = ()):
     """Returns (ok, detail). Without `allowed` (h3c, diag): the original per-line scan, no SIO call at all.
     With it (cassette): every watched identifier in main/ and components/ must be one of `allowed`, in its
-    exact count, and every uart_set_pin() must target the granted pin on UART2."""
+    exact count, and every uart_set_pin() must target the granted pin on UART2. Files in `skip` (the menu-sio
+    sources, for every other variant) are left out; check_variant then proves they are not built in."""
     if not allowed:
-        hits = scan_calls(src)
+        hits = scan_calls(src, skip)
         return not hits, ", ".join(f"{p}:{n}" for p, n, _c in hits) or "ninguna llamada"
     counts, texts = {}, {}
     for base in ("main", "components"):
@@ -387,9 +434,9 @@ def check_sio_calls(src: Path, allowed: tuple):
         if not root.is_dir():
             continue
         for path in sorted(root.rglob("*")):
-            if path.suffix not in SOURCE_SUFFIXES or "test" in path.relative_to(src).parts:
-                continue
             rel = path.relative_to(src).as_posix()
+            if path.suffix not in SOURCE_SUFFIXES or "test" in path.relative_to(src).parts or rel in skip:
+                continue
             text = strip_code(path.read_text(encoding="utf-8", errors="replace"))
             texts[rel] = text
             for name in WATCHED_IDENTIFIER.findall(text):
@@ -405,7 +452,22 @@ def check_sio_calls(src: Path, allowed: tuple):
         wrong.append(f"{_DATA_IN}: gpio_reset_pin fuera de (pin_)")
     if data_in.count(CASSETTE_UART_PORT) != 1:
         wrong.append(f"{_DATA_IN}: kUart no es UART_NUM_2")
-    return not wrong, ", ".join(wrong) or f"solo las {sum(want.values())} llamadas de C107"
+    label = "de C107"
+    if any(path in MENU_SIO_SOURCES for path, _call, _count in allowed):
+        label = "de C107 y menu-sio"
+        uart, menu = texts.get(_SIO_UART, ""), texts.get(_MENU_MAIN, "")
+        if len(MENU_UART_SET_PIN.findall(uart)) != want.get((_SIO_UART, "uart_set_pin"), 0):
+            wrong.append(f"{_SIO_UART}: uart_set_pin fuera de (kUart, pins_.dataIn, pins_.dataOut, sin RTS/CTS)")
+        uart_gpio = sum(n for (path, call), n in want.items() if path == _SIO_UART and call.startswith("gpio_"))
+        if len(MENU_UART_GPIO.findall(uart)) != uart_gpio or len(MENU_UART_COMMAND_INPUT.findall(uart)) != 1:
+            wrong.append(f"{_SIO_UART}: GPIO fuera de COMMAND (entrada) y DATA OUT")
+        if uart.count(CASSETTE_UART_PORT) != 1:
+            wrong.append(f"{_SIO_UART}: kUart no es UART_NUM_2")
+        menu_gpio = sum(n for (path, call), n in want.items() if path == _MENU_MAIN and call.startswith("gpio_"))
+        if (len(MENU_BUTTON_GPIO.findall(menu)) != menu_gpio or menu.count(MENU_BUTTON_PIN) != 1
+                or menu.count(MENU_BUTTON_INPUT) != 1):
+            wrong.append(f"{_MENU_MAIN}: GPIO fuera del botón A (GPIO0, entrada)")
+    return not wrong, ", ".join(wrong) or f"solo las {sum(want.values())} llamadas {label}"
 
 
 def board_profile_fields(src: Path):
@@ -581,7 +643,9 @@ def check_files(files: Files, log: CheckLog, build_relative=None) -> None:
                 and sdk.get("CONFIG_ESPTOOLPY_FLASHSIZE") == FLASH_SIZE,
                 f"{sdk.get('CONFIG_ESPTOOLPY_FLASHMODE')}/{sdk.get('CONFIG_ESPTOOLPY_FLASHFREQ')}/"
                 f"{sdk.get('CONFIG_ESPTOOLPY_FLASHSIZE')}")
-    sio_options = [k for k, v in sdk.items() if k.startswith("CONFIG_RB_") and "SIO" in k and v not in ("", "n")]
+    # CONFIG_RB_MENU_SIO has its own check, per variant (check_variant: on only in menu-sio, off everywhere else).
+    sio_options = [k for k, v in sdk.items()
+                   if k.startswith("CONFIG_RB_") and "SIO" in k and k != MENU_SIO_KCONFIG and v not in ("", "n")]
     console = sdk.get("CONFIG_ESP_CONSOLE_UART_NUM")
     console_ok = console == "0" if console is not None else sdk.get("CONFIG_ESP_CONSOLE_UART_DEFAULT") == "y"
     log.require("sin GPIO/UART del SIO (configuración)", not sio_options and console_ok,
@@ -678,6 +742,13 @@ def check_variant(files: Files, variant: Variant, commit: str, log: CheckLog) ->
     log.require(BENCH_CHECK, bench_on == variant.bench and bench_in_app == variant.bench,
                 f"{BENCH_KCONFIG}={'y' if bench_on else 'no'}, prueba en la aplicación: {'sí' if bench_in_app else 'no'}"
                 f" (esperado: {'sí' if variant.bench else 'no'})")
+    app, elf = files.app.read_bytes(), files.elf.read_bytes()
+    menu_on = sdk.get(MENU_SIO_KCONFIG) == "y"
+    menu_in_app = any(m in app for m in FEATURE_MARKERS["menu_sio"]["app"])
+    menu_in_elf = any(m in elf for m in FEATURE_MARKERS["menu_sio"]["elf"])
+    log.require(MENU_SIO_CHECK, menu_on == menu_in_app == menu_in_elf == variant.menu_sio,
+                f"{MENU_SIO_KCONFIG}={'y' if menu_on else 'no'}, en la aplicación: {'sí' if menu_in_app else 'no'}, "
+                f"en el ELF: {'sí' if menu_in_elf else 'no'} (esperado: {'sí' if variant.menu_sio else 'no'})")
     if variant.version_matches_commit:
         version = str(log.facts["app_desc"].get("version", ""))
         ok = len(version) >= 7 and all(c in "0123456789abcdef" for c in version) and commit.startswith(version)
@@ -708,9 +779,10 @@ def check_build(src: Path, build: Path, source: SourceState, baseline: str, vari
     log = CheckLog()
     log.require("commit del firmware", source.head == baseline, f"checkout={source.head}, fijado={baseline}")
     log.require("checkout limpio", not source.dirty, "sin cambios locales" if not source.dirty else "hay cambios")
-    calls_ok, calls_detail = check_sio_calls(src, variant.sio_calls)
+    skip = () if variant.menu_sio else MENU_SIO_SOURCES
+    calls_ok, calls_detail = check_sio_calls(src, variant.sio_calls, skip)
     if not calls_ok and variant.earlier_sio_calls:
-        earlier_ok, earlier_detail = check_sio_calls(src, variant.earlier_sio_calls)
+        earlier_ok, earlier_detail = check_sio_calls(src, variant.earlier_sio_calls, skip)
         if earlier_ok:
             calls_ok, calls_detail = True, earlier_detail + " (anterior a H4-C C8)"
     log.require(variant.code_check, calls_ok, calls_detail)
@@ -955,7 +1027,8 @@ def main(argv=None) -> int:
     p.add_argument("--baseline", required=True)
     p.add_argument("--variant", choices=sorted(VARIANTS), default="h3c",
                    help="package identity: h3c (default, unchanged), diag (H4, requires rb_hw_diag) or "
-                        "cassette (C107, requires H4 and M3a approved) or cassette-lectura (requires both unsigned)")
+                        "cassette (C107, requires H4 and M3a approved), cassette-lectura, bench-c8 or menu-sio "
+                        "(require both unsigned)")
     v = sub.add_parser("verify")
     v.add_argument("package_dir", type=Path)
     args = parser.parse_args(argv)

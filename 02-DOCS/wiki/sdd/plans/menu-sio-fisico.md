@@ -159,7 +159,9 @@ MenuStation (rb_menu)
 | T2 | hecho | `test_menu_station` 5/5 (menú en D1 tras `start()`, A arranca la ATR, reencendido repite la ATR, `returnToMenu()` devuelve el menú y descarta tramas intermedias, escrituras rechazadas por defecto); host arranca y cierra limpio sin hub |
 | T3 | hecho | `test_sio_line_transport` 12/12; dos mutantes (sin `idleLine` en la recuperación, sin vaciado de entrada) fallan |
 | T4 | hecho | `test_esp_sio_uart` 9/9 sobre `fake_idf`; mutante «vaciar tras la caída» falla en `test_a_late_fall_still_keeps_the_first_bytes`; `test_esp_data_in` sigue pasando |
-| T5–T7 | pendiente | — |
+| T5 | hecho (compila en CI) | `a42ec84`; regresión en Altirra con el `retrobridge_host` de la rama: menú → 1, A, 1, A → «DEMO DOS OK» → Shift+F5 → menú (`D:b-e0\m50-sio-fisico`, host.jsonl sin reintentos ni NAK). Primera compilación en IDF v6.1 falló: `REQUIRES` no puede depender de `CONFIG_*` (ESP-IDF expande requisitos antes de leer sdkconfig); corregido dejando los componentes siempre requeridos y solo `menu_sio.cpp` condicional |
+| T6 | hecho (local) | variante `menu-sio` del empaquetador: llamadas exactas de `esp_sio_uart.cpp` y `menu_sio.cpp`, UART2 solo en DATA IN/DATA OUT, COMMAND solo entrada, botón A solo GPIO0 entrada; las demás variantes excluyen esas dos fuentes pero rechazan `CONFIG_RB_MENU_SIO` y sus literales/símbolos. 264 pruebas Python OK; 4 mutantes muertos. Job de CI `firmware-package-menu-sio` (PR o manual) |
+| T7 | pendiente | — |
 
 Decisión tomada en T4: COMMAND se sondea cada tick (1 ms) y la entrada se vacía **antes** de esperar la caída,
 no después; así una caída vista tarde no pierde bytes de la trama (el UART los guarda). Si la latencia

@@ -1066,7 +1066,7 @@ class MenuSioPackageTest(unittest.TestCase):
         provenance = json.loads((self.f.out / "PROVENANCE.json").read_text(encoding="utf-8"))
         self.assertEqual(provenance["package"], "retrobridge-fw-menu-sio-fujinet-atari-v1x")
         self.assertEqual(provenance["variant"], "menu-sio")
-        self.assertEqual(provenance["features"], ["cassette", "menu_sio"])
+        self.assertEqual(provenance["features"], ["menu_sio"])
         self.assertEqual(provenance["gates"], closed_record())
         self.assertIn("GPIO/UART del SIO solo en rb_esp_cassette y menu-sio (código)", [c["name"] for c in provenance["checks"]])
         self.assertIn("menu-sio", (self.f.out / "LEEME.md").read_text(encoding="utf-8"))
@@ -1091,6 +1091,12 @@ class MenuSioPackageTest(unittest.TestCase):
     def test_menu_sio_package_needs_the_code_in_the_elf(self):
         self.build(menu_option=True, app=MENU_APP_MARKERS, elf=CASSETTE_ELF)
         self.assert_refused(MENU_SIO_CHECK)
+
+    def test_menu_sio_package_does_not_need_the_cassette_started(self):
+        app = MENU_APP_MARKERS.replace(b"cassette ready: MOTOR %s, DATA IN %s", b"")
+        self.build(menu_option=True, app=app, elf=MENU_ELF)
+        log = self.package()
+        self.assertTrue(log.ok, self.failed(log))
 
     def test_menu_sio_package_refuses_the_bench_option(self):
         write(self.f.build / "sdkconfig", SDKCONFIG + "CONFIG_RB_MENU_SIO=y\nCONFIG_RB_BENCH_C8=y\n")

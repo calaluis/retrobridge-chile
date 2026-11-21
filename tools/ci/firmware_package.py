@@ -244,11 +244,12 @@ VARIANTS = {
                                      "GPIO21 por UART2 y RMT al arrancar, solo con el Atari desconectado, y luego liberado"),
     # menu-sio test package (menu-sio-fisico E1): the menu served as D1 on the physical SIO (UART2: TX DATA IN
     # GPIO21, RX DATA OUT GPIO33; COMMAND GPIO39 input), with H4 and M3a unsigned, under the owner's written risk
-    # acceptance and the SIO adapter without pin 8. The read-only cassette code stays linked but is not started.
+    # acceptance and the SIO adapter without pin 8. The cassette is not started (its source calls are still counted,
+    # exactly as in cassette-lectura), so the cassette feature is not required in the application.
     "menu-sio": Variant("retrobridge-fw-menu-sio-fujinet-atari-v1x",
                         "firmware de prueba menu-sio (menú como D1 por el SIO físico, H4 y M3a sin aprobar) para "
                         "FujiNet Atari FN32ROV-1.3/1.5",
-                        features=("cassette", "menu_sio"), version_matches_commit=True,
+                        features=("menu_sio",), version_matches_commit=True,
                         sio_calls=CASSETTE_SIO_CALLS + MENU_SIO_CALLS, closed_gates=True, menu_sio=True,
                         profile_text="microSD por SPI3 en GPIO 18/23/19/5; H4 y M3a sin aprobar; paquete de prueba "
                                      "menu-sio: UART2 TX en DATA IN (GPIO21), RX en DATA OUT (GPIO33), COMMAND en GPIO39; "

@@ -1,7 +1,10 @@
 #include "rb/menu/menu_catalog.hpp"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <memory>
+#include <new>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -143,15 +146,22 @@ bool forEachRegularFile(const char* directory, void (*visit)(const char* fileNam
     FindClose(find);
     return true;
 #else
+    // The path buffer lives on the heap: on the ESP32 this runs on app_main, whose stack (3584 B by
+    // default) is smaller than the buffer (menu-sio bench, 2026-11-21: Double exception in vfs_fat_stat).
+    constexpr std::size_t kPathCapacity = 4096;  // longer paths are skipped, as before
+    const std::unique_ptr<char[]> path{new (std::nothrow) char[kPathCapacity]};
+    if (path == nullptr) {
+        errno = ENOMEM;
+        return false;
+    }
     DIR* dir = opendir(directory);
     if (dir == nullptr) {
         return false;
     }
-    char path[4096];
     while (const dirent* entry = readdir(dir)) {
-        const int written = std::snprintf(path, sizeof path, "%s/%s", directory, entry->d_name);
+        const int written = std::snprintf(path.get(), kPathCapacity, "%s/%s", directory, entry->d_name);
         struct stat info {};
-        if (written > 0 && static_cast<std::size_t>(written) < sizeof path && stat(path, &info) == 0 &&
+        if (written > 0 && static_cast<std::size_t>(written) < kPathCapacity && stat(path.get(), &info) == 0 &&
             S_ISREG(info.st_mode)) {
             visit(entry->d_name, context);
         }

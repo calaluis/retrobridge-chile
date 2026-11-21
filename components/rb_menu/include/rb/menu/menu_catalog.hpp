@@ -55,14 +55,15 @@ bool hasImageExtension(const char* fileName) noexcept;
 bool isCatalogName(const char* fileName) noexcept;
 
 // Calls visit for every regular file of the directory (any name, no limit).
-// false if the directory cannot be read.
+// false if the directory cannot be read, or with errno = ENOMEM if the path
+// buffer (4 KB, on the heap, not the caller's stack) cannot be reserved.
 bool forEachRegularFile(const char* directory, void (*visit)(const char* fileName, void* context), void* context);
 
 // Case-insensitive ASCII comparison; ties broken byte by byte, so the order is total.
 int compareNames(const char* a, const char* b) noexcept;
 
 // Lists the regular files of a directory into the catalog. false if the
-// directory cannot be read.
+// directory cannot be read (errno = ENOMEM: no memory for the path buffer).
 bool readCatalog(const char* directory, MenuCatalog& catalog);
 
 }  // namespace rb::host

@@ -208,8 +208,9 @@ int sioCommand(int argc, char** argv)
                 static_cast<unsigned long>(s.sendErrors), static_cast<unsigned long>(s.releases));
     std::printf("latencia COMMAND->respuesta: ultima %lu us, maxima %lu us\n",
                 static_cast<unsigned long>(s.lastAckLatencyUs), static_cast<unsigned long>(s.maxAckLatencyUs));
-    std::printf("menu: ordenes %u reintentos %u nak %u descartadas_tras_vuelta %u\n", m.menuCommands, m.menuRetries,
-                m.menuNaks, m.droppedAfterReset);
+    std::printf("menu: ordenes %lu reintentos %lu nak %lu descartadas_tras_vuelta %lu\n",
+                static_cast<unsigned long>(m.menuCommands), static_cast<unsigned long>(m.menuRetries),
+                static_cast<unsigned long>(m.menuNaks), static_cast<unsigned long>(m.droppedAfterReset));
     int pinMv = 0;
     int sioMv = 0;
     if (readSio5v(pinMv, sioMv)) {

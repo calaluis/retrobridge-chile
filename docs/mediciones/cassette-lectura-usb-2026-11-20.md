@@ -69,8 +69,8 @@ Comprobar en hardware real que el firmware de `main` (`f405106`), empaquetado po
 
 - **O1 (repetida):** tras el reinicio por RTS aparece `rst:0x10 (RTCWDT_RTC_RESET)` después de `POWERON_RESET`, como
   en H4. Sigue pendiente su causa [P].
-- **O2:** `international_karate.cas` tiene 107 bloques `fsk ` además de los 106 `data`, aunque la spec la trata como
-  cinta estándar (AC10). Se revisará cuando se cargue en el Atari [P].
+- **O2:** `international_karate.cas` dio 106 bloques `data` y 107 `fsk `. Es el **resultado esperado**: la spec
+  `cassette-cas` ya indica que esta cinta estándar tiene 107 `fsk ` y 106 `data` [V].
 - **O3:** el mensaje de arranque todavía dice «diagnostic firmware (H3b)». Es texto antiguo y no afecta al
   funcionamiento.
 
@@ -80,4 +80,6 @@ Comprobar en hardware real que el firmware de `main` (`f405106`), empaquetado po
    exige su variante.
 2. `cas mount`, `cas status`, `cas rewind` y `cas eject` funcionan por USB con una cinta estándar y una turbo FSK
    reales (criterio AC8 de `cassette-cas`, en la consola).
-3. **No demuestra** ninguna carga en el Atari: AC10–AC12 siguen pendientes de H4, M3a y la adaptación de MOTOR [P].
+3. **AC9 sigue pendiente** [P]: pide que `cas status` muestre MOTOR con el Atari encendido, y en esta prueba la
+   lectura de MOTOR estaba deshabilitada (M3a sin aprobar) y el Atari desconectado.
+4. **No demuestra** ninguna carga en el Atari: AC10–AC12 siguen pendientes de H4, M3a y la adaptación de MOTOR [P].

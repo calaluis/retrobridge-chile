@@ -322,7 +322,7 @@ fijó el responsable: la excepción solo para las llamadas de C107, con H4 y M3a
   doble con el mismo SHA-256, paquete `f405106` escrito y verificado, y `cas mount`/`status`/`rewind`/`eject`
   correctos con `international_karate.cas` (106 data, 107 fsk) y `NTSC_ALIEN_AMBUSH_TURBO_SOFTWARE.cas`
   (51 data, 51 fsk). AC8 comprobado en la consola real. Registro:
-  `docs/mediciones/cassette-lectura-usb-2026-11-20.md`. AC10–AC12 siguen pendientes de H4, M3a y del adaptador
+  `docs/mediciones/cassette-lectura-usb-2026-11-20.md`. AC9 (MOTOR con el Atari encendido) y AC10–AC12 siguen pendientes de H4, M3a y del adaptador
   de MOTOR.
 
 ## Decision queue

@@ -185,3 +185,54 @@ SIO, porque H4 eléctrico sigue EN PREPARACIÓN.
 6. **Registro:** resultados en `docs/mediciones/`, sin MAC ni datos privados.
 
 **Volver atrás:** reinstalar el paquete H3c verificado, o R1 con D5 para volver a WSS (§4).
+
+## 7. Casetera en solo lectura (`cassette-lectura`): `cas mount` y `cas status` por USB
+
+> **Preparado el 2026-11-21, sin ejecutar.** Cada paso que use COM3 requiere una autorización explícita.
+
+Paquete `retrobridge-fw-cassette-lectura-fujinet-atari-v1x-f405106` (job `firmware-package-cassette-lectura`,
+commit `f405106`). Solo se genera con **H4 y M3a sin aprobar**, en el perfil compilado y en
+`docs/mediciones/puertas.json`. Con eso el firmware no configura DATA IN (GPIO21) ni MOTOR (GPIO36): la casetera
+indexa las cintas de la microSD y descarta la salida. La FujiNet se conecta **solo por USB**, **sin el Atari** y sin
+nada en el SIO.
+
+**Estado de partida (leído el 2026-11-21, solo lectura):** ESP32-D0WD v1.0, flash `c8`/`4018` de 16 MB, tabla de
+RetroBridge (nvs 0x9000, phy_init 0xF000, factory 0x10000 de 4 MiB) y aplicación `retrobridge` versión `15b153f`
+(H4 `diag`, compilada el 2026-10-24). No hay copia local de ese paquete: D5/D6 son anteriores a RetroBridge.
+
+**Precondiciones:**
+1. **Respaldo D7 del estado actual (lectura, obligatorio):** dos volcados completos y su manifiesto, en una carpeta
+   nueva de `D:\GitHub\Respaldos\` (por ejemplo `FujiNet-RB-15b153f-D7\`):
+   ```bash
+   esptool.py --chip esp32 -p COM3 -b 460800 read_flash 0x0 0x1000000 D7.bin
+   esptool.py --chip esp32 -p COM3 -b 460800 read_flash 0x0 0x1000000 D7b.bin
+   sha256sum D7.bin D7b.bin > MANIFEST.sha256
+   ```
+   Los dos SHA-256 deben ser iguales; si no, se repite y no se sigue.
+2. Paquete descargado y verificado: SHA-256 del zip igual al `artifact-digest`; `sha256sum -c SHA256SUMS` OK;
+   `python -I tools/ci/firmware_package.py verify <paquete>` OK, con «puertas H4 y M3a sin aprobar (perfil)» y
+   «(registro)»; `PROVENANCE.json` con `variant: cassette-lectura` y el commit
+   `f40510642090843de6b7f83a1bb07c5521df278a`.
+3. microSD con `international_karate.cas` y `NTSC_ALIEN_AMBUSH_TURBO_SOFTWARE.cas` (copias de
+   `D:\GitHub\Respaldos\MicroSD`, sin modificar).
+
+**Pasos:**
+1. **Identificación (lectura):** `flash_id` debe dar ESP32-D0WD v1.0, `c8`/`4018` y 16 MB.
+2. **Escritura:** las tres imágenes de `flash/flash_args.paquete` (0x1000, 0x8000 y 0x10000) con esptool.py
+   v4.5.1, y después `verify_flash` de cada una. No se usa `erase_flash` y no se escribe NVS.
+3. **Consola** (UART0, 115 200 baudios):
+
+   | Comando | Esperado |
+   |---|---|
+   | arranque | `cassette ready: MOTOR not read (M3a not signed), DATA IN not driven (H4 or M3a not signed)` |
+   | `cas mount international_karate.cas` | Nombre de la cinta y sus bloques `data` |
+   | `cas status` | Cinta montada, posición y MOTOR sin leer |
+   | `cas mount NTSC_ALIEN_AMBUSH_TURBO_SOFTWARE.cas` | Bloques `data` y `fsk` |
+   | `cas status`, `cas rewind`, `cas eject` | Coherentes con la cinta montada |
+
+4. **Registro:** resultados en `docs/mediciones/`, sin MAC ni datos privados.
+
+**Volver atrás:**
+- **R0 (estado anterior, H4 `diag` `15b153f`):** `write_flash --flash_mode keep --flash_freq keep --flash_size keep
+  0x0 D7.bin` y `verify_flash 0x0 D7.bin`.
+- **R1 (FujiNet WSS):** lo mismo con `D5.bin` (§4).

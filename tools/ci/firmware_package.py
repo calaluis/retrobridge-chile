@@ -21,7 +21,8 @@ Re-check a downloaded package (no hardware, no build tree needed):
 Variants (closed set): h3c and diag (diagnostic, no SIO pin call at all) and cassette (C107: the
 UART and GPIO calls of rb_esp_cassette, listed one by one, and only with H4 and M3a approved both in
 the board profile compiled in and in docs/mediciones/puertas.json; checked when packaging and again
-when verifying).
+when verifying); cassette-lectura (the same calls, packaged only while H4 and M3a are both unsigned in
+the profile and in the record, so the firmware never configures DATA IN or MOTOR; checked the same way).
 """
 
 import argparse
@@ -121,6 +122,8 @@ CODE_CHECK = "sin GPIO/UART del SIO (código)"
 CASSETTE_CODE_CHECK = "GPIO/UART del SIO solo en rb_esp_cassette (código)"
 PROFILE_CHECK = "puertas H4 y M3a (perfil)"
 RECORD_CHECK = "puertas H4 y M3a (registro)"
+CLOSED_PROFILE_CHECK = "puertas H4 y M3a sin aprobar (perfil)"
+CLOSED_RECORD_CHECK = "puertas H4 y M3a sin aprobar (registro)"
 PROFILE_HEADER = "components/rb_board/include/rb/board/fujinet_atari_v1x.hpp"
 GATE_RECORD = "docs/mediciones/puertas.json"
 GATE_RECORD_IN_PACKAGE = "config/puertas.json"
@@ -138,6 +141,7 @@ class Variant:
     version_matches_commit: bool = False  # esp_app_desc version must be a prefix of the pinned commit
     sio_calls: tuple = ()                 # (file, call, count) allowed; empty: no SIO call at all
     gates: bool = False                   # H4 and M3a must be approved (profile and record)
+    closed_gates: bool = False            # H4 and M3a must NOT be approved (profile and record)
     profile_text: str = "microSD por SPI3 en GPIO 18/23/19/5; sin pines SIO"
 
     @property
@@ -159,6 +163,16 @@ VARIANTS = {
                         gates=True,
                         profile_text="microSD por SPI3 en GPIO 18/23/19/5; DATA IN en GPIO21 y MOTOR en GPIO36, "
                                      "con H4 y M3a aprobadas"),
+    # The same cassette code, read-only on the board: with H4 and M3a unsigned in the compiled profile,
+    # validate_for_cassette_output() and validate_for_motor() fail, so DATA IN and MOTOR are never
+    # configured; `cas mount` and `cas status` still read the tapes on the microSD. Only with both unsigned.
+    "cassette-lectura": Variant("retrobridge-fw-cassette-lectura-fujinet-atari-v1x",
+                                "firmware con casetera .cas en solo lectura (sin DATA IN ni MOTOR) para FujiNet "
+                                "Atari FN32ROV-1.3/1.5",
+                                features=("cassette",), version_matches_commit=True, sio_calls=CASSETTE_SIO_CALLS,
+                                closed_gates=True,
+                                profile_text="microSD por SPI3 en GPIO 18/23/19/5; H4 y M3a sin aprobar: la casetera "
+                                             "no configura DATA IN (GPIO21) ni MOTOR (GPIO36)"),
 }
 
 
@@ -426,6 +440,33 @@ def check_gate_record(record, src=None):
     return not problems, ", ".join(problems) or "H4 y M3a aprobadas, con registro"
 
 
+def check_gate_closed(record):
+    """Returns (ok, detail). Both gates present and not approved (JSON false, nothing else)."""
+    if not isinstance(record, dict):
+        return False, "no es un objeto JSON"
+    problems = []
+    for gate in GATES:
+        entry = record.get(gate)
+        if not isinstance(entry, dict):
+            problems.append(f"{gate}: ausente")
+        elif entry.get("aprobada") is not False:
+            problems.append(f"{gate}: no figura como no aprobada")
+    return not problems, ", ".join(problems) or "H4 y M3a sin aprobar"
+
+
+def read_closed_record(src: Path):
+    """Returns (ok, detail, record) for docs/mediciones/puertas.json, both gates unsigned."""
+    path = src / GATE_RECORD
+    if not path.is_file():
+        return False, f"falta {GATE_RECORD}", None
+    try:
+        record = load_record_json(path.read_text(encoding="utf-8"))
+    except ValueError as error:
+        return False, f"{GATE_RECORD}: {error}", None
+    ok, detail = check_gate_closed(record)
+    return ok, detail, record
+
+
 def valid_date(value) -> bool:
     """A real calendar date written YYYY-MM-DD in ASCII digits."""
     if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
@@ -614,6 +655,14 @@ def check_build(src: Path, build: Path, source: SourceState, baseline: str, vari
         record_ok, record_detail, record = read_gate_record(src)
         log.require(RECORD_CHECK, record_ok, f"{GATE_RECORD}: {record_detail}")
         log.facts["gates"] = record
+    if variant.closed_gates:
+        gates = profile_gates(src)
+        log.require(CLOSED_PROFILE_CHECK, gates == (False, False),
+                    f"{PROFILE_HEADER}: " + ("no se pudo leer el perfil" if gates is None
+                                             else f"H4={'sí' if gates[0] else 'no'}, M3a={'sí' if gates[1] else 'no'}"))
+        record_ok, record_detail, record = read_closed_record(src)
+        log.require(CLOSED_RECORD_CHECK, record_ok, f"{GATE_RECORD}: {record_detail}")
+        log.facts["gates"] = record
     sdk = parse_sdkconfig((build / "sdkconfig").read_text(encoding="utf-8")) if (build / "sdkconfig").is_file() else {}
     files = build_files(build, src, sdk)
     check_files(files, log, build_relative=build)
@@ -705,7 +754,7 @@ def package(src: Path, build: Path, reports: Path, out: Path, source: SourceStat
     if variant != "h3c":  # the H3c record keeps exactly its original fields
         provenance["variant"] = variant
         provenance["features"] = list(spec.features)
-    if spec.gates:
+    if spec.gates or spec.closed_gates:
         provenance["gates"] = log.facts["gates"]
         (out / GATE_RECORD_IN_PACKAGE).write_text(json.dumps(log.facts["gates"], indent=2, ensure_ascii=False) + "\n",
                                                   encoding="utf-8")
@@ -757,17 +806,21 @@ def verify_package(root: Path) -> CheckLog:
     required = ["commit del firmware", "checkout limpio", known.code_check if known else CODE_CHECK]
     if known is not None and known.gates:
         required += [PROFILE_CHECK, RECORD_CHECK]
+    if known is not None and known.closed_gates:
+        required += [CLOSED_PROFILE_CHECK, CLOSED_RECORD_CHECK]
     for name in required:
         log.require(f"registrado en CI: {name}", recorded.get(name) is True, "PROVENANCE.json")
-    if known is not None and known.gates:
+    if known is not None and (known.gates or known.closed_gates):
+        check, check_name = ((check_gate_record, RECORD_CHECK) if known.gates
+                             else (check_gate_closed, CLOSED_RECORD_CHECK))
         path = root / GATE_RECORD_IN_PACKAGE
         try:
             record = load_record_json(path.read_text(encoding="utf-8")) if path.is_file() else None
         except ValueError:
             record = None
-        ok, detail = check_gate_record(record) if record is not None else (False, f"falta {GATE_RECORD_IN_PACKAGE}")
+        ok, detail = check(record) if record is not None else (False, f"falta {GATE_RECORD_IN_PACKAGE}")
         same = record is not None and record == provenance.get("gates")
-        log.require(RECORD_CHECK, ok and same,
+        log.require(check_name, ok and same,
                     f"{GATE_RECORD_IN_PACKAGE}: {detail}" + ("" if same else "; distinto de PROVENANCE.json"))
     log.require("procedencia", provenance.get("firmware_source_commit") == provenance.get("baseline_commit")
                 and provenance.get("elf_sha256") == log.facts.get("elf_sha256"),
@@ -833,7 +886,7 @@ def main(argv=None) -> int:
     p.add_argument("--baseline", required=True)
     p.add_argument("--variant", choices=sorted(VARIANTS), default="h3c",
                    help="package identity: h3c (default, unchanged), diag (H4, requires rb_hw_diag) or "
-                        "cassette (C107, requires H4 and M3a approved)")
+                        "cassette (C107, requires H4 and M3a approved) or cassette-lectura (requires both unsigned)")
     v = sub.add_parser("verify")
     v.add_argument("package_dir", type=Path)
     args = parser.parse_args(argv)

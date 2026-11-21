@@ -305,6 +305,21 @@ fijó el responsable: la excepción solo para las llamadas de C107, con H4 y M3a
   interna (quien edite el paquete y el manifiesto a la vez no se detecta).
 - Flasheo por COM3: espera la aprobación del responsable.
 
+### Empaquetado en solo lectura (`cassette-lectura`, rama `feat/cassette-lectura-pkg`, 2026-11-21)
+
+- Motivo: con H4 y M3a sin firmar, ningún paquete aceptaba `main` (`h3c`/`diag` rechazan las llamadas de C107 y
+  `cassette` exige las puertas). Se quería validar `cas mount` y `cas status` por USB antes de tocar el hardware.
+- Variante nueva `cassette-lectura`: las mismas 26 llamadas exactas, y **exige** H4 y M3a en falso en el perfil y
+  en `puertas.json`, al generar y al verificar (`closed_gates`). En ejecución, el perfil sin firmar hace fallar
+  `validate_for_cassette_output` y `validate_for_motor`: DATA IN y MOTOR no se configuran.
+- CI: job `firmware-package-cassette-lectura` (PR y ejecución manual), firmware fijado en `f405106`, con `verify`
+  del paquete. Los jobs de paquetes se habían quitado en `c2698d9`; este sigue su mismo patrón.
+- Evidencia local: `python -m unittest discover -s tools/tests` → 230 OK (20 nuevas). Mutantes: aceptar cualquier
+  registro, aceptar cualquier perfil y no exigir las comprobaciones en `verify` → todos fallan (3, 4 y 2 pruebas).
+  **No ejecutado aquí:** el build real (sin ESP-IDF local); lo cubre el job de CI.
+- Procedimiento: `docs/hardware/procedimiento-instalacion-recuperacion.md` §7 (respaldo D7, instalación y R0/R1).
+  Flasheo por COM3: espera la aprobación del responsable.
+
 ## Decision queue
 
 - **resuelta en `feat/cassette-package` (2026-11-21)** — `tools/ci/firmware_package.py` rechaza las llamadas a UART y GPIO de los pines del SIO

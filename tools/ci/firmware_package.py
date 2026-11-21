@@ -17,10 +17,16 @@ Usage (CI, after `. $IDF_PATH/export.sh` and the build):
          --reports DIR --out OUT --baseline <full commit>
 Re-check a downloaded package (no hardware, no build tree needed):
   python tools/ci/firmware_package.py verify <package dir>
+
+Variants (closed set): h3c and diag (diagnostic, no SIO pin call at all) and cassette (C107: the
+UART and GPIO calls of rb_esp_cassette, listed one by one, and only with H4 and M3a approved both in
+the board profile compiled in and in docs/mediciones/puertas.json; checked when packaging and again
+when verifying).
 """
 
 import argparse
 import csv
+import datetime as dt
 import hashlib
 import io
 import json
@@ -83,7 +89,44 @@ FEATURE_MARKERS = {
         "app": (b"DIAG BEGIN format=%d source=retrobridge-hw-diag", b"diag status|memory|storage|events|report"),
         "elf": (b"_ZN2rb6hwdiag12ReportWriter", b"_ZN2rb3esp14EspSystemProbe"),
     },
+    "cassette": {  # rb_esp_cassette: EspDataIn (UART2 + RMT on DATA IN) and CassetteService (C107)
+        "app": (b"DATA IN on GPIO%d: records by UART2, FSK by RMT", b"cassette ready: MOTOR %s, DATA IN %s"),
+        "elf": (b"_ZN2rb3esp9EspDataIn9configure", b"_ZN2rb3esp15CassetteService5start"),
+    },
 }
+FEATURE_LABELS = {"hw_diag": "diagnóstico incorporado", "cassette": "casetera incorporada"}
+
+# The cassette package (C107) watches every GPIO, UART and RMT function by name, not only the calls of
+# FORBIDDEN_CALLS: any use of the identifier counts (a call, a call split over lines, a pointer), with
+# comments, strings and member names (".gpio_num") left out. The list is exact: file, name, how many
+# times. Anything else, anywhere in main/ or components/, fails the cassette package.
+WATCHED_IDENTIFIER = re.compile(r"(?<![.>\w])((?:gpio|uart|rmt|esp_rom_gpio|ledc|sigmadelta|dedic_gpio)_\w+)\b")
+_DATA_IN = "components/rb_esp_cassette/src/esp_data_in.cpp"
+_SERVICE = "components/rb_esp_cassette/src/cassette_service.cpp"
+CASSETTE_SIO_CALLS = (
+    (_DATA_IN, "uart_driver_install", 1), (_DATA_IN, "uart_param_config", 1), (_DATA_IN, "uart_set_pin", 5),
+    (_DATA_IN, "uart_driver_delete", 1), (_DATA_IN, "uart_wait_tx_done", 2), (_DATA_IN, "uart_set_baudrate", 1),
+    (_DATA_IN, "uart_write_bytes", 1),
+    (_DATA_IN, "rmt_new_tx_channel", 1), (_DATA_IN, "rmt_new_simple_encoder", 1), (_DATA_IN, "rmt_enable", 1),
+    (_DATA_IN, "rmt_transmit", 1), (_DATA_IN, "rmt_tx_wait_all_done", 1), (_DATA_IN, "rmt_disable", 2),
+    (_DATA_IN, "rmt_del_channel", 3), (_DATA_IN, "rmt_del_encoder", 2),
+    (_SERVICE, "gpio_config", 1), (_SERVICE, "gpio_get_level", 1),  # MOTOR, input only
+)
+# Every uart_set_pin() of the cassette puts TX on the granted DATA IN pin and nothing else.
+CASSETTE_UART_SET_PIN = re.compile(r"uart_set_pin\s*\(\s*kUart\s*,\s*(?:pins\.dataIn\(\)|pin_)\s*,"
+                                   r"\s*UART_PIN_NO_CHANGE\s*,\s*UART_PIN_NO_CHANGE\s*,\s*UART_PIN_NO_CHANGE\s*\)")
+CASSETTE_UART_PORT = "constexpr uart_port_t kUart = UART_NUM_2;"
+BOARD_PROFILE_HEADER = "components/rb_board/include/rb/board/board_profile.hpp"
+CODE_CHECK = "sin GPIO/UART del SIO (código)"
+CASSETTE_CODE_CHECK = "GPIO/UART del SIO solo en rb_esp_cassette (código)"
+PROFILE_CHECK = "puertas H4 y M3a (perfil)"
+RECORD_CHECK = "puertas H4 y M3a (registro)"
+PROFILE_HEADER = "components/rb_board/include/rb/board/fujinet_atari_v1x.hpp"
+GATE_RECORD = "docs/mediciones/puertas.json"
+GATE_RECORD_IN_PACKAGE = "config/puertas.json"
+GATES = ("H4", "M3a")
+PROFILE_FIELDS = 11            # BoardProfile initializer, in declaration order
+PROFILE_H4, PROFILE_M3A = 7, 10  # sioGateApproved, motorGateApproved
 
 
 @dataclass(frozen=True)
@@ -93,6 +136,13 @@ class Variant:
     title: str
     features: tuple = ()
     version_matches_commit: bool = False  # esp_app_desc version must be a prefix of the pinned commit
+    sio_calls: tuple = ()                 # (file, call, count) allowed; empty: no SIO call at all
+    gates: bool = False                   # H4 and M3a must be approved (profile and record)
+    profile_text: str = "microSD por SPI3 en GPIO 18/23/19/5; sin pines SIO"
+
+    @property
+    def code_check(self) -> str:
+        return CASSETTE_CODE_CHECK if self.sio_calls else CODE_CHECK
 
 
 VARIANTS = {
@@ -102,6 +152,13 @@ VARIANTS = {
     "diag": Variant("retrobridge-fw-diag-fujinet-atari-v1x",
                     "firmware de diagnóstico con diagnóstico autónomo (rb_hw_diag) para FujiNet Atari FN32ROV-1.3/1.5",
                     features=("hw_diag",), version_matches_commit=True),
+    # C107: the cassette drives DATA IN (UART2 + RMT on GPIO21) and reads MOTOR (GPIO36). Only with H4 and M3a.
+    "cassette": Variant("retrobridge-fw-cassette-fujinet-atari-v1x",
+                        "firmware con casetera .cas (DATA IN por UART2 y RMT) para FujiNet Atari FN32ROV-1.3/1.5",
+                        features=("cassette",), version_matches_commit=True, sio_calls=CASSETTE_SIO_CALLS,
+                        gates=True,
+                        profile_text="microSD por SPI3 en GPIO 18/23/19/5; DATA IN en GPIO21 y MOTOR en GPIO36, "
+                                     "con H4 y M3a aprobadas"),
 }
 
 
@@ -242,6 +299,11 @@ def parse_flash_args(text: str):
 
 
 def scan_sources(src: Path):
+    """Every forbidden call outside tests, as "path:line" (the diagnostic packages allow none)."""
+    return [f"{path}:{number}" for path, number, _call in scan_calls(src)]
+
+
+def scan_calls(src: Path):
     hits = []
     for base in ("main", "components"):
         root = src / base
@@ -251,9 +313,151 @@ def scan_sources(src: Path):
             if path.suffix not in SOURCE_SUFFIXES or "test" in path.relative_to(src).parts:
                 continue
             for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-                if FORBIDDEN_CALLS.search(line):
-                    hits.append(f"{path.relative_to(src).as_posix()}:{number}")
+                for match in FORBIDDEN_CALLS.finditer(line):
+                    hits.append((path.relative_to(src).as_posix(), number, match.group(1)))
     return hits
+
+
+def strip_code(text: str) -> str:
+    """C/C++ text without comments, string literals and character literals (in one pass, so a "//" inside a
+    string does not start a comment)."""
+    token = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'', re.DOTALL)
+    return token.sub(lambda m: " " if m.group(0).startswith("/") else '""', text)
+
+
+def check_sio_calls(src: Path, allowed: tuple):
+    """Returns (ok, detail). Without `allowed` (h3c, diag): the original per-line scan, no SIO call at all.
+    With it (cassette): every watched identifier in main/ and components/ must be one of `allowed`, in its
+    exact count, and every uart_set_pin() must target the granted pin on UART2."""
+    if not allowed:
+        hits = scan_calls(src)
+        return not hits, ", ".join(f"{p}:{n}" for p, n, _c in hits) or "ninguna llamada"
+    counts, texts = {}, {}
+    for base in ("main", "components"):
+        root = src / base
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if path.suffix not in SOURCE_SUFFIXES or "test" in path.relative_to(src).parts:
+                continue
+            rel = path.relative_to(src).as_posix()
+            text = strip_code(path.read_text(encoding="utf-8", errors="replace"))
+            texts[rel] = text
+            for name in WATCHED_IDENTIFIER.findall(text):
+                if not name.endswith("_t"):  # types such as uart_config_t
+                    counts[(rel, name)] = counts.get((rel, name), 0) + 1
+    want = {(path, call): count for path, call, count in allowed}
+    wrong = [f"{p} {c} x{counts.get((p, c), 0)} (permitidas {want.get((p, c), 0)})"
+             for p, c in sorted(set(counts) | set(want)) if counts.get((p, c), 0) != want.get((p, c), 0)]
+    data_in = texts.get(_DATA_IN, "")
+    if len(CASSETTE_UART_SET_PIN.findall(data_in)) != want.get((_DATA_IN, "uart_set_pin"), 0):
+        wrong.append(f"{_DATA_IN}: uart_set_pin fuera de (kUart, pins.dataIn()/pin_, sin RX/RTS/CTS)")
+    if data_in.count(CASSETTE_UART_PORT) != 1:
+        wrong.append(f"{_DATA_IN}: kUart no es UART_NUM_2")
+    return not wrong, ", ".join(wrong) or f"solo las {sum(want.values())} llamadas de C107"
+
+
+def board_profile_fields(src: Path):
+    """The BoardProfile field names in declaration order, or None."""
+    path = src / BOARD_PROFILE_HEADER
+    if not path.is_file():
+        return None
+    body = re.findall(r"struct\s+BoardProfile\s*\{(.*?)\};", strip_code(path.read_text(encoding="utf-8")), re.DOTALL)
+    if len(body) != 1:
+        return None
+    return re.findall(r"(\w+)\s*;", body[0])
+
+
+def profile_gates(src: Path):
+    """(H4, M3a) as compiled into fujinet_atari_v1x_profile(), or None if it cannot be read exactly."""
+    path = src / PROFILE_HEADER
+    order = board_profile_fields(src)
+    if (not path.is_file() or order is None or len(order) != PROFILE_FIELDS
+            or order[PROFILE_H4] != "sioGateApproved" or order[PROFILE_M3A] != "motorGateApproved"):
+        return None
+    text = path.read_text(encoding="utf-8")
+    # Only #pragma once and #include: no #if, #ifdef or #define can hide which body is compiled.
+    directives = re.findall(r"^\s*#\s*(\w+)", strip_code(text), re.MULTILINE)
+    if any(d not in ("pragma", "include") for d in directives):
+        return None
+    bodies = re.findall(r"fujinet_atari_v1x_profile\(\)\s*noexcept\s*\{\s*return\s+BoardProfile\{(.*?)\};\s*\}",
+                        strip_code(text), re.DOTALL)
+    if len(bodies) != 1 or len(re.findall(r"\bfujinet_atari_v1x_profile\b", strip_code(text))) != 1:
+        return None
+    fields, depth, current = [], 0, ""
+    for ch in bodies[0]:
+        if ch == "," and depth == 0:
+            fields.append(current.strip())
+            current = ""
+            continue
+        depth += {"{": 1, "}": -1}.get(ch, 0)
+        current += ch
+    fields.append(current.strip())
+    if len(fields) != PROFILE_FIELDS or any(fields[i] not in ("true", "false") for i in (PROFILE_H4, PROFILE_M3A)):
+        return None
+    return fields[PROFILE_H4] == "true", fields[PROFILE_M3A] == "true"
+
+
+def check_gate_record(record, src=None):
+    """Returns (ok, detail). Both gates approved (JSON true), with a date and a record in docs/mediciones/;
+    with `src`, the record must also exist there."""
+    if not isinstance(record, dict):
+        return False, "no es un objeto JSON"
+    problems = []
+    for gate in GATES:
+        entry = record.get(gate)
+        if not isinstance(entry, dict):
+            problems.append(f"{gate}: ausente")
+            continue
+        if entry.get("aprobada") is not True:
+            problems.append(f"{gate}: no aprobada")
+        if not valid_date(entry.get("fecha")):
+            problems.append(f"{gate}: sin fecha válida")
+        registro = entry.get("registro")
+        if (not isinstance(registro, str) or not registro.startswith("docs/mediciones/") or ".." in registro
+                or not registro.endswith(".md")):
+            problems.append(f"{gate}: registro fuera de docs/mediciones/")
+        elif src is not None:
+            target = src / registro
+            if target.is_symlink() or not target.is_file():
+                problems.append(f"{gate}: falta {registro}")
+            elif gate not in target.read_text(encoding="utf-8", errors="replace"):
+                problems.append(f"{gate}: {registro} no menciona {gate}")
+    return not problems, ", ".join(problems) or "H4 y M3a aprobadas, con registro"
+
+
+def valid_date(value) -> bool:
+    """A real calendar date written YYYY-MM-DD in ASCII digits."""
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+        return False
+    try:
+        dt.date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def load_record_json(text: str):
+    """json.loads that refuses a repeated key (with it, the last "aprobada" would win silently)."""
+    def no_duplicates(pairs):
+        keys = [k for k, _v in pairs]
+        if len(keys) != len(set(keys)):
+            raise ValueError("clave repetida")
+        return dict(pairs)
+    return json.loads(text, object_pairs_hook=no_duplicates)
+
+
+def read_gate_record(src: Path):
+    """Returns (ok, detail, record) for docs/mediciones/puertas.json in a checkout."""
+    path = src / GATE_RECORD
+    if not path.is_file():
+        return False, f"falta {GATE_RECORD}", None
+    try:
+        record = load_record_json(path.read_text(encoding="utf-8"))
+    except ValueError as error:
+        return False, f"{GATE_RECORD}: {error}", None
+    ok, detail = check_gate_record(record, src)
+    return ok, detail, record
 
 
 def find_secrets(name: str, text: str):
@@ -383,11 +587,12 @@ def check_variant(files: Files, variant: Variant, commit: str, log: CheckLog) ->
         app, elf = files.app.read_bytes(), files.elf.read_bytes()
         for feature in variant.features:
             markers = FEATURE_MARKERS[feature]
+            label = FEATURE_LABELS[feature]
             missing_app = [m.decode() for m in markers["app"] if m not in app]
             missing_elf = [m.decode() for m in markers["elf"] if m not in elf]
-            log.require("diagnóstico incorporado (aplicación)", not missing_app,
+            log.require(f"{label} (aplicación)", not missing_app,
                         f"{feature}: " + (", ".join(missing_app) or "literales presentes en retrobridge.bin"))
-            log.require("diagnóstico incorporado (ELF)", not missing_elf,
+            log.require(f"{label} (ELF)", not missing_elf,
                         f"{feature}: " + (", ".join(missing_elf) or "símbolos presentes en retrobridge.elf"))
     if variant.version_matches_commit:
         version = str(log.facts["app_desc"].get("version", ""))
@@ -399,8 +604,16 @@ def check_build(src: Path, build: Path, source: SourceState, baseline: str, vari
     log = CheckLog()
     log.require("commit del firmware", source.head == baseline, f"checkout={source.head}, fijado={baseline}")
     log.require("checkout limpio", not source.dirty, "sin cambios locales" if not source.dirty else "hay cambios")
-    hits = scan_sources(src)
-    log.require("sin GPIO/UART del SIO (código)", not hits, ", ".join(hits) or "ninguna llamada")
+    calls_ok, calls_detail = check_sio_calls(src, variant.sio_calls)
+    log.require(variant.code_check, calls_ok, calls_detail)
+    if variant.gates:
+        gates = profile_gates(src)
+        log.require(PROFILE_CHECK, gates == (True, True),
+                    f"{PROFILE_HEADER}: " + ("no se pudo leer el perfil" if gates is None
+                                             else f"H4={'sí' if gates[0] else 'no'}, M3a={'sí' if gates[1] else 'no'}"))
+        record_ok, record_detail, record = read_gate_record(src)
+        log.require(RECORD_CHECK, record_ok, f"{GATE_RECORD}: {record_detail}")
+        log.facts["gates"] = record
     sdk = parse_sdkconfig((build / "sdkconfig").read_text(encoding="utf-8")) if (build / "sdkconfig").is_file() else {}
     files = build_files(build, src, sdk)
     check_files(files, log, build_relative=build)
@@ -492,9 +705,13 @@ def package(src: Path, build: Path, reports: Path, out: Path, source: SourceStat
     if variant != "h3c":  # the H3c record keeps exactly its original fields
         provenance["variant"] = variant
         provenance["features"] = list(spec.features)
+    if spec.gates:
+        provenance["gates"] = log.facts["gates"]
+        (out / GATE_RECORD_IN_PACKAGE).write_text(json.dumps(log.facts["gates"], indent=2, ensure_ascii=False) + "\n",
+                                                  encoding="utf-8")
     (out / "PROVENANCE.json").write_text(json.dumps(provenance, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (out / "reports" / "checks.txt").write_text(log.text(), encoding="utf-8")
-    (out / "LEEME.md").write_text(readme(provenance, spec.title), encoding="utf-8")
+    (out / "LEEME.md").write_text(readme(provenance, spec.title, spec.profile_text), encoding="utf-8")
 
     published_secrets = []
     for path in out.rglob("*"):
@@ -536,8 +753,22 @@ def verify_package(root: Path) -> CheckLog:
     check_files(package_files(root), log)
     provenance = json.loads((root / "PROVENANCE.json").read_text(encoding="utf-8")) if (root / "PROVENANCE.json").is_file() else {}
     recorded = {c["name"]: c["ok"] for c in provenance.get("checks", [])}
-    for name in ("commit del firmware", "checkout limpio", "sin GPIO/UART del SIO (código)"):
+    known = VARIANTS.get(provenance.get("variant", "h3c"))
+    required = ["commit del firmware", "checkout limpio", known.code_check if known else CODE_CHECK]
+    if known is not None and known.gates:
+        required += [PROFILE_CHECK, RECORD_CHECK]
+    for name in required:
         log.require(f"registrado en CI: {name}", recorded.get(name) is True, "PROVENANCE.json")
+    if known is not None and known.gates:
+        path = root / GATE_RECORD_IN_PACKAGE
+        try:
+            record = load_record_json(path.read_text(encoding="utf-8")) if path.is_file() else None
+        except ValueError:
+            record = None
+        ok, detail = check_gate_record(record) if record is not None else (False, f"falta {GATE_RECORD_IN_PACKAGE}")
+        same = record is not None and record == provenance.get("gates")
+        log.require(RECORD_CHECK, ok and same,
+                    f"{GATE_RECORD_IN_PACKAGE}: {detail}" + ("" if same else "; distinto de PROVENANCE.json"))
     log.require("procedencia", provenance.get("firmware_source_commit") == provenance.get("baseline_commit")
                 and provenance.get("elf_sha256") == log.facts.get("elf_sha256"),
                 f"firmware={provenance.get('firmware_source_commit')}")
@@ -550,7 +781,7 @@ def verify_package(root: Path) -> CheckLog:
     return log
 
 
-def readme(p: dict, title: str = VARIANTS["h3c"].title) -> str:
+def readme(p: dict, title: str = VARIANTS["h3c"].title, profile_text: str = VARIANTS["h3c"].profile_text) -> str:
     d = p["app_desc"]
     return f"""# RetroBridge Chile: {title}
 
@@ -559,7 +790,7 @@ flash (docs/hardware/procedimiento-instalacion-recuperacion.md).
 
 | Dato | Valor |
 |---|---|
-| Perfil | `{p['board_profile']}` (microSD por SPI3 en GPIO 18/23/19/5; sin pines SIO) |
+| Perfil | `{p['board_profile']}` ({profile_text}) |
 | Commit del firmware | `{p['firmware_source_commit']}` |
 | Commit del workflow | `{p['workflow_commit']}` |
 | Ejecución | {p['run_url']} (intento {p['run_attempt']}) |
@@ -601,7 +832,8 @@ def main(argv=None) -> int:
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--baseline", required=True)
     p.add_argument("--variant", choices=sorted(VARIANTS), default="h3c",
-                   help="package identity: h3c (default, unchanged) or diag (H4, requires rb_hw_diag)")
+                   help="package identity: h3c (default, unchanged), diag (H4, requires rb_hw_diag) or "
+                        "cassette (C107, requires H4 and M3a approved)")
     v = sub.add_parser("verify")
     v.add_argument("package_dir", type=Path)
     args = parser.parse_args(argv)

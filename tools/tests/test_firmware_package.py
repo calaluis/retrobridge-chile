@@ -375,5 +375,363 @@ class PackageVariantTest(unittest.TestCase):
             self.package("cualquiera")
 
 
+# C107 cassette firmware (variant "cassette"): drives DATA IN by UART2 and RMT, reads MOTOR. Its package needs H4
+# and M3a approved twice: in the board profile compiled in, and in the signed gate record.
+CASSETTE_COMMIT = "7621040c0ffee0000000000000000000000000ab"
+CASSETTE_APP_MARKERS = (b"\0\x1b[0;32mI (%lu) %s: DATA IN on GPIO%d: records by UART2, FSK by RMT\x1b[0m\n\0"
+                        b"\x1b[0;32mI (%lu) %s: cassette ready: MOTOR %s, DATA IN %s\x1b[0m\n\0")
+CASSETTE_ELF = (ELF_BYTES + b"\0_ZN2rb3esp9EspDataIn9configureERKNS_5board24CassetteOutputAssignmentE\0"
+                b"_ZN2rb3esp15CassetteService5startEv\0")
+SET_PIN = "(void)uart_set_pin(kUart, pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);\n"
+
+
+def cassette_source(path):
+    """Synthetic C107 source using each allowed name exactly as often as the list says."""
+    lines = ['#include "driver/uart.h"  // gpio_set_level( in a comment and "uart_set_pin(" in a string are ignored\n']
+    if path.endswith("esp_data_in.cpp"):
+        lines.append("constexpr uart_port_t kUart = UART_NUM_2;\nconst char* kTag = \"uart_write_bytes(\";\n")
+        lines.append("void f(rmt_tx_channel_config_t config) { config.gpio_num = pin_; }\n")
+    for file, name, count in fp.CASSETTE_SIO_CALLS:
+        if file == path:
+            lines += [SET_PIN if name == "uart_set_pin" else f"(void){name}(kUart, pin_);\n"] * count
+    return "".join(lines)
+
+
+ESP_DATA_IN = cassette_source("components/rb_esp_cassette/src/esp_data_in.cpp")
+CASSETTE_SERVICE = cassette_source("components/rb_esp_cassette/src/cassette_service.cpp")
+BOARD_PROFILE = """struct BoardProfile {
+    const char* name;
+    bool hardwareConfirmed;  // a comment; with a semicolon
+    bool hasPsram;
+    SdInterface sdInterface;
+    SdSpiPins spi;
+    SpiHost spiHost;
+    int8_t cardDetect;
+    bool sioGateApproved;
+    SioPins sio;
+    int8_t motor;
+    bool motorGateApproved;
+};
+"""
+PROFILE_HEADER = """constexpr BoardProfile fujinet_atari_v1x_profile() noexcept
+{
+    return BoardProfile{"fujinet-atari-v1.3/1.5",
+                        true,  // asserted by whoever selects the profile (Kconfig help)
+                        true,  // ESP32-WROVER module: PSRAM on GPIO16/17
+                        SdInterface::Spi,
+                        SdSpiPins{18, 23, 19, 5},
+                        SpiHost::Spi3,  // VSPI: the native controller for these pins
+                        kNoPin,
+                        %s,  // H4
+                        SioPins{39, 33, 21},
+                        36,      // MOTOR: GPIO36 (SENSOR_VP), straight from SIO pin 8
+                        %s};  // M3a
+}
+"""
+
+
+def gate_record(h4=True, m3a=True):
+    return {"H4": {"aprobada": h4, "fecha": "2026-11-22", "registro": "docs/mediciones/h4-prueba.md"},
+            "M3a": {"aprobada": m3a, "fecha": "2026-11-22", "registro": "docs/mediciones/m3a-prueba.md"}}
+
+
+class CassettePackageTest(unittest.TestCase):
+    """The cassette package: SIO calls only where C107 needs them, and only with H4 and M3a approved."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.f = Fixture(Path(self._tmp.name))
+        src = self.f.src
+        write(src / "components" / "rb_esp_cassette" / "src" / "esp_data_in.cpp", ESP_DATA_IN)
+        write(src / "components" / "rb_esp_cassette" / "src" / "cassette_service.cpp", CASSETTE_SERVICE)
+        write(src / "components" / "rb_board" / "include" / "rb" / "board" / "board_profile.hpp", BOARD_PROFILE)
+        self.profile(True, True)
+        write(src / "docs" / "mediciones" / "h4-prueba.md", "# H4 (datos de prueba)\n")
+        write(src / "docs" / "mediciones" / "m3a-prueba.md", "# M3a (datos de prueba)\n")
+        self.gates(gate_record())
+        write(self.f.build / "retrobridge.elf", CASSETTE_ELF)
+        write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=CASSETTE_ELF, extra=CASSETTE_APP_MARKERS))
+        desc = json.loads((self.f.build / "project_description.json").read_text())
+        desc["project_version"] = "7621040"
+        write(self.f.build / "project_description.json", json.dumps(desc))
+        self.f.source = fp.SourceState(head=CASSETTE_COMMIT, dirty=False, trees={"main": "c" * 40})
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def profile(self, h4, m3a):
+        write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp",
+              PROFILE_HEADER % ("true" if h4 else "false", "true" if m3a else "false"))
+
+    def gates(self, record):
+        write(self.f.src / "docs" / "mediciones" / "puertas.json", json.dumps(record))
+
+    def package(self, variant="cassette"):
+        return fp.package(self.f.src, self.f.build, self.f.reports, self.f.out, self.f.source,
+                          self.f.source.head, run={}, variant=variant)
+
+    def failed(self, log):
+        return [c.name for c in log.checks if not c.ok]
+
+    def assert_refused(self, check_name, variant="cassette"):
+        log = self.package(variant)
+        self.assertFalse(log.ok)
+        self.assertIn(check_name, self.failed(log))
+        self.assertFalse(self.f.out.exists())  # nothing written
+
+    # positive case (test data only: the real profile and record stay unsigned)
+
+    def test_cassette_package_with_both_gates_approved(self):
+        log = self.package()
+        self.assertTrue(log.ok, self.failed(log))
+        provenance = json.loads((self.f.out / "PROVENANCE.json").read_text(encoding="utf-8"))
+        self.assertEqual(provenance["package"], "retrobridge-fw-cassette-fujinet-atari-v1x")
+        self.assertEqual(provenance["variant"], "cassette")
+        self.assertEqual(provenance["features"], ["cassette"])
+        self.assertEqual(provenance["gates"], gate_record())
+        self.assertEqual(json.loads((self.f.out / "config" / "puertas.json").read_text(encoding="utf-8")), gate_record())
+        self.assertIn("DATA IN", (self.f.out / "LEEME.md").read_text(encoding="utf-8"))
+        log = fp.verify_package(self.f.out)
+        self.assertTrue(log.ok, self.failed(log))
+
+    # either approval missing, at generation
+
+    def test_h4_not_signed_in_the_profile_is_refused(self):
+        self.profile(False, True)
+        self.assert_refused("puertas H4 y M3a (perfil)")
+
+    def test_m3a_not_signed_in_the_profile_is_refused(self):
+        self.profile(True, False)
+        self.assert_refused("puertas H4 y M3a (perfil)")
+
+    def test_profile_that_cannot_be_read_is_refused(self):
+        write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp",
+              "constexpr BoardProfile fujinet_atari_v1x_profile() noexcept { return kApproved; }\n")
+        self.assert_refused("puertas H4 y M3a (perfil)")
+
+    def test_profile_missing_is_refused(self):
+        (self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp").unlink()
+        self.assert_refused("puertas H4 y M3a (perfil)")
+
+    def test_h4_not_approved_in_the_record_is_refused(self):
+        self.gates(gate_record(h4=False))
+        self.assert_refused("puertas H4 y M3a (registro)")
+
+    def test_m3a_not_approved_in_the_record_is_refused(self):
+        self.gates(gate_record(m3a=False))
+        self.assert_refused("puertas H4 y M3a (registro)")
+
+    def test_approval_must_be_the_json_true(self):
+        record = gate_record()
+        record["M3a"]["aprobada"] = "sí"
+        self.gates(record)
+        self.assert_refused("puertas H4 y M3a (registro)")
+
+    def test_a_gate_missing_from_the_record_is_refused(self):
+        record = gate_record()
+        del record["H4"]
+        self.gates(record)
+        self.assert_refused("puertas H4 y M3a (registro)")
+
+    def test_measurement_record_must_exist(self):
+        (self.f.src / "docs" / "mediciones" / "m3a-prueba.md").unlink()
+        self.assert_refused("puertas H4 y M3a (registro)")
+
+    def test_measurement_record_must_stay_in_docs_mediciones(self):
+        record = gate_record()
+        record["H4"]["registro"] = "main/app_main.cpp"
+        self.gates(record)
+        self.assert_refused("puertas H4 y M3a (registro)")
+
+    def test_gate_record_missing_is_refused(self):
+        (self.f.src / "docs" / "mediciones" / "puertas.json").unlink()
+        self.assert_refused("puertas H4 y M3a (registro)")
+
+    def test_gate_record_not_json_is_refused(self):
+        write(self.f.src / "docs" / "mediciones" / "puertas.json", "{H4: aprobada}")
+        self.assert_refused("puertas H4 y M3a (registro)")
+
+    # the exception is only the calls C107 needs
+
+    def test_sio_call_outside_rb_esp_cassette_is_refused(self):
+        write(self.f.src / "components" / "rb_sio" / "uart.cpp", "void f() { uart_set_pin(UART_NUM_2, 21, -1, -1, -1); }\n")
+        self.assert_refused("GPIO/UART del SIO solo en rb_esp_cassette (código)")
+
+    def test_one_more_call_in_esp_data_in_is_refused(self):
+        write(self.f.src / "components" / "rb_esp_cassette" / "src" / "esp_data_in.cpp",
+              ESP_DATA_IN + "void g() { uart_set_pin(kUart, 22, -1, -1, -1); }\n")
+        self.assert_refused("GPIO/UART del SIO solo en rb_esp_cassette (código)")
+
+    def test_a_call_not_in_the_list_is_refused(self):
+        write(self.f.src / "components" / "rb_esp_cassette" / "src" / "esp_data_in.cpp",
+              ESP_DATA_IN + "void g() { gpio_set_level(21, 0); }\n")
+        self.assert_refused("GPIO/UART del SIO solo en rb_esp_cassette (código)")
+
+    def test_the_allowed_call_in_another_file_of_the_component_is_refused(self):
+        write(self.f.src / "components" / "rb_esp_cassette" / "src" / "other.cpp", "void g() { gpio_config(&c); }\n")
+        self.assert_refused("GPIO/UART del SIO solo en rb_esp_cassette (código)")
+
+    def test_cassette_feature_must_be_linked_in(self):
+        write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=CASSETTE_ELF))
+        self.assert_refused("casetera incorporada (aplicación)")
+
+    def test_cassette_symbols_must_be_in_the_elf(self):
+        write(self.f.build / "retrobridge.elf", ELF_BYTES)
+        write(self.f.build / "retrobridge.bin", app_image(version="7621040", extra=CASSETTE_APP_MARKERS))
+        self.assert_refused("casetera incorporada (ELF)")
+
+    def test_cassette_version_must_be_a_prefix_of_the_pinned_commit(self):
+        self.f.source = fp.SourceState(head=BASELINE, dirty=False, trees={})
+        self.assert_refused("versión = commit fijado")
+
+    # either approval missing, at verification
+
+    def test_verify_refuses_a_record_changed_to_unapproved(self):
+        self.assertTrue(self.package().ok)
+        write(self.f.out / "config" / "puertas.json", json.dumps(gate_record(m3a=False)))
+        fp.write_manifest(self.f.out)  # a consistent manifest does not help
+        log = fp.verify_package(self.f.out)
+        self.assertFalse(log.ok)
+        self.assertIn("puertas H4 y M3a (registro)", self.failed(log))
+
+    def test_verify_refuses_a_record_that_differs_from_provenance(self):
+        self.assertTrue(self.package().ok)
+        record = gate_record()
+        record["H4"]["fecha"] = "2030-01-01"
+        write(self.f.out / "config" / "puertas.json", json.dumps(record))
+        fp.write_manifest(self.f.out)
+        self.assertIn("puertas H4 y M3a (registro)", self.failed(fp.verify_package(self.f.out)))
+
+    def test_verify_refuses_a_missing_record(self):
+        self.assertTrue(self.package().ok)
+        (self.f.out / "config" / "puertas.json").unlink()
+        fp.write_manifest(self.f.out)
+        self.assertIn("puertas H4 y M3a (registro)", self.failed(fp.verify_package(self.f.out)))
+
+    def test_verify_requires_the_profile_check_recorded(self):
+        self.assertTrue(self.package().ok)
+        path = self.f.out / "PROVENANCE.json"
+        provenance = json.loads(path.read_text(encoding="utf-8"))
+        provenance["checks"] = [c for c in provenance["checks"] if c["name"] != "puertas H4 y M3a (perfil)"]
+        path.write_text(json.dumps(provenance), encoding="utf-8")
+        fp.write_manifest(self.f.out)
+        self.assertIn("registrado en CI: puertas H4 y M3a (perfil)", self.failed(fp.verify_package(self.f.out)))
+
+    def test_verify_requires_the_restricted_code_check_recorded(self):
+        self.assertTrue(self.package().ok)
+        path = self.f.out / "PROVENANCE.json"
+        provenance = json.loads(path.read_text(encoding="utf-8"))
+        for c in provenance["checks"]:
+            if c["name"] == "GPIO/UART del SIO solo en rb_esp_cassette (código)":
+                c["ok"] = False
+        path.write_text(json.dumps(provenance), encoding="utf-8")
+        fp.write_manifest(self.f.out)
+        self.assertIn("registrado en CI: GPIO/UART del SIO solo en rb_esp_cassette (código)",
+                      self.failed(fp.verify_package(self.f.out)))
+
+    # holes found in review: hidden profiles, other GPIO/UART/RMT uses, wrong pins, record tricks
+
+    def test_an_approved_profile_hidden_behind_if_0_is_refused(self):
+        hidden = "#if 0\n" + PROFILE_HEADER % ("true", "true") + "#endif\n" + PROFILE_HEADER % ("false", "false")
+        write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp", hidden)
+        self.assert_refused("puertas H4 y M3a (perfil)")
+
+    def test_a_define_in_the_profile_header_is_refused(self):
+        write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp",
+              "#define true false\n" + PROFILE_HEADER % ("true", "true"))  # reads approved, compiles unapproved
+        self.assert_refused("puertas H4 y M3a (perfil)")
+
+    def test_a_second_profile_definition_is_refused(self):
+        write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp",
+              PROFILE_HEADER % ("true", "true") + PROFILE_HEADER % ("false", "false"))
+        self.assert_refused("puertas H4 y M3a (perfil)")
+
+    def test_profile_fields_must_keep_their_order(self):
+        write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "board_profile.hpp",
+              BOARD_PROFILE.replace("    bool sioGateApproved;\n    SioPins sio;\n",
+                                    "    SioPins sio;\n    bool sioGateApproved;\n"))
+        self.assert_refused("puertas H4 y M3a (perfil)")
+
+    def test_an_rmt_use_in_another_component_is_refused(self):
+        write(self.f.src / "components" / "rb_sio" / "tx.cpp", "void f() { rmt_transmit(ch, enc, d, 1, &c); }\n")
+        self.assert_refused("GPIO/UART del SIO solo en rb_esp_cassette (código)")
+
+    def test_a_call_split_over_lines_is_counted(self):
+        write(self.f.src / "components" / "rb_sio" / "tx.cpp", "void f() { gpio_set_level\n(21, 0); }\n")
+        self.assert_refused("GPIO/UART del SIO solo en rb_esp_cassette (código)")
+
+    def test_a_function_pointer_is_counted(self):
+        write(self.f.src / "components" / "rb_sio" / "tx.cpp", "auto p = &gpio_matrix_out;\n")
+        self.assert_refused("GPIO/UART del SIO solo en rb_esp_cassette (código)")
+
+    def test_uart_set_pin_on_another_pin_is_refused(self):
+        write(self.f.src / "components" / "rb_esp_cassette" / "src" / "esp_data_in.cpp",
+              ESP_DATA_IN.replace(SET_PIN, SET_PIN.replace("pin_", "33"), 1))
+        self.assert_refused("GPIO/UART del SIO solo en rb_esp_cassette (código)")
+
+    def test_uart_other_than_uart2_is_refused(self):
+        write(self.f.src / "components" / "rb_esp_cassette" / "src" / "esp_data_in.cpp",
+              ESP_DATA_IN.replace("UART_NUM_2", "UART_NUM_0"))
+        self.assert_refused("GPIO/UART del SIO solo en rb_esp_cassette (código)")
+
+    def test_a_repeated_key_in_the_record_is_refused(self):
+        text = json.dumps(gate_record(m3a=False))[:-1] + ', "M3a": ' + json.dumps(gate_record()["M3a"]) + "}"
+        write(self.f.src / "docs" / "mediciones" / "puertas.json", text)
+        self.assert_refused("puertas H4 y M3a (registro)")
+
+    def test_an_impossible_date_is_refused(self):
+        record = gate_record()
+        record["H4"]["fecha"] = "2026-02-30"
+        self.gates(record)
+        self.assert_refused("puertas H4 y M3a (registro)")
+
+    def test_the_measurement_record_must_name_its_gate(self):
+        record = gate_record()
+        record["M3a"]["registro"] = "docs/mediciones/h4-prueba.md"
+        self.gates(record)
+        self.assert_refused("puertas H4 y M3a (registro)")
+
+    def test_main_code_has_exactly_the_cassette_calls(self):
+        repo = Path(__file__).resolve().parents[2]
+        ok, detail = fp.check_sio_calls(repo, fp.CASSETTE_SIO_CALLS)
+        self.assertTrue(ok, detail)
+
+    # the diagnostic packages keep their controls
+
+    def test_diag_package_still_refuses_the_cassette_calls(self):
+        self.assert_refused("sin GPIO/UART del SIO (código)", variant="diag")
+
+    def test_h3c_package_still_refuses_the_cassette_calls(self):
+        self.assert_refused("sin GPIO/UART del SIO (código)", variant="h3c")
+
+    def test_diag_and_h3c_do_not_read_the_gates(self):
+        for variant in ("diag", "h3c"):
+            names = [c.name for c in self.package(variant).checks]
+            self.assertNotIn("puertas H4 y M3a (perfil)", names)
+            self.assertNotIn("puertas H4 y M3a (registro)", names)
+
+    def test_diag_verify_keeps_its_recorded_checks(self):
+        for name in ("esp_data_in.cpp", "cassette_service.cpp"):
+            (self.f.src / "components" / "rb_esp_cassette" / "src" / name).unlink()
+        write(self.f.build / "retrobridge.elf", DIAG_ELF)
+        write(self.f.build / "retrobridge.bin", app_image(version="15b153f", elf=DIAG_ELF, extra=DIAG_APP_MARKERS))
+        desc = json.loads((self.f.build / "project_description.json").read_text())
+        desc["project_version"] = "15b153f"
+        write(self.f.build / "project_description.json", json.dumps(desc))
+        self.f.source = fp.SourceState(head=H4_COMMIT, dirty=False, trees={})
+        self.assertTrue(self.package("diag").ok)
+        log = fp.verify_package(self.f.out)
+        self.assertTrue(log.ok, self.failed(log))
+        names = [c.name for c in log.checks]
+        self.assertIn("registrado en CI: sin GPIO/UART del SIO (código)", names)
+        self.assertNotIn("puertas H4 y M3a (registro)", names)
+
+    def test_real_profile_and_record_refuse_the_cassette_package(self):
+        repo = Path(__file__).resolve().parents[2]
+        self.assertEqual(fp.profile_gates(repo), (False, False))
+        ok, _detail, _record = fp.read_gate_record(repo)
+        self.assertFalse(ok)
+
+
 if __name__ == "__main__":
     unittest.main()

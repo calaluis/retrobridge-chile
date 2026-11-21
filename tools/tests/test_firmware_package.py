@@ -386,13 +386,13 @@ SET_PIN = "(void)uart_set_pin(kUart, pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANG
 GPIO_RESET = "(void)gpio_reset_pin(static_cast<gpio_num_t>(pin_));\n"
 
 
-def cassette_source(path):
+def cassette_source(path, calls=None):
     """Synthetic C107 source using each allowed name exactly as often as the list says."""
     lines = ['#include "driver/uart.h"  // gpio_set_level( in a comment and "uart_set_pin(" in a string are ignored\n']
     if path.endswith("esp_data_in.cpp"):
         lines.append("constexpr uart_port_t kUart = UART_NUM_2;\nconst char* kTag = \"uart_write_bytes(\";\n")
         lines.append("void f(rmt_tx_channel_config_t config) { config.gpio_num = pin_; }\n")
-    for file, name, count in fp.CASSETTE_SIO_CALLS:
+    for file, name, count in (fp.CASSETTE_SIO_CALLS if calls is None else calls):
         if file == path:
             line = {"uart_set_pin": SET_PIN, "gpio_reset_pin": GPIO_RESET}.get(name, f"(void){name}(kUart, pin_);\n")
             lines += [line] * count
@@ -697,6 +697,21 @@ class CassettePackageTest(unittest.TestCase):
         record["M3a"]["registro"] = "docs/mediciones/h4-prueba.md"
         self.gates(record)
         self.assert_refused("puertas H4 y M3a (registro)")
+
+    def test_the_calls_before_c8_are_accepted_as_a_whole(self):
+        # The cassette-lectura job pins f405106, written before H4-C C8.
+        write(self.f.src / "components" / "rb_esp_cassette" / "src" / "esp_data_in.cpp",
+              cassette_source("components/rb_esp_cassette/src/esp_data_in.cpp", fp.CASSETTE_SIO_CALLS_BEFORE_C8))
+        self.assertTrue(fp.check_sio_calls(self.f.src, fp.CASSETTE_SIO_CALLS_BEFORE_C8)[0])
+        log = self.package()
+        self.assertTrue(log.ok, self.failed(log))
+        detail = [c.detail for c in log.checks if c.name == "GPIO/UART del SIO solo en rb_esp_cassette (código)"]
+        self.assertIn("anterior a H4-C C8", detail[0])
+
+    def test_a_mix_of_both_call_sets_is_refused(self):
+        mixed = cassette_source("components/rb_esp_cassette/src/esp_data_in.cpp", fp.CASSETTE_SIO_CALLS_BEFORE_C8)
+        write(self.f.src / "components" / "rb_esp_cassette" / "src" / "esp_data_in.cpp", mixed + GPIO_RESET)
+        self.assert_refused("GPIO/UART del SIO solo en rb_esp_cassette (código)")
 
     def test_main_code_has_exactly_the_cassette_calls(self):
         repo = Path(__file__).resolve().parents[2]

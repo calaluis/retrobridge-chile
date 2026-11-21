@@ -114,6 +114,11 @@ CASSETTE_SIO_CALLS = (
     (_DATA_IN, "gpio_reset_pin", 1),  # H4-C C8: DATA IN left as an input when the UART refuses it
     (_SERVICE, "gpio_config", 1), (_SERVICE, "gpio_get_level", 1),  # MOTOR, input only
 )
+# The same calls before H4-C C8 (firmware up to f405106, the commit the cassette-lectura job pins):
+# five uart_set_pin() and no gpio_reset_pin(). Accepted as a whole, never mixed with the set above.
+CASSETTE_SIO_CALLS_BEFORE_C8 = tuple(
+    (path, call, 5 if call == "uart_set_pin" else count)
+    for path, call, count in CASSETTE_SIO_CALLS if call != "gpio_reset_pin")
 # Every uart_set_pin() of the cassette puts TX on the granted DATA IN pin and nothing else.
 CASSETTE_UART_SET_PIN = re.compile(r"uart_set_pin\s*\(\s*kUart\s*,\s*(?:pins\.dataIn\(\)|pin_)\s*,"
                                    r"\s*UART_PIN_NO_CHANGE\s*,\s*UART_PIN_NO_CHANGE\s*,\s*UART_PIN_NO_CHANGE\s*\)")
@@ -143,6 +148,7 @@ class Variant:
     features: tuple = ()
     version_matches_commit: bool = False  # esp_app_desc version must be a prefix of the pinned commit
     sio_calls: tuple = ()                 # (file, call, count) allowed; empty: no SIO call at all
+    earlier_sio_calls: tuple = ()         # an older exact set also accepted (a pinned commit), or none
     gates: bool = False                   # H4 and M3a must be approved (profile and record)
     closed_gates: bool = False            # H4 and M3a must NOT be approved (profile and record)
     profile_text: str = "microSD por SPI3 en GPIO 18/23/19/5; sin pines SIO"
@@ -163,7 +169,7 @@ VARIANTS = {
     "cassette": Variant("retrobridge-fw-cassette-fujinet-atari-v1x",
                         "firmware con casetera .cas (DATA IN por UART2 y RMT) para FujiNet Atari FN32ROV-1.3/1.5",
                         features=("cassette",), version_matches_commit=True, sio_calls=CASSETTE_SIO_CALLS,
-                        gates=True,
+                        earlier_sio_calls=CASSETTE_SIO_CALLS_BEFORE_C8, gates=True,
                         profile_text="microSD por SPI3 en GPIO 18/23/19/5; DATA IN en GPIO21 y MOTOR en GPIO36, "
                                      "con H4 y M3a aprobadas"),
     # The same cassette code, read-only on the board: with H4 and M3a unsigned in the compiled profile,
@@ -173,7 +179,7 @@ VARIANTS = {
                                 "firmware con casetera .cas en solo lectura (sin DATA IN ni MOTOR) para FujiNet "
                                 "Atari FN32ROV-1.3/1.5",
                                 features=("cassette",), version_matches_commit=True, sio_calls=CASSETTE_SIO_CALLS,
-                                closed_gates=True,
+                                earlier_sio_calls=CASSETTE_SIO_CALLS_BEFORE_C8, closed_gates=True,
                                 profile_text="microSD por SPI3 en GPIO 18/23/19/5; H4 y M3a sin aprobar: la casetera "
                                              "no configura DATA IN (GPIO21) ni MOTOR (GPIO36)"),
 }
@@ -651,6 +657,10 @@ def check_build(src: Path, build: Path, source: SourceState, baseline: str, vari
     log.require("commit del firmware", source.head == baseline, f"checkout={source.head}, fijado={baseline}")
     log.require("checkout limpio", not source.dirty, "sin cambios locales" if not source.dirty else "hay cambios")
     calls_ok, calls_detail = check_sio_calls(src, variant.sio_calls)
+    if not calls_ok and variant.earlier_sio_calls:
+        earlier_ok, earlier_detail = check_sio_calls(src, variant.earlier_sio_calls)
+        if earlier_ok:
+            calls_ok, calls_detail = True, earlier_detail + " (anterior a H4-C C8)"
     log.require(variant.code_check, calls_ok, calls_detail)
     if variant.gates:
         gates = profile_gates(src)

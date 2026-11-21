@@ -318,7 +318,12 @@ fijó el responsable: la excepción solo para las llamadas de C107, con H4 y M3a
   registro, aceptar cualquier perfil y no exigir las comprobaciones en `verify` → todos fallan (3, 4 y 2 pruebas).
   **No ejecutado aquí:** el build real (sin ESP-IDF local); lo cubre el job de CI.
 - Procedimiento: `docs/hardware/procedimiento-instalacion-recuperacion.md` §7 (respaldo D7, instalación y R0/R1).
-  Flasheo por COM3: espera la aprobación del responsable.
+- Fusionado (PR #69, `3822587`). Ejecutado en la placa el 2026-11-20, con aprobación del responsable: respaldo D7
+  doble con el mismo SHA-256, paquete `f405106` escrito y verificado, y `cas mount`/`status`/`rewind`/`eject`
+  correctos con `international_karate.cas` (106 data, 107 fsk) y `NTSC_ALIEN_AMBUSH_TURBO_SOFTWARE.cas`
+  (51 data, 51 fsk). AC8 comprobado en la consola real. Registro:
+  `docs/mediciones/cassette-lectura-usb-2026-11-20.md`. AC10–AC12 siguen pendientes de H4, M3a y del adaptador
+  de MOTOR.
 
 ## Decision queue
 

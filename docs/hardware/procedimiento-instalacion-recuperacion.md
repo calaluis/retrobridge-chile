@@ -188,7 +188,9 @@ SIO, porque H4 eléctrico sigue EN PREPARACIÓN.
 
 ## 7. Casetera en solo lectura (`cassette-lectura`): `cas mount` y `cas status` por USB
 
-> **Preparado el 2026-11-21, sin ejecutar.** Cada paso que use COM3 requiere una autorización explícita.
+> **Ejecutado el 2026-11-20** (hora local), solo por USB y sin el Atari: respaldo D7, instalación y prueba de
+> `cas mount`/`cas status` con las dos cintas. Resultados: `docs/mediciones/cassette-lectura-usb-2026-11-20.md`.
+> Cada repetición sigue requiriendo una autorización explícita.
 
 Paquete `retrobridge-fw-cassette-lectura-fujinet-atari-v1x-f405106` (job `firmware-package-cassette-lectura`,
 commit `f405106`). Solo se genera con **H4 y M3a sin aprobar**, en el perfil compilado y en

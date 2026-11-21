@@ -32,8 +32,10 @@ funciona porque allí el menú corre en `retrobridge_host`, en el PC.
 - [x] Backtrace decodificado.
 - [x] CI verde en `e9c0f2b`: pruebas de host (Linux, ASan), compilación ESP-IDF v6.1 y paquete menu-sio.
 - [x] Banco de `e9c0f2b`: arranca por USB, `catalog: 17`, `D1: menu`, dos `sio status`, sin pánicos.
-- [ ] UART: con el 65XE encendido, `e9c0f2b` vio 168 tramas cortas y 0 completas (ninguna respuesta).
-- [ ] Banco con el 65XE: `tramas` > 0, `ordenes` > 0 y el menú en pantalla.
+- [x] UART corregida en `a724b43`. Con el 65XE encendido, `e9c0f2b` vio 168 tramas cortas y 0 completas.
+- [x] CI verde en `b8e6152`, con el fake de IDF y la prueba de los umbrales; un mutante con umbral 2 falla.
+- [x] Con el 65XE y `b8e6152`: `tramas 38 cortas 2`, `err_rx 0 err_tx 0`, latencia máxima 216 µs, el menú en
+  pantalla y `DEMO-DOS.ATR` hasta `DEMO DOS OK` (fotos 01–04 en `Respaldos\FujiNet-RB-menu-sio-b8e6152\fotos\`).
 
 ## Segundo fallo: la UART entrega tarde los bytes
 
@@ -45,4 +47,4 @@ funciona porque allí el menú corre en `retrobridge_host`, en el PC.
 
 ## Siguiente
 
-Flashear el paquete nuevo por COM3 y encender el 65XE con la FujiNet ya en `D1: menu`.
+Fusionar el PR #76. Lo que falta de T7 está en `docs/mediciones/menu-sio-fisico-registro.md`.

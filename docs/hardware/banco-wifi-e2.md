@@ -48,10 +48,17 @@ fila, aparte de la fase 0 del banco: son firmwares distintos.
 
 Spec del banco: `02-DOCS/wiki/sdd/specs/banco-wifi-e2.md`.
 
-## T1b: con el SIO del 65XE
+## T1b: con el SIO del 65XE (sin instrumentos)
 
-Solo si T1a cumple. USB desconectado; cable SIO de paso con el pin 10 abierto y el amperímetro en serie. Las fases
-se leen después en `retrobridge-banco-wifi.txt`.
+Decidido el 2026-11-22: sin medidor, T1 se hace así.
+
+1. USB desconectado. La FujiNet en el SIO del 65XE, con la microSD preparada.
+2. Encender el 65XE y dejar correr al menos 3 ciclos (unos 6 minutos).
+3. Cortar enseguida si el 65XE se reinicia, la imagen falla o algo se calienta.
+4. Apagar, sacar la microSD y leer `retrobridge-banco-wifi.txt`.
+
+Pasa si cada arranque dice `start, reset POWERON`, no hay `reset BROWNOUT` ni arranques nuevos a mitad del ciclo, y
+todas las descargas TNFS dan el SHA-256 esperado.
 
 ## Volver al firmware anterior
 

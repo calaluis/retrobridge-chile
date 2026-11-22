@@ -8,6 +8,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -247,6 +248,10 @@ bool run_wifi(bool sdMounted) noexcept
         ESP_LOGE(kTag, "WIFI BENCH FAIL: no microSD");
         return false;
     }
+    // T1b criterion: a brownout with the USB disconnected shows up on the card as "start, reset BROWNOUT".
+    const esp_reset_reason_t reason = esp_reset_reason();
+    note("start, reset %s (%d)", reason == ESP_RST_BROWNOUT ? "BROWNOUT"
+                                 : reason == ESP_RST_POWERON ? "POWERON" : "OTHER", static_cast<int>(reason));
     wifi_config_t config{};
     if (!readWifiFile(config)) {
         return false;

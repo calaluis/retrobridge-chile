@@ -95,8 +95,9 @@ El reposo E1 y la fase 0 se anotan en filas separadas: son firmwares distintos.
 2. Dados los paquetes normal y `menu-sio` de la misma CI, cuando se buscan la marca del banco y el símbolo
    `esp_wifi_init` en sus binarios, entonces no aparecen.
 3. Dada la placa con el banco, cuando termina el ensayo, entonces la NVS es igual a la de antes (hash o comparación).
-4. Dado el ensayo T1a, cuando se cierra, entonces el registro tiene las cinco filas de la tabla, con media por fila y
-   veredicto ≤ 50 mA.
+4. Dado el ensayo con el SIO del 65XE y el USB desconectado, cuando el banco completa al menos 3 ciclos de fases,
+   entonces `retrobridge-banco-wifi.txt` no tiene ningún `reset BROWNOUT` ni arranques nuevos a mitad del ciclo, y
+   todas las descargas TNFS dan el SHA-256 esperado.
 5. Dada cualquier salida del banco, cuando se busca la clave, entonces no aparece.
 
 ## Fuera de alcance
@@ -107,7 +108,17 @@ El reposo E1 y la fase 0 se anotan en filas separadas: son firmwares distintos.
 
 ## Puntos a clarificar
 
-- **decisión diferida** — instrumentos del banco. T1a espera a que el responsable los confirme.
+- **suposición tomada** — no hay instrumentos de medida. *Base:* el responsable lo confirmó el 2026-11-22. La tabla
+  en mA queda vacía hasta que haya un medidor; el criterio pasa a ser el ensayo con el SIO (criterio 4).
 - **suposición tomada** — 30 s por fase bastan para leer una media estable. *Base:* el multímetro promedia en pocos
   segundos. *Riesgo:* si no, se alarga la fase en el firmware.
 - **suposición tomada** — el método de lectura de la NVS es el del plan E2. *Base:* C10 deja el método al plan.
+
+## Clarificaciones
+
+- 2026-11-22 — ¿Cómo se cumple T1 sin instrumentos? → El responsable elige el ensayo con el SIO y registro: el banco
+  se alimenta del pin 10 del 65XE con el USB desconectado, y el criterio es «sin brownouts y descargas con SHA
+  correcto». → *Por qué:* el vídeo del 2026-11-21 muestra el menú E1 funcionando solo con el SIO, y el esquema
+  FN32ROV-1.5 da para E1 una demanda estimada de 55–145 mA. Los 50 mA de la documentación no son el límite real.
+  *Riesgo aceptado:* se pide al pin 10 una corriente no documentada (picos de Wi-Fi de hasta ~330 mA estimados);
+  el ensayo se corta si el 65XE se reinicia, la imagen falla o algo se calienta.

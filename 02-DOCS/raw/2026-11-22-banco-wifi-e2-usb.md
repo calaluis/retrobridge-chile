@@ -4,7 +4,10 @@ Spec: `02-DOCS/wiki/sdd/specs/banco-wifi-e2.md`. Plan: `menu-sio-wifi-tnfs`, T1.
 
 ## Montaje
 
-- FujiNet FN32ROV-1.5 alimentada por USB desde el PC (COM3). Cable SIO físicamente desconectado.
+- FujiNet **FN32ROV-1.3-Q24**, la placa identificada por foto en `docs/hardware/fujinet-atari-v1x.md`. La consola
+  de este ensayo coincide con ese registro: ESP32-D0WD rev. v1.0, flash GigaDevice de 16 MB y 8 MB de PSRAM.
+  Alimentada por USB desde el PC (COM3).
+- Observación del banco: el cable SIO estaba físicamente desconectado durante todo el ensayo.
 - Paquete `retrobridge-fw-bench-wifi-fujinet-atari-v1x-276ee77` (ejecución de CI 44977410589).
   `firmware_package.py verify`: todas las comprobaciones OK.
 - esptool 4.5.1. Grabación en 0x1000, 0x8000 y 0x10000; `verify_flash`: las tres regiones «digest matched».
@@ -44,12 +47,21 @@ El ciclo 2 empezó con normalidad. La clave no aparece en la salida; solo su lon
 - Paquete `retrobridge-fw-menu-sio-fujinet-atari-v1x-395ea67`: artefacto 14730189831, ejecución 44963760526.
   SHA-256 del ZIP `510fb4d4bf12c34bdb25c59a3a221e48c70d7c50100bf60a853acc6bba26ec25` (igual al indicado por el
   responsable). `SHA256SUMS` y `firmware_package.py verify`: todas las comprobaciones OK.
-- Grabado solo con USB y el SIO desconectado. La consola mide 838 mV en el pin 10 del SIO, así que no hay Atari
-  conectado. `verify_flash`: las tres regiones «digest matched».
+- Grabado solo con USB. `verify_flash`: las tres regiones «digest matched».
+- Lectura del ADC en el arranque: 838 mV en el divisor del pin 10 del SIO (`SIO +5V (pin 10) 838 mV`). Es una
+  lectura del ADC, no una medida de tensión calibrada. Que el SIO estaba desconectado físicamente es una
+  observación separada del banco (ver «Montaje»).
 - Consola: `App version: 395ea67`, `D1: menu. Switch the 65XE on.`, `D1 ready at 144 ms`, 18 imágenes en la
   microSD.
+- Los 144 ms se cuentan desde el inicio de la aplicación del ESP32. El tiempo total desde EN es mayor: suma
+  la ROM y el cargador de arranque, más el reinicio del watchdog RTC que esta placa hace tras un reinicio por RTS.
+
+## Estado
+
+- Completados: ensayo funcional con USB y restauración de `menu-sio` 395ea67.
 
 ## Pendiente
 
 - T1a: medida de corriente por fase. Falta instrumento.
 - T1b (con el SIO del 65XE): queda pendiente de T1a, por decisión del responsable.
+- La implementación de E2 espera el resultado de T1a y T1b.

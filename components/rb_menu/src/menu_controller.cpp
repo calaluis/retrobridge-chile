@@ -50,6 +50,10 @@ bool isConfirmRow(uint8_t code) noexcept
 }
 static_assert(kMenuConfirmRow > kMenuNavFire && kMenuConfirmRow + kListMaxEntries <= kMenuPollKey,
               "confirm codes apart from keys, moves, poll and redraw");
+static_assert(kMenuBreakKey > kMenuKeyMask && !(kMenuBreakKey >= kMenuNavUp && kMenuBreakKey <= kMenuNavFire) &&
+                  !(kMenuBreakKey >= kMenuConfirmRow && kMenuBreakKey < kMenuConfirmRow + kListMaxEntries) &&
+                  kMenuBreakKey != kMenuEditSave && kMenuBreakKey != kMenuPollKey && kMenuBreakKey != kMenuNoKey,
+              "Break apart from keys, moves, confirm rows, edit, poll and redraw");
 static_assert(kMenuCursor >= kListMessage + kMenuLineWidth && kMenuCursor >= kMainMessage + kMenuLineWidth &&
                   kMenuCursor + 5 <= kMenuScreenSize,
               "the cursor block past every layout");
@@ -301,6 +305,10 @@ MenuReply MenuController::key(uint8_t code, uint8_t row)
 {
     if (restoring_) {
         return render(kMenuActionWait);  // every key, A too, waits for the drives
+    }
+    // Break (T5, C7) before the loading check and the mask: masked it would read as a key.
+    if (code == kMenuBreakKey) {
+        return onBreak();
     }
     if (job_ != Job::None) {
         return onLoading(code);
@@ -1311,6 +1319,22 @@ MenuReply MenuController::onLoading(uint8_t code)
         return render(kMenuActionShow);
     }
     return advance();  // a poll, a redraw or any other key: only the progress
+}
+
+MenuReply MenuController::onBreak()
+{
+    if (job_ != Job::None) {
+        cancelJob();  // a late result is dropped, as with Esc
+        event("menu_tnfs", "load cancelled with Break");
+    } else if (editing() || view_ == View::Main || view_ == View::Unmount || view_ == View::Create) {
+        return render(kMenuActionShow);  // nothing to leave (spec: suposición tomada)
+    }
+    view_ = View::Main;
+    chosen_ = kNoEntry;
+    depth_ = 0;  // the folders entered are forgotten: the next opening starts at the root
+    message_[0] = '\0';
+    event("menu_break", "back to the main screen");
+    return render(kMenuActionShow);
 }
 
 MenuReply MenuController::advance()

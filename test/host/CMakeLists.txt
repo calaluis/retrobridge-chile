@@ -309,6 +309,15 @@ target_include_directories(test_menu_tnfs PRIVATE ${rb_root}/host/src ${rb_root}
 target_compile_definitions(test_menu_tnfs PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
 target_link_libraries(test_menu_tnfs PRIVATE rb_net_tnfs Threads::Threads)
 set_tests_properties(test_menu_tnfs PROPERTIES FIXTURES_REQUIRED menu_images)
+# Break back to the main screen (menu-unidades-persistentes T5, C7), on the rig of test_menu_tnfs.
+rb_add_host_test(test_menu_break menu/test_menu_break.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp
+                 ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
+                 ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/components/rb_menu/src/xex_image.cpp
+                 ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/sha256.cpp)
+target_include_directories(test_menu_break PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
+target_compile_definitions(test_menu_break PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
+target_link_libraries(test_menu_break PRIVATE rb_net_tnfs Threads::Threads)
+set_tests_properties(test_menu_break PROPERTIES FIXTURES_REQUIRED menu_images)
 
 # Choosing and booting a .xex (menu-xex X004), on the rig of test_menu_tnfs with its own folder.
 rb_add_host_test(test_menu_xex menu/test_menu_xex.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp

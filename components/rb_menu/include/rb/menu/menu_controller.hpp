@@ -54,6 +54,12 @@
 // until saveResult() of the newest version turns it into GUARDADO or NO SE GUARDO.
 // While GUARDANDO is shown the reply is "wait" too, so the result reaches the screen.
 // Booting with A and a cold reset are not changes. TNFS images are remembered empty.
+//
+// Break (menu-unidades-persistentes T5, C7): kMenuBreakKey, compared before the mask. From
+// the list, a drive choice, any TNFS folder or a folder's drive choice it goes to the main
+// screen, forgets the folders entered and the image chosen, and cancels a load in progress
+// (its late result is dropped). No drive changes. On the main screen, in Unmount, Edit and
+// Create it does nothing. While the drives are restored it waits, as every key does.
 
 #include <array>
 #include <cstddef>
@@ -226,6 +232,7 @@ private:
     void onFolderPick(uint8_t code, int digit);
     void startJob(Job job, unsigned source, const char* path, std::size_t length);
     MenuReply onLoading(uint8_t code);
+    MenuReply onBreak();
     MenuReply advance();
     void cancelJob() noexcept;
     void listed();

@@ -11,7 +11,14 @@ namespace rb::host {
 void planDriveMemory(const char* cardFailure, int cardError, const SlotFileStore::LoadResult* loaded,
                      bool saverReady, DriveMemoryPlan& out) noexcept
 {
-    out = DriveMemoryPlan{};
+    // Field by field: `out = DriveMemoryPlan{}` may build a ~1 KB temporary on app_main's stack.
+    out.restore = false;
+    for (unsigned drive = 1; drive <= DriveMemory::kDrives; ++drive) {
+        (void)out.memory.set(drive, "");
+    }
+    out.message[0] = '\0';
+    out.saveAllowed = false;
+    out.refusal = 0;
     if (cardFailure != nullptr) {
         std::snprintf(out.message, sizeof out.message, " MICROSD: %s", cardFailure);
         out.refusal = cardError != 0 ? cardError : EIO;

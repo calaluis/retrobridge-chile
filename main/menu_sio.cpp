@@ -1,11 +1,14 @@
 #include "menu_sio.hpp"
 
+#include "sdkconfig.h"
+
 #include <array>
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <new>
+#include <type_traits>
 
 #include "driver/gpio.h"
 #include "esp_adc/adc_cali.h"
@@ -17,15 +20,22 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "rb/esp/esp_clock.hpp"
 #include "rb/esp/esp_sio_uart.hpp"
 #include "rb/esp/sd_card_storage.hpp"
+#include "rb/menu/drive_memory.hpp"
+#include "rb/menu/drive_memory_link.hpp"
+#include "rb/menu/drive_slot_store.hpp"
 #include "rb/menu/host_image_repository.hpp"
 #include "rb/menu/menu_catalog.hpp"
 #include "rb/menu/menu_image.hpp"
 #include "rb/menu/menu_sources.hpp"
 #include "rb/menu/menu_station.hpp"
+#include "rb/menu/sio_power_watch.hpp"
+#include "rb/menu/storage_reason.hpp"
 #include "rb/sio/sio_line_transport.hpp"
 
 namespace rb::menusio {
@@ -75,6 +85,32 @@ char g_d1[rb::host::MenuCatalog::kMaxName + 1] = "menu";  // what D1 holds, copi
 
 adc_oneshot_unit_handle_t g_adc = nullptr;
 adc_cali_handle_t g_adcCali = nullptr;
+SemaphoreHandle_t g_adcLock = nullptr;  // the SIO task, the console and the boot record all read GPIO35
+constexpr int64_t kPowerSampleUs = 50000;  // plan §4: the SIO task samples the +5 V every 50 ms, between frames
+
+// Persistent drives (menu-unidades-persistentes). finish() reads the slots once, writes g_plan, creates the
+// queues and rb_drive_save, and only then publishes g_planPublished (release). The SIO task touches g_plan
+// and the queues only after it has seen that flag (acquire), and the queues only when g_plan allows saving.
+// The SIO task never writes to the microSD.
+rb::host::DriveMemoryPlan g_plan;            // written by finish() before g_planPublished
+std::atomic<bool> g_planPublished{false};
+rb::host::DriveMemoryLink g_link;            // SIO task only (~1 KB: not on its stack)
+rb::host::SlotFileStore* g_store = nullptr;  // finish() reads it once; then rb_drive_save only
+
+struct SaveRequest {
+    uint32_t version = 0;
+    rb::host::DriveMemory memory;
+};
+struct SaveOutcome {
+    uint32_t version = 0;
+    bool ok = false;
+    int error = 0;
+};
+static_assert(std::is_trivially_copyable_v<SaveRequest> && std::is_trivially_copyable_v<SaveOutcome>,
+              "FreeRTOS queues copy items byte by byte");
+QueueHandle_t g_saveRequests = nullptr;  // one item, overwritten: only the newest memory matters
+QueueHandle_t g_saveOutcomes = nullptr;  // one item, overwritten: only the newest result changes the screen
+constexpr uint32_t kSaveTaskStack = CONFIG_RB_DRIVE_SAVE_STACK;  // the package checks the frames against it
 
 template <typename T, typename... Args>
 T* createOnce(Args&&... args)
@@ -88,6 +124,10 @@ T* createOnce(Args&&... args)
 
 bool startAdc()
 {
+    g_adcLock = xSemaphoreCreateMutex();
+    if (g_adcLock == nullptr) {
+        return false;
+    }
     adc_oneshot_unit_init_cfg_t unit{};
     unit.unit_id = ADC_UNIT_1;
     unit.ulp_mode = ADC_ULP_MODE_DISABLE;
@@ -115,15 +155,20 @@ bool startAdc()
 }
 
 // Pin millivolts and the SIO +5 V they mean; false if the ADC is not available.
-bool readSio5v(int& pinMv, int& sioMv)
+// `wait`: false for the SIO task, which skips a sample rather than wait for another reader.
+bool readSio5v(int& pinMv, int& sioMv, bool wait = true)
 {
-    if (g_adc == nullptr) {
+    if (g_adc == nullptr || g_adcLock == nullptr) {
+        return false;
+    }
+    if (xSemaphoreTake(g_adcLock, wait ? portMAX_DELAY : 0) != pdTRUE) {
         return false;
     }
     int sum = 0;
     for (int i = 0; i < 8; ++i) {
         int raw = 0;
         if (adc_oneshot_read(g_adc, kSio5vChannel, &raw) != ESP_OK) {
+            xSemaphoreGive(g_adcLock);
             return false;
         }
         int mv = raw * 3300 / 4095;  // uncalibrated fallback
@@ -132,6 +177,7 @@ bool readSio5v(int& pinMv, int& sioMv)
         }
         sum += mv;
     }
+    xSemaphoreGive(g_adcLock);
     pinMv = sum / 8;
     sioMv = pinMv < kNoSioPowerMv ? 0 : pinMv * kDividerNum / kDividerDen;
     return true;
@@ -169,26 +215,132 @@ void copyD1(char* out, std::size_t size)
     portEXIT_CRITICAL(&g_d1Lock);
 }
 
+uint32_t framesSoFar()
+{
+    const rb::sio::SioLineStats& line = g_transport->stats();
+    return line.frames + line.shortFrames;
+}
+
+// rb_drive_save seen from the SIO task: never blocks. Used only when the published plan allows saving.
+class QueueSaver final : public rb::host::DriveMemoryLink::Saver {
+public:
+    void submit(uint32_t version, const rb::host::DriveMemory& memory) noexcept override
+    {
+        request_.version = version;
+        request_.memory = memory;
+        (void)xQueueOverwrite(g_saveRequests, &request_);
+    }
+    bool poll(uint32_t& version, bool& ok, int& error) noexcept override
+    {
+        SaveOutcome outcome;
+        if (xQueueReceive(g_saveOutcomes, &outcome, 0) != pdTRUE) {
+            return false;
+        }
+        version = outcome.version;
+        ok = outcome.ok;
+        error = outcome.error;
+        return true;
+    }
+
+private:
+    SaveRequest request_;
+};
+QueueSaver g_saver;  // SIO task only (~1 KB: not on its stack)
+
+// Between two frames: once the plan is published, restores (after the catalog) and handles saves.
+void serviceDriveMemory(rb::host::MenuController& controller, bool& planSeen, bool& restoreLogged)
+{
+    if (!planSeen) {
+        planSeen = g_planPublished.load(std::memory_order_acquire);
+        if (!planSeen) {
+            return;  // g_plan and the queues are not ready yet
+        }
+    }
+    (void)g_link.apply(controller, g_plan, g_catalogApplied);
+    if (g_link.applied() && !restoreLogged && !controller.restoring()) {  // D2..D8 mount one per step
+        restoreLogged = true;
+        ESP_LOGI(kTag, "unidades restauradas a %lld ms (%s); guardado %s", msOf(esp_timer_get_time()),
+                 g_plan.restore ? "memoria leida" : g_plan.message, g_plan.saveAllowed ? "activo" : "DESACTIVADO");
+    }
+    g_link.saves(controller, g_plan, g_saver);
+}
+
+void driveSaveTask(void*)
+{
+    static SaveRequest request;  // ~1 KB: off the stack
+    for (;;) {
+        if (xQueueReceive(g_saveRequests, &request, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+        const int64_t began = esp_timer_get_time();
+        const rb::host::SlotFileStore::SaveResult saved = g_store->save(request.memory);
+        const SaveOutcome outcome{request.version, saved.ok, saved.error};
+        (void)xQueueOverwrite(g_saveOutcomes, &outcome);
+        if (saved.ok) {
+            ESP_LOGI(kTag, "drive memory version %lu saved in %lld ms", static_cast<unsigned long>(request.version),
+                     msOf(esp_timer_get_time() - began));
+        } else {
+            ESP_LOGW(kTag, "drive memory version %lu NOT saved: %s (errno %d)",
+                     static_cast<unsigned long>(request.version), rb::host::storageReason(saved.error), saved.error);
+        }
+    }
+}
+
 void sioTask(void*)
 {
     bool wasMenu = true;
     bool buttonDown = false;
     bool buttonHandled = false;
     int64_t buttonSince = 0;
+    bool planSeen = false;
+    bool restoreLogged = false;
+    rb::host::SioPowerWatch power;
+    int64_t lastPowerSample = 0;
+    int64_t poweredOnUs = 0;  // non-zero until the first frame after a power-on is logged
+    uint32_t framesAtPowerOn = 0;
     for (;;) {
         if (!g_catalogApplied && g_catalogPublished.load(std::memory_order_acquire)) {
             *g_catalog = *g_loaded;  // between two frames: the controller is not using it
             g_catalogApplied = true;
             ESP_LOGI(kTag, "catalog: %u image(s) on the microSD root", static_cast<unsigned>(g_catalog->count()));
         }
+        serviceDriveMemory(g_station->controller(), planSeen, restoreLogged);
 
-        (void)g_station->step();
+        const rb::sio::StepOutcome stepped = g_station->step();
 
         const bool down = gpio_get_level(kButtonA) == 0;
         const int64_t now = esp_timer_get_time();
+        // +5 V only after a step that sent nothing: the 8 ADC reads (~0.2 ms) never delay an answer.
+        // With the 65XE off, COMMAND stays low and every step ends in TransportFailed (powerSampleAfter).
+        if (rb::host::powerSampleAfter(stepped) && now - lastPowerSample >= kPowerSampleUs) {
+            lastPowerSample = now;
+            int pinMv = 0;
+            int sioMv = 0;
+            if (readSio5v(pinMv, sioMv, false)) {
+                switch (power.sample(sioMv, static_cast<uint64_t>(now))) {
+                case rb::host::SioPowerWatch::Event::PoweredOff:
+                    g_station->returnToMenu();  // ready before the next power-on reads D1; drives kept
+                    poweredOnUs = 0;
+                    ESP_LOGI(kTag, "65XE off at %lld ms (SIO +5V %d mV): D1 back to the menu, D1-D8 kept",
+                             msOf(now), sioMv);
+                    break;
+                case rb::host::SioPowerWatch::Event::PoweredOn:
+                    poweredOnUs = now;
+                    framesAtPowerOn = framesSoFar();
+                    ESP_LOGI(kTag, "65XE on at %lld ms (SIO +5V %d mV)", msOf(now), sioMv);
+                    break;
+                case rb::host::SioPowerWatch::Event::None:
+                    break;
+                }
+            }
+        }
+        if (poweredOnUs != 0 && framesSoFar() != framesAtPowerOn) {
+            ESP_LOGI(kTag, "first COMMAND frame after power-on at %lld ms (%lld ms after +5V)", msOf(now),
+                     msOf(now - poweredOnUs));
+            poweredOnUs = 0;
+        }
         if (g_firstFrameUs.load(std::memory_order_relaxed) == 0) {
-            const rb::sio::SioLineStats& line = g_transport->stats();
-            if (line.frames + line.shortFrames > 0) {
+            if (framesSoFar() > 0) {
                 g_firstFrameUs.store(now, std::memory_order_relaxed);
                 ESP_LOGI(kTag, "first COMMAND frame from the Atari at %lld ms (D1 ready at %lld ms)", msOf(now),
                          msOf(g_readyUs));
@@ -373,6 +525,7 @@ bool start(const rb::board::BoardProfile& board)
         return false;
     }
     g_station->start();  // D1 = menu: the next boot of the Atari loads it
+    g_station->controller().beginRestore();  // RESTAURANDO UNIDADES until finish() has read the microSD
     transport.releaseDataLine();
 
     g_readyUs = esp_timer_get_time();  // set before the SIO task exists: it reads it without a lock
@@ -394,21 +547,65 @@ void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot)
     if (g_station == nullptr) {
         return;  // start() failed: nothing is served
     }
+    const char* failure = nullptr;  // why the drives are not restored: " MICROSD: <reason>"
+    int failureError = 0;
     g_loaded = createOnce<rb::host::MenuCatalog>();
     if (g_loaded == nullptr) {
         ESP_LOGE(kTag, "no memory for the catalog: the menu lists no images");
+        failure = "SIN RAM";
+        failureError = ENOMEM;
     } else if (!sdMounted) {
         ESP_LOGW(kTag, "microSD not mounted: the menu lists no images");
+        failure = "NO MONTADA";
+        failureError = ENODEV;
     } else {
         errno = 0;
         if (rb::host::readCatalog(rb::esp::SdCardStorage::kMountPoint, *g_loaded)) {
             g_catalogPublished.store(true, std::memory_order_release);  // the SIO task applies it
         } else if (errno == ENOMEM) {
             ESP_LOGE(kTag, "microSD catalog not read: no memory for the 4 KB path buffer");
+            failure = "SIN RAM";
+            failureError = ENOMEM;
         } else {
-            ESP_LOGW(kTag, "microSD catalog not read (%s): the menu lists no images", std::strerror(errno));
+            failureError = errno != 0 ? errno : EIO;
+            ESP_LOGW(kTag, "microSD catalog not read (%s): the menu lists no images", std::strerror(failureError));
+            failure = rb::host::storageReason(failureError);
         }
     }
+
+    // Drive memory: the slots are read once, here. Saving needs that read to give Loaded or Empty and
+    // rb_drive_save to run; otherwise it stays off for this session (a save could replace E0).
+    // A pointer into the store (heap): no copy of the ~1 KB result on app_main's 3584 B stack.
+    const rb::host::SlotFileStore::LoadResult* loaded = nullptr;
+    bool saverReady = false;
+    if (failure == nullptr) {
+        g_store = createOnce<rb::host::SlotFileStore>(rb::esp::SdCardStorage::kMountPoint);
+        if (g_store == nullptr) {
+            ESP_LOGE(kTag, "no memory for the drive memory store: drives neither restored nor saved");
+        }
+    }
+    if (g_store != nullptr) {
+        const int64_t began = esp_timer_get_time();
+        loaded = &g_store->load();
+        if (loaded->status == rb::host::SlotFileStore::LoadStatus::Error) {
+            ESP_LOGW(kTag, "drive memory not read: %s (errno %d); saving off this session",
+                     rb::host::storageReason(loaded->error), loaded->error);
+        } else {
+            ESP_LOGI(kTag, "drive memory read in %lld ms: %s", msOf(esp_timer_get_time() - began),
+                     loaded->status == rb::host::SlotFileStore::LoadStatus::Loaded ? "slot found" : "no valid slot");
+            g_saveRequests = xQueueCreate(1, sizeof(SaveRequest));
+            g_saveOutcomes = xQueueCreate(1, sizeof(SaveOutcome));
+            saverReady = g_saveRequests != nullptr && g_saveOutcomes != nullptr &&
+                         xTaskCreatePinnedToCore(driveSaveTask, "rb_drive_save", kSaveTaskStack, nullptr,
+                                                 tskIDLE_PRIORITY + 2, nullptr, 0) == pdPASS;
+            if (!saverReady) {
+                ESP_LOGE(kTag, "drive memory save task not created: changes are NOT saved");
+            }
+        }
+    }
+    // rb_drive_save touches the store only after g_planPublished, so *loaded is still this read.
+    rb::host::planDriveMemory(failure, failureError, loaded, saverReady, g_plan);
+    g_planPublished.store(true, std::memory_order_release);  // after g_plan, the queues and the task
 
     if (!registerCommand("menu", "menu: D1 vuelve al menu (luego apaga y enciende el 65XE)", menuCommand) ||
         !registerCommand("sio", "sio status | sio arranques: linea SIO, D1, +5V y tiempos de arranque",

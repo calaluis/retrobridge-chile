@@ -232,6 +232,12 @@ class Menu6502:
         reply = self.siov(dcb)
         if reply is None:
             self.y = 0x8A      # SIO timeout
+        elif reply == "break":
+            # Break pressed during the command (T5): the OS keyboard handler cleared BRKKEY and
+            # SIOV aborted with BRKABT, written into DSTATS as SIOV does with every status.
+            m[make_menu.BRKKEY] = 0
+            m[make_menu.DSTATS] = make_menu.BREAK_STATUS
+            self.y = make_menu.BREAK_STATUS
         elif isinstance(reply, tuple):
             # ("cut", data): the bytes arrived but the frame failed (checksum), as a reply cut
             # or mixed by two hosts on the hub: SIOV wrote them and returns an error.
@@ -796,6 +802,113 @@ class MenuProgramTest(unittest.TestCase):
         table = make_menu.char_table()
         self.assertEqual(sum(1 for b in table if b), len(make_menu.KEYBOARD))
         self.assertEqual(table[0x22], make_menu.screen_codes(".", 1)[0])
+
+    # Break (menu-unidades-persistentes T5, C7 and C11).
+
+    def aux(self, calls):
+        return [(c["aux1"], c["aux2"]) for c in calls]
+
+    def test_break_while_waiting_for_a_key_is_sent_as_its_code_with_a_new_sequence(self):
+        cpu = Menu6502(self.block, [KEY_1], lambda dcb: host_reply(0, 1))
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        cpu.mem[make_menu.BRKKEY] = 0  # Break on the list
+        self.assertEqual(cpu.run_until_idle(self.labels["key"]), "waiting")
+        self.assertEqual([c["aux1"] for c in cpu.siov_calls], [0xFF, KEY_1, make_menu.BREAK_KEY])
+        self.assertEqual([c["aux2"] >> 5 for c in cpu.siov_calls], [1, 2, 3])
+        self.assertEqual(cpu.mem[make_menu.BRKKEY], 0xFF)  # handled once: the next wait sends nothing
+
+    def test_a_break_pressed_during_boot_is_forgotten(self):
+        cpu = Menu6502(self.block, [], lambda dcb: host_reply(0, 0))
+        cpu.mem[make_menu.BRKKEY] = 0
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        self.assertEqual([c["aux1"] for c in cpu.siov_calls], [0xFF])
+
+    def test_break_during_a_command_resends_it_unchanged_then_sends_break(self):
+        # KEY_1 is aborted by Break twice; the third try gets the list; then Break goes as a key.
+        replies = [host_reply(0, 0), "break", "break", host_reply(0, 1, 0x22), host_reply(0, 0, 0x23)]
+        cpu = Menu6502(self.block, [KEY_1], lambda dcb: replies.pop(0))
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        calls = cpu.siov_calls
+        row = make_menu.NO_ROW
+        self.assertEqual(self.aux(calls), [(0xFF, 1 << 5 | row), (KEY_1, 2 << 5 | row), (KEY_1, 2 << 5 | row),
+                                           (KEY_1, 2 << 5 | row), (make_menu.BREAK_KEY, 3 << 5 | row)])
+        for retry in calls[2:4]:  # DSTATS and DTIMLO set again; the rest of the DCB as it was
+            self.assertEqual((retry["dstats"], retry["timeout"]), (0x40, make_menu.MENU_TIMEOUT_S))
+            self.assertEqual((retry["device"], retry["command"], retry["buffer"], retry["length"]),
+                             (0x5A, 0x4B, self.labels["hidden"], 962))
+        self.assertEqual(cpu.mem[make_menu.BRKKEY], 0xFF)
+        self.assertEqual(replies, [])
+        self.assertEqual(cpu.screen(), host_reply(0, 0, 0x23)[2:])  # the answer to Break is shown
+        no_host = make_menu.screen_line(make_menu.NO_HOST_TEXT)
+        self.assertNotIn(no_host, bytes(cpu.screen()))
+
+    def test_break_during_a_command_with_a_local_bar_keeps_the_row_in_aux2(self):
+        replies = [cursor_reply(5, 3, 0), "break", host_reply(0, 0), host_reply(0, 0)]
+        cpu = Menu6502(self.block, [KEY_ESC], lambda dcb: replies.pop(0))
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        self.assertEqual(self.aux(cpu.siov_calls)[1:], [(KEY_ESC, 2 << 5 | 3), (KEY_ESC, 2 << 5 | 3),
+                                                        (make_menu.BREAK_KEY, 3 << 5 | make_menu.NO_ROW)])
+
+    def test_resend_comes_after_the_sequence_and_aux2_and_before_siov(self):
+        block, labels = self.block, self.labels
+        at = lambda label: labels[label] - ORG  # noqa: E731
+        inc_seq = block.find(bytes([0xEE, labels["seq"] & 0xFF, labels["seq"] >> 8]))
+        sta_aux2 = block.find(bytes([0x8D, make_menu.DAUX2 & 0xFF, make_menu.DAUX2 >> 8]))
+        jsr_siov = block.find(bytes([0x20, make_menu.SIOV & 0xFF, make_menu.SIOV >> 8]), at("resend"))
+        self.assertTrue(0 < inc_seq < sta_aux2 < at("resend") < jsr_siov, (inc_seq, sta_aux2, at("resend")))
+        between = block[at("resend"):jsr_siov]
+        for address in (make_menu.DAUX1, make_menu.DAUX2, make_menu.DCOMND, make_menu.DDEVIC):
+            self.assertNotIn(bytes([0x8D, address & 0xFF, address >> 8]), between, hex(address))
+
+    def test_a_timeout_after_a_break_still_says_the_host_does_not_answer(self):
+        replies = [host_reply(0, 0), "break", None]
+        cpu = Menu6502(self.block, [KEY_1], lambda dcb: replies.pop(0))
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        message = cpu.screen()[make_menu.MAIN_MESSAGE:make_menu.MAIN_MESSAGE + 40]
+        self.assertEqual(message, make_menu.screen_line(make_menu.NO_HOST_TEXT))
+        self.assertEqual([c["aux1"] for c in cpu.siov_calls], [0xFF, KEY_1, KEY_1])
+
+    def test_break_during_the_wait_is_sent_instead_of_the_poll(self):
+        replies = [host_reply(0, 1), host_reply(2, 1), host_reply(0, 0)]
+        cpu = Menu6502(self.block, [KEY_1], lambda dcb: replies.pop(0))
+        original = cpu.read
+
+        pressed = []
+
+        def read(at):
+            if at == make_menu.BRKKEY and cpu.wait_ch_reads == 3 and not pressed:
+                pressed.append(True)
+                cpu.mem[make_menu.BRKKEY] = 0  # Break once, while the host loads
+            return original(at)
+        cpu.read = read
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        self.assertEqual([c["aux1"] for c in cpu.siov_calls], [0xFF, KEY_1, make_menu.BREAK_KEY])
+
+    def test_break_during_a_text_command_sends_the_same_position_and_break_after_the_save(self):
+        state = {"t": 0, "k": 0}
+
+        def siov(dcb):
+            if dcb["command"] == make_menu.TEXT_COMMAND:
+                state["t"] += 1
+                return "break" if state["t"] == 4 else b""
+            state["k"] += 1
+            return edit_reply("srv") if state["k"] == 1 else host_reply(0, 0)
+        cpu = Menu6502(self.block, [KEY_RETURN], siov)
+        self.assertEqual(cpu.run_until_idle(), "waiting")
+        t = [c["aux1"] for c in cpu.siov_calls if c["command"] == make_menu.TEXT_COMMAND]
+        self.assertEqual(t, [0, 1, 2, 3, 3] + list(range(4, make_menu.EDIT_WIDTH)))
+        k = [c["aux1"] for c in cpu.siov_calls if c["command"] == make_menu.MENU_COMMAND]
+        self.assertEqual(k, [0xFF, make_menu.EDIT_SAVE, make_menu.BREAK_KEY])
+        message = cpu.screen()[make_menu.MAIN_MESSAGE:make_menu.MAIN_MESSAGE + 40]
+        self.assertNotEqual(message, make_menu.screen_line(make_menu.NO_HOST_TEXT))
+
+    def test_the_break_code_stays_clear_of_every_other_code(self):
+        rows = range(make_menu.CONFIRM_ROW, make_menu.CONFIRM_ROW + make_menu.LIST_MAX_ENTRIES)
+        self.assertGreater(make_menu.BREAK_KEY, make_menu.KEY_MASK)  # no key: they go AND $3F
+        self.assertNotIn(make_menu.BREAK_KEY, rows)
+        self.assertNotIn(make_menu.BREAK_KEY, (make_menu.POLL, make_menu.NO_KEY, make_menu.EDIT_SAVE,
+                                               make_menu.NAV_UP, make_menu.NAV_DOWN, make_menu.NAV_LEFT,
+                                               make_menu.NAV_RIGHT, make_menu.NAV_FIRE))
 
     # menu-presentacion: the reply arrives out of sight; the screen changes at once.
 

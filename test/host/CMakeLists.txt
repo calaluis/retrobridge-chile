@@ -178,7 +178,7 @@ add_test(NAME generate_menu_images
 set_tests_properties(generate_menu_images PROPERTIES FIXTURES_SETUP menu_images)
 rb_add_host_test(test_host_menu menu/test_host_menu.cpp
                  ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
-                 ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/menu_sio_transport.cpp
+                 ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp ${rb_root}/components/rb_menu/src/menu_sio_transport.cpp
                  ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/components/rb_menu/src/tnfs_folder.cpp)
 target_include_directories(test_host_menu PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_host_menu PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
@@ -189,10 +189,18 @@ target_link_libraries(test_menu_station PRIVATE rb_menu)
 target_compile_definitions(test_menu_station PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
 set_tests_properties(test_menu_station PROPERTIES FIXTURES_REQUIRED menu_images)
 set_tests_properties(test_host_menu PROPERTIES FIXTURES_REQUIRED menu_images)
+# Persistent drives in the controller (menu-unidades-persistentes T3).
+rb_add_host_test(test_menu_unidades menu/test_menu_unidades.cpp
+                 ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
+                 ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/menu_sources.cpp
+                 ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp)
+target_include_directories(test_menu_unidades PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
+target_compile_definitions(test_menu_unidades PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
+set_tests_properties(test_menu_unidades PROPERTIES FIXTURES_REQUIRED menu_images)
 # Disk writes with --images (menu-escritura-disco, W005).
 rb_add_host_test(test_host_write menu/test_host_write.cpp
                  ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
-                 ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/menu_sio_transport.cpp
+                 ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp ${rb_root}/components/rb_menu/src/menu_sio_transport.cpp
                  ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/components/rb_menu/src/tnfs_folder.cpp)
 target_include_directories(test_host_write PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_host_write PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}"
@@ -202,7 +210,7 @@ set_tests_properties(test_host_write PROPERTIES FIXTURES_REQUIRED menu_images)
 # E on the main screen: edit or add a server and rewrite --sources (menu-editar-servidor, M43).
 rb_add_host_test(test_menu_editar menu/test_menu_editar.cpp
                  ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
-                 ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/menu_sio_transport.cpp
+                 ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp ${rb_root}/components/rb_menu/src/menu_sio_transport.cpp
                  ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/components/rb_menu/src/tnfs_folder.cpp)
 target_include_directories(test_menu_editar PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_menu_editar PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
@@ -219,6 +227,25 @@ set_tests_properties(test_memory_image_store PROPERTIES FIXTURES_REQUIRED menu_i
 # The local list: up to 999 .atr names (menu-navegacion N002).
 rb_add_host_test(test_menu_catalog menu/test_menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp)
 target_include_directories(test_menu_catalog PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
+rb_add_host_test(test_drive_memory menu/test_drive_memory.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp)
+target_include_directories(test_drive_memory PRIVATE ${rb_root}/components/rb_menu/include)
+rb_add_host_test(test_sio_power_watch menu/test_sio_power_watch.cpp)
+target_include_directories(test_sio_power_watch PRIVATE ${rb_root}/components/rb_menu/include)
+target_link_libraries(test_sio_power_watch PRIVATE rb_menu)
+rb_add_host_test(test_drive_slot_store menu/test_drive_slot_store.cpp ${rb_root}/components/rb_menu/src/drive_slot_store.cpp
+                 ${rb_root}/components/rb_menu/src/drive_memory.cpp)
+target_include_directories(test_drive_slot_store PRIVATE ${rb_root}/components/rb_menu/include)
+target_compile_definitions(test_drive_slot_store PRIVATE RB_TEST_SLOT_DIR="${CMAKE_CURRENT_BINARY_DIR}/drive-slots")
+# The firmware's drive-memory glue without FreeRTOS (menu-unidades-persistentes T6).
+rb_add_host_test(test_drive_memory_link menu/test_drive_memory_link.cpp
+                 ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
+                 ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/menu_sources.cpp
+                 ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp
+                 ${rb_root}/components/rb_menu/src/drive_slot_store.cpp ${rb_root}/components/rb_menu/src/drive_memory_link.cpp)
+target_include_directories(test_drive_memory_link PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
+target_compile_definitions(test_drive_memory_link PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}"
+                           RB_TEST_SLOT_DIR="${CMAKE_CURRENT_BINARY_DIR}/drive-link-slots")
+set_tests_properties(test_drive_memory_link PROPERTIES FIXTURES_REQUIRED menu_images)
 # Creating a blank ATR from the menu (menu-formatear-disco, F003).
 rb_add_host_test(test_create_atr menu/test_create_atr.cpp ${rb_root}/components/rb_menu/src/create_atr.cpp
                  ${rb_root}/components/rb_menu/src/menu_catalog.cpp)
@@ -285,7 +312,7 @@ target_include_directories(test_tnfs_loader PRIVATE ${rb_root}/host/src ${rb_roo
 target_link_libraries(test_tnfs_loader PRIVATE rb_net_tnfs Threads::Threads)
 
 # TNFS sources in the menu: MenuController with the loader over the fake server (menu-tnfs T012).
-rb_add_host_test(test_menu_tnfs menu/test_menu_tnfs.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp
+rb_add_host_test(test_menu_tnfs menu/test_menu_tnfs.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp
                  ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
                  ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/components/rb_menu/src/xex_image.cpp
                  ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/sha256.cpp)
@@ -293,9 +320,18 @@ target_include_directories(test_menu_tnfs PRIVATE ${rb_root}/host/src ${rb_root}
 target_compile_definitions(test_menu_tnfs PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
 target_link_libraries(test_menu_tnfs PRIVATE rb_net_tnfs Threads::Threads)
 set_tests_properties(test_menu_tnfs PROPERTIES FIXTURES_REQUIRED menu_images)
+# Break back to the main screen (menu-unidades-persistentes T5, C7), on the rig of test_menu_tnfs.
+rb_add_host_test(test_menu_break menu/test_menu_break.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp
+                 ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
+                 ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/components/rb_menu/src/xex_image.cpp
+                 ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/sha256.cpp)
+target_include_directories(test_menu_break PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
+target_compile_definitions(test_menu_break PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
+target_link_libraries(test_menu_break PRIVATE rb_net_tnfs Threads::Threads)
+set_tests_properties(test_menu_break PROPERTIES FIXTURES_REQUIRED menu_images)
 
 # Choosing and booting a .xex (menu-xex X004), on the rig of test_menu_tnfs with its own folder.
-rb_add_host_test(test_menu_xex menu/test_menu_xex.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp
+rb_add_host_test(test_menu_xex menu/test_menu_xex.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp
                  ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
                  ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/components/rb_menu/src/xex_image.cpp
                  ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/sha256.cpp)
@@ -304,7 +340,7 @@ target_compile_definitions(test_menu_xex PRIVATE RB_TEST_MENU_DIR="${CMAKE_CURRE
 target_link_libraries(test_menu_xex PRIVATE rb_net_tnfs Threads::Threads)
 
 # Cursor and pages in the lists (menu-navegacion N003), on the rig of test_menu_tnfs.
-rb_add_host_test(test_menu_navegacion menu/test_menu_navegacion.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp
+rb_add_host_test(test_menu_navegacion menu/test_menu_navegacion.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp
                  ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
                  ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/components/rb_menu/src/xex_image.cpp
                  ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/sha256.cpp)
@@ -318,7 +354,7 @@ rb_add_host_test(test_tnfs_link menu/test_tnfs_link.cpp ${rb_root}/host/src/tnfs
                  ${rb_root}/host/src/udp_tnfs_port.cpp ${rb_root}/host/src/udp_datagram_port.cpp
                  ${rb_root}/host/src/jsonl_log.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/components/rb_menu/src/xex_image.cpp
                  ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/sha256.cpp
-                 ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp
+                 ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp
                  ${rb_root}/components/rb_menu/src/menu_image.cpp ${rb_root}/components/rb_menu/src/menu_sources.cpp)
 target_include_directories(test_tnfs_link PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_tnfs_link PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")

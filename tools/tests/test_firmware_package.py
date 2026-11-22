@@ -993,7 +993,60 @@ class BenchC8PackageTest(unittest.TestCase):
 MENU_APP_MARKERS = CASSETTE_APP_MARKERS + (b"\x1b[0;33mW (%lu) %s: menu-sio TEST PACKAGE: transmits on SIO DATA IN. H4 "
                                            b"and M3a NOT approved.\x1b[0m\n\0\x1b[0;32mI (%lu) %s: D1: menu. Switch the "
                                            b"65XE on.\x1b[0m\n\0")
-MENU_ELF = CASSETTE_ELF + b"_ZN2rb3esp10EspSioUart5beginEv\0_ZN2rb7menusio5startERKNS_5board12BoardProfileEb\0"
+
+
+def xtensa_elf(frames: dict) -> bytes:
+    """A minimal 32-bit little-endian ELF: one .text section and one function symbol per entry of `frames`
+    ({name: frame in bytes, or None for a function that does not start with `entry a1, N`})."""
+    base = 0x400D0000
+    text = b""
+    symbols = []  # (name offset, address)
+    names = b"\0"
+    for name, frame in frames.items():
+        symbols.append((len(names), base + len(text)))
+        names += name.encode() + b"\0"
+        word = (frame // 8) << 12 | 0x136 if frame is not None else 0x0020F0  # entry a1, N / a NOP
+        text += bytes([word & 0xFF, word >> 8 & 0xFF, word >> 16 & 0xFF, 0])
+    symtab = b"\0" * 16 + b"".join(struct.pack("<IIIBBH", at, addr, 4, 0x12, 0, 1) for at, addr in symbols)
+    shstr = b"\0.text\0.symtab\0.strtab\0"
+    text_off = 52
+    sym_off = text_off + len(text)
+    str_off = sym_off + len(symtab)
+    shstr_off = str_off + len(names)
+    sh_off = shstr_off + len(shstr)
+    header = (b"\x7fELF" + bytes([1, 1, 1]) + b"\0" * 9 +
+              struct.pack("<HHIIIIIHHHHHH", 2, 94, 1, base, 0, sh_off, 0, 52, 0, 0, 40, 5, 4))
+    sections = [
+        (0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+        (1, 1, 6, base, text_off, len(text), 0, 0, 4, 0),          # .text PROGBITS
+        (7, 2, 0, 0, sym_off, len(symtab), 3, 1, 4, 16),            # .symtab -> .strtab
+        (15, 3, 0, 0, str_off, len(names), 0, 0, 1, 0),             # .strtab
+        (0, 3, 0, 0, shstr_off, len(shstr), 0, 0, 1, 0),            # .shstrtab
+    ]
+    return (header + text + symtab + names + shstr +
+            b"".join(struct.pack("<IIIIIIIIII", *s) for s in sections))
+
+
+# Frames of the menu-sio stack chains (check_stack). The FatFs/SD ones are those of the 7a1ebf0 build.
+FS_FRAMES = {"fopen": 48, "open": 80, "esp_vfs_open": 32, "vfs_fat_open": 48, "f_open": 112, "follow_path": 48,
+             "dir_find": 32, "move_window": 32, "ff_disk_read": 32, "ff_sdmmc_read": 32, "sdmmc_read_sectors": 80,
+             "sdmmc_read_sectors_dma": 112, "sdmmc_send_cmd": 32, "sdspi_host_do_transaction": 64,
+             "spi_device_polling_transmit": 32, "fwrite": 48, "__bufio_put": 32, "__bufio_flush_locked": 48,
+             "write": 32, "esp_vfs_write": 32, "vfs_fat_write": 64, "f_write": 64, "ff_disk_write": 32,
+             "ff_sdmmc_write": 32, "sdmmc_write_sectors": 80, "sdmmc_write_sectors_dma": 128}
+FINISH = "_ZN2rb7menusio6finishEbRKNS_6hwdiag10BootRecordE"
+LOAD = "_ZN2rb4host13SlotFileStore4loadEv"
+SAVE = "_ZN2rb4host13SlotFileStore4saveERKNS0_11DriveMemoryE"
+SAVE_TASK = "_ZN2rb7menusio12_GLOBAL__N_1L13driveSaveTaskEPv"
+PLAN = "_ZN2rb4host15planDriveMemoryEPKciPKNS0_13SlotFileStore10LoadResultEbRNS0_15DriveMemoryPlanE"
+DECODE = "_ZN2rb4host18drive_memory_codec6decodeEPKhjRNS0_15DriveMemorySlotE"
+MENU_FRAMES = {"vPortTaskWrapper": 32, "main_task": 48, "app_main": 80, FINISH: 400, LOAD: 160, PLAN: 32,
+               SAVE_TASK: 80, SAVE: 112, DECODE: 48, **FS_FRAMES}
+# 7a1ebf0: finish() held a ~1 KB LoadResult and load() three slot-sized buffers; app_main overflowed.
+FRAMES_7A1EBF0 = {**MENU_FRAMES, FINISH: 2128, LOAD: 3136, SAVE: 2128, DECODE: 1072}
+MENU_MARKERS = CASSETTE_ELF + b"_ZN2rb3esp10EspSioUart5beginEv\0_ZN2rb7menusio5startERKNS_5board12BoardProfileEb\0"
+MENU_ELF = xtensa_elf(MENU_FRAMES) + MENU_MARKERS
+MENU_STACKS = "CONFIG_ESP_MAIN_TASK_STACK_SIZE=3584\nCONFIG_RB_DRIVE_SAVE_STACK=6144\n"
 SIO_UART_SOURCE = """#include "driver/uart.h"  // gpio_set_level( in a comment is ignored
 constexpr uart_port_t kUart = UART_NUM_2;
 bool begin() {
@@ -1042,8 +1095,8 @@ class MenuSioPackageTest(unittest.TestCase):
     gates = CassettePackageTest.gates
     failed = CassettePackageTest.failed
 
-    def build(self, menu_option, app, elf):
-        write(self.f.build / "sdkconfig", SDKCONFIG + ("CONFIG_RB_MENU_SIO=y\n" if menu_option else ""))
+    def build(self, menu_option, app, elf, stacks=MENU_STACKS):
+        write(self.f.build / "sdkconfig", SDKCONFIG + ("CONFIG_RB_MENU_SIO=y\n" + stacks if menu_option else ""))
         write(self.f.build / "retrobridge.elf", elf)
         write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=elf, extra=app))
 
@@ -1169,11 +1222,101 @@ class MenuSioPackageTest(unittest.TestCase):
                   "gpio_set_direction(kButtonA, GPIO_MODE_INPUT_OUTPUT)")
         self.assert_refused(fp.MENU_CODE_CHECK)
 
+    # NVS (menu-unidades-persistentes T7): no package may erase or touch it
+
+    def test_nvs_flash_erase_in_menu_main_is_refused(self):
+        self.edit("main/menu_sio.cpp", "(void)gpio_pullup_en(kButtonA);",
+                  "(void)gpio_pullup_en(kButtonA);\n    (void)nvs_flash_erase();")
+        self.assert_refused(fp.NVS_CHECK)
+
+    def test_nvs_split_over_lines_in_a_component_is_refused(self):
+        write(self.f.src / "components" / "rb_menu" / "src" / "extra.cpp",
+              "void wipe() { auto erase = nvs_flash_erase_partition\n    ; (void)erase; }\n")
+        self.assert_refused(fp.NVS_CHECK)
+
+    def test_nvs_after_a_dot_is_refused(self):
+        write(self.f.src / "components" / "rb_menu" / "src" / "extra.cpp",
+              "void f(Store& s) { s.nvs_flash_erase(); }\n")
+        self.assert_refused(fp.NVS_CHECK)
+
+    def test_nvs_after_an_arrow_is_refused(self):
+        write(self.f.src / "components" / "rb_menu" / "src" / "extra.cpp",
+              "void f(Store* s) { s->nvs_flash_erase(); }\n")
+        self.assert_refused(fp.NVS_CHECK)
+
+    def test_an_nvs_type_right_after_a_closing_bracket_is_refused(self):
+        write(self.f.src / "components" / "rb_menu" / "src" / "extra.cpp",
+              "template <typename T> T make();\ntemplate<>nvs_handle_t make<int>();\n")
+        self.assert_refused(fp.NVS_CHECK)
+
+    def test_nvs_in_comments_strings_and_tests_is_not_refused(self):
+        write(self.f.src / "main" / "notes.cpp",
+              '#include "nvs_flash.h"\n// nvs_flash_erase() is never called\nconst char* k = "nvs_flash_init";\n')
+        write(self.f.src / "components" / "rb_menu" / "test" / "fake.cpp", "void t() { nvs_flash_erase(); }\n")
+        log = self.package()
+        self.assertTrue(log.ok, self.failed(log))
+
+    # Task stacks (menu-unidades-persistentes): app_main -> finish() -> load() overflowed on the bench
+
+    def test_the_7a1ebf0_frames_are_refused(self):
+        self.build(menu_option=True, app=MENU_APP_MARKERS, elf=xtensa_elf(FRAMES_7A1EBF0) + MENU_MARKERS)
+        log = self.package()
+        self.assertFalse(log.ok)
+        detail = next(c.detail for c in log.checks if c.name == fp.STACK_CHECK)
+        self.assertIn("app_main", detail)
+        self.assertIn("rb_drive_save", detail)
+
+    def test_save_then_load_over_the_save_task_stack_is_refused(self):
+        self.build(menu_option=True, app=MENU_APP_MARKERS, elf=MENU_ELF,
+                   stacks="CONFIG_ESP_MAIN_TASK_STACK_SIZE=3584\nCONFIG_RB_DRIVE_SAVE_STACK=1536\n")
+        self.assert_refused(fp.STACK_CHECK)
+
+    def test_a_large_load_result_left_in_finish_is_refused(self):
+        self.build(menu_option=True, app=MENU_APP_MARKERS, elf=xtensa_elf({**MENU_FRAMES, FINISH: 400 + 1040}) + MENU_MARKERS)
+        self.assert_refused(fp.STACK_CHECK)
+
+    def test_a_slot_copy_left_in_decode_is_refused(self):
+        # fc176ee: decode() built a DriveMemorySlot on its stack (1072 B) under load(), in both tasks
+        self.build(menu_option=True, app=MENU_APP_MARKERS, elf=xtensa_elf({**MENU_FRAMES, DECODE: 1072}) + MENU_MARKERS)
+        log = self.package()
+        self.assertFalse(log.ok)
+        detail = next(c.detail for c in log.checks if c.name == fp.STACK_CHECK)
+        self.assertIn("decode", detail)
+
+    def test_a_missing_decode_symbol_is_refused(self):
+        frames = dict(MENU_FRAMES)
+        del frames[DECODE]
+        self.build(menu_option=True, app=MENU_APP_MARKERS, elf=xtensa_elf(frames) + MENU_MARKERS)
+        self.assert_refused(fp.STACK_CHECK)
+
+    def test_a_missing_chain_symbol_is_refused(self):
+        frames = dict(MENU_FRAMES)
+        del frames[LOAD]
+        self.build(menu_option=True, app=MENU_APP_MARKERS, elf=xtensa_elf(frames) + MENU_MARKERS)
+        self.assert_refused(fp.STACK_CHECK)
+
+    def test_a_chain_function_without_entry_is_refused(self):
+        self.build(menu_option=True, app=MENU_APP_MARKERS, elf=xtensa_elf({**MENU_FRAMES, "f_open": None}) + MENU_MARKERS)
+        self.assert_refused(fp.STACK_CHECK)
+
+    def test_a_missing_task_stack_size_is_refused(self):
+        self.build(menu_option=True, app=MENU_APP_MARKERS, elf=MENU_ELF, stacks="CONFIG_ESP_MAIN_TASK_STACK_SIZE=3584\n")
+        self.assert_refused(fp.STACK_CHECK)
+
+    def test_the_stack_check_reads_frames_from_the_elf(self):
+        frames = fp.elf_function_frames(xtensa_elf({"a": 32, "b": 3136, "c": None}))
+        self.assertEqual(frames, {"a": 32, "b": 3136, "c": None})
+
     def test_gpio_in_menu_main_on_another_pin_is_refused(self):
         self.edit("main/menu_sio.cpp", "(void)gpio_pullup_en(kButtonA);", "(void)gpio_pullup_en(GPIO_NUM_21);")
         self.assert_refused(fp.MENU_CODE_CHECK)
 
     # the real tree
+
+    def test_real_tree_has_no_nvs(self):
+        repo = Path(__file__).resolve().parents[2]
+        ok, detail = fp.check_nvs(repo)
+        self.assertTrue(ok, detail)
 
     def test_real_tree_has_exactly_the_cassette_and_menu_sio_calls(self):
         repo = Path(__file__).resolve().parents[2]

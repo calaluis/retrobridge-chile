@@ -7,6 +7,7 @@
 
 #include "rb/menu/host_image_repository.hpp"
 #include "rb/menu/memory_image_store.hpp"
+#include "rb/menu/storage_reason.hpp"
 #include "rb/app/image_location.hpp"
 #include "rb/domain/disk_image.hpp"
 #include "rb/domain/drive_number.hpp"
@@ -49,6 +50,10 @@ bool isConfirmRow(uint8_t code) noexcept
 }
 static_assert(kMenuConfirmRow > kMenuNavFire && kMenuConfirmRow + kListMaxEntries <= kMenuPollKey,
               "confirm codes apart from keys, moves, poll and redraw");
+static_assert(kMenuBreakKey > kMenuKeyMask && !(kMenuBreakKey >= kMenuNavUp && kMenuBreakKey <= kMenuNavFire) &&
+                  !(kMenuBreakKey >= kMenuConfirmRow && kMenuBreakKey < kMenuConfirmRow + kListMaxEntries) &&
+                  kMenuBreakKey != kMenuEditSave && kMenuBreakKey != kMenuPollKey && kMenuBreakKey != kMenuNoKey,
+              "Break apart from keys, moves, confirm rows, edit, poll and redraw");
 static_assert(kMenuCursor >= kListMessage + kMenuLineWidth && kMenuCursor >= kMainMessage + kMenuLineWidth &&
                   kMenuCursor + 5 <= kMenuScreenSize,
               "the cursor block past every layout");
@@ -221,9 +226,14 @@ void MenuController::collect()
     }
     const unsigned number = outcome->drive.value();
     char detail[64];
+    const bool restoring = restoreDrive_ == number && inFlight_ == InFlight::Mount;
+    restoreDrive_ = 0;
     if (outcome->error) {
         std::snprintf(detail, sizeof detail, "D%u not applied: error %u", number,
                       static_cast<unsigned>(*outcome->error));
+        if (restoring) {
+            restoreProblem(number, "INVALIDA", reason(*outcome->error));
+        }
         if (inFlight_ == InFlight::Mount || inFlight_ == InFlight::Unmount) {
             shown_[number - 1] = previous_;
             recycle(incoming_);  // its source was closed with the reply (ADR-014)
@@ -236,6 +246,11 @@ void MenuController::collect()
             menuOnD1_ = inFlight_ == InFlight::Menu;
         } else {
             recycle(previous_);  // the displaced source was closed with the reply
+            if (restoring) {
+                ++restored_;
+            } else {
+                changed();  // a mount or an unmount the menu asked for: remember it
+            }
         }
         const char* what = inFlight_ == InFlight::Menu    ? "menu"
                            : inFlight_ == InFlight::Boot  ? "image"
@@ -259,13 +274,20 @@ void MenuController::collect()
 void MenuController::service()
 {
     collect();
-    if (!coldResetPending_ || !mailbox_.idle()) {
-        return;
+    if (coldResetPending_ && mailbox_.idle()) {
+        if (menuOnD1_) {
+            coldResetPending_ = false;  // a cold reset with the menu already on D1 changes nothing
+        } else {
+            requestMenu();
+        }
     }
-    if (menuOnD1_) {
-        coldResetPending_ = false;  // a cold reset with the menu already on D1 changes nothing
-        return;
+    if (restoring_) {
+        restoreNext();  // after the menu: D1 comes first
     }
+}
+
+void MenuController::requestMenu()
+{
     const auto menu = rb::app::ImageLocation::from(kMenuLocation);
     const auto mounted = mount_.execute(drive(1), menu.value());
     if (mounted.ok()) {
@@ -281,6 +303,13 @@ void MenuController::service()
 
 MenuReply MenuController::key(uint8_t code, uint8_t row)
 {
+    if (restoring_) {
+        return render(kMenuActionWait);  // every key, A too, waits for the drives
+    }
+    // Break (T5, C7) before the loading check and the mask: masked it would read as a key.
+    if (code == kMenuBreakKey) {
+        return onBreak();
+    }
     if (job_ != Job::None) {
         return onLoading(code);
     }
@@ -631,7 +660,7 @@ void MenuController::onUnmount(int digit)
     emptyDrive(static_cast<unsigned>(digit));
 }
 
-void MenuController::assignD1(EntryIndex entry)
+std::optional<ErrorCode> MenuController::assignD1(EntryIndex entry)
 {
     const char* name = catalog_.name(entry);
     // Every catalog name was accepted by ImageLocation::from when it was listed.
@@ -665,12 +694,14 @@ void MenuController::assignD1(EntryIndex entry)
         recycle(shown_[0]);  // D1 is assigned, not mounted: nothing holds its slot
         shown_[0] = local;
         say(" D1: %s (A ARRANCA)", name);
+        changed();
         std::snprintf(detail, sizeof detail, "D1 name=%s assigned", name);
     }
     event("menu_select", detail);
+    return error;
 }
 
-void MenuController::mountOn(unsigned number, EntryIndex entry)
+std::optional<ErrorCode> MenuController::mountOn(unsigned number, EntryIndex entry)
 {
     const Shown& current = shown_[number - 1];
     if (current.kind == Shown::Kind::Local && current.entry == entry && remountDrive_ == 0) {
@@ -682,7 +713,7 @@ void MenuController::mountOn(unsigned number, EntryIndex entry)
             remountDrive_ = 0;
             remountEntry_ = kNoEntry;
         }
-        return;
+        return std::nullopt;
     }
     const char* name = catalog_.name(entry);
     const auto location = rb::app::ImageLocation::from(name);
@@ -690,7 +721,9 @@ void MenuController::mountOn(unsigned number, EntryIndex entry)
         mailbox_.idle() ? mount_.execute(drive(number), location.value())
                         : rb::core::Result<rb::app::MountReport>{rb::core::Failure{ErrorCode::MailboxBusy}};
     char detail[MenuCatalog::kMaxName + 64];
+    std::optional<ErrorCode> error;
     if (!mounted.ok()) {
+        error = mounted.error();
         say(" ERROR: %s", reason(mounted.error()));
         std::snprintf(detail, sizeof detail, "D%u name=%s refused: error %u", number, name,
                       static_cast<unsigned>(mounted.error()));
@@ -708,6 +741,7 @@ void MenuController::mountOn(unsigned number, EntryIndex entry)
                       static_cast<unsigned>(mounted.value().geometry.sectorSize()));
     }
     event("menu_select", detail);
+    return error;
 }
 
 void MenuController::emptyDrive(unsigned number)
@@ -721,6 +755,7 @@ void MenuController::emptyDrive(unsigned number)
         recycle(shown_[0]);
         shown_[0] = Shown{};  // D1 serves the menu: there is nothing mounted to remove
         say(" D1 DESMONTADA");
+        changed();
         event("menu_unmount", "D1 unassigned");
         return;
     }
@@ -771,6 +806,9 @@ bool MenuController::boot()
 
 MenuReply MenuController::render(uint8_t action) const noexcept
 {
+    if (action == kMenuActionShow && view_ == View::Main && (restoring_ || saving())) {
+        action = kMenuActionWait;  // the Atari polls: the restore or the save result shows up by itself
+    }
     if (editing() && action == kMenuActionShow) {
         action = kMenuActionEdit;  // the 6502 edits the row (menu-editar-servidor, menu-formatear-disco)
     }
@@ -869,7 +907,7 @@ MenuReply MenuController::render(uint8_t action) const noexcept
         std::snprintf(text, sizeof text, "NOMBRE:%s", edited);
         put(screen, kMainMessage, kMenuLineWidth, text, false);  // as typed: the 6502 shows it so
     } else {
-        put(screen, kMainMessage, kMenuLineWidth, message_.data(), true);
+        put(screen, kMainMessage, kMenuLineWidth, restoring_ ? " RESTAURANDO UNIDADES" : message_.data(), true);
     }
     return reply;
 }
@@ -1283,6 +1321,22 @@ MenuReply MenuController::onLoading(uint8_t code)
     return advance();  // a poll, a redraw or any other key: only the progress
 }
 
+MenuReply MenuController::onBreak()
+{
+    if (job_ != Job::None) {
+        cancelJob();  // a late result is dropped, as with Esc
+        event("menu_tnfs", "load cancelled with Break");
+    } else if (editing() || view_ == View::Main || view_ == View::Unmount || view_ == View::Create) {
+        return render(kMenuActionShow);  // nothing to leave (spec: suposición tomada)
+    }
+    view_ = View::Main;
+    chosen_ = kNoEntry;
+    depth_ = 0;  // the folders entered are forgotten: the next opening starts at the root
+    message_[0] = '\0';
+    event("menu_break", "back to the main screen");
+    return render(kMenuActionShow);
+}
+
 MenuReply MenuController::advance()
 {
     loader_->await(jobNumber_, kLoadWaitMicros);
@@ -1377,6 +1431,188 @@ void MenuController::fetched(const LoaderStatus& status)
     place(jobDrive_, image, status.xex ? &status : nullptr);
 }
 
+// ---------------------------------------------------------------------------
+// Persistent drives (menu-unidades-persistentes T3).
+
+void MenuController::beginRestore() noexcept
+{
+    persistent_ = true;
+    restoring_ = true;
+    restoreLoaded_ = false;  // waiting for the read: service() applies nothing yet
+    pendingRestore_.fill(kNoEntry);
+    view_ = View::Main;
+    message_[0] = '\0';
+    event("menu_restore", "begin");
+}
+
+MenuController::EntryIndex MenuController::findEntry(const char* name) const noexcept
+{
+    for (std::size_t i = 0; i < catalog_.count(); ++i) {
+        if (std::strcmp(catalog_.name(i), name) == 0) {
+            return static_cast<EntryIndex>(i);
+        }
+    }
+    return kNoEntry;
+}
+
+void MenuController::restore(const DriveMemory& memory)
+{
+    if (!restoring_) {
+        return;
+    }
+    restored_ = 0;
+    problems_ = 0;
+    problem_[0] = '\0';
+    pendingRestore_.fill(kNoEntry);
+    for (unsigned number = 1; number <= kDrives; ++number) {
+        const char* name = memory.name(number);
+        if (name[0] == '\0') {
+            continue;
+        }
+        const EntryIndex entry = findEntry(name);
+        if (entry == kNoEntry) {
+            restoreProblem(number, "FALTA", name);
+        } else if (number > 1) {
+            pendingRestore_[number - 1] = entry;  // mounted one at a time by service()
+        } else if (const auto error = assignD1(entry)) {
+            restoreProblem(1, "INVALIDA", reason(*error));
+        } else {
+            ++restored_;
+        }
+    }
+    restoreLoaded_ = true;
+    restoreNext();
+}
+
+void MenuController::restoreNext()
+{
+    // A pending cold reset took the mailbox first in service(); if its menu mount was refused,
+    // the restore goes on anyway rather than leave every key waiting.
+    if (!restoring_ || !restoreLoaded_ || inFlight_ != InFlight::None || !mailbox_.idle()) {
+        return;  // not read yet, or busy
+    }
+    for (unsigned number = 2; number <= kDrives; ++number) {
+        const EntryIndex entry = pendingRestore_[number - 1];
+        if (entry == kNoEntry) {
+            continue;
+        }
+        pendingRestore_[number - 1] = kNoEntry;
+        if (const auto error = mountOn(number, entry)) {
+            restoreProblem(number, "INVALIDA", reason(*error));
+            continue;
+        }
+        restoreDrive_ = number;
+        return;  // the next one when this one is applied
+    }
+    finishRestore();
+}
+
+void MenuController::restoreProblem(unsigned number, const char* what, const char* detail) noexcept
+{
+    if (++problems_ == 1) {
+        std::snprintf(problem_.data(), problem_.size(), " D%u: %s %s", number, what, detail);
+    }
+}
+
+void MenuController::finishRestore() noexcept
+{
+    restoring_ = false;
+    restoreLoaded_ = false;
+    emitted_ = version_;
+    confirmed_ = version_;  // what was restored is what is saved
+    saveFailed_ = false;
+    if (problems_ > 1) {
+        say("%s +%u", problem_.data(), problems_ - 1);
+    } else if (problems_ == 1) {
+        say("%s", problem_.data());
+    } else if (restored_ > 0) {
+        say(" UNIDADES RESTAURADAS");
+    } else {
+        message_[0] = '\0';
+    }
+    char detail[48];
+    std::snprintf(detail, sizeof detail, "restored=%u problems=%u", restored_, problems_);
+    event("menu_restore", detail);
+}
+
+void MenuController::restoreFailed(const char* message) noexcept
+{
+    if (!restoring_) {
+        return;
+    }
+    pendingRestore_.fill(kNoEntry);
+    restoring_ = false;
+    restoreLoaded_ = false;
+    emitted_ = version_;
+    confirmed_ = version_;
+    say("%s", message != nullptr ? message : "");
+    event("menu_restore", "failed");
+}
+
+uint32_t MenuController::snapshot(DriveMemory& out) noexcept
+{
+    out = DriveMemory{};
+    for (unsigned number = 1; number <= kDrives; ++number) {
+        const Shown& shown = shown_[number - 1];
+        if (shown.kind == Shown::Kind::Local) {
+            (void)out.set(number, catalog_.name(shown.entry));  // a name it refuses is remembered empty
+        }
+    }
+    emitted_ = version_;
+    return version_;
+}
+
+void MenuController::changed() noexcept
+{
+    if (!persistent_ || restoring_) {
+        return;
+    }
+    ++version_;
+    saveFailed_ = false;
+    status(" GUARDANDO");
+}
+
+bool MenuController::statusShown() const noexcept
+{
+    const std::size_t length = std::strlen(status_.data());
+    return length > 0 && std::strlen(message_.data()) == statusAt_ + length &&
+           std::memcmp(message_.data() + statusAt_, status_.data(), length) == 0;
+}
+
+void MenuController::status(const char* text) noexcept
+{
+    if (statusShown()) {
+        message_[statusAt_] = '\0';  // the previous status goes
+    }
+    const std::size_t length = std::strlen(message_.data());
+    const std::size_t add = std::strlen(text);
+    statusAt_ = length + add <= kMenuLineWidth ? length : 0;
+    std::snprintf(message_.data() + statusAt_, message_.size() - statusAt_, "%s", text);
+    std::snprintf(status_.data(), status_.size(), "%s", text);
+}
+
+void MenuController::saveResult(uint32_t version, bool ok, int error) noexcept
+{
+    if (!persistent_ || version != version_) {
+        return;  // an older version: a newer one is being saved
+    }
+    char detail[48];
+    if (ok) {
+        confirmed_ = version;
+        if (statusShown()) {
+            status(" GUARDADO");
+        }
+        std::snprintf(detail, sizeof detail, "version=%lu saved", static_cast<unsigned long>(version));
+    } else {
+        saveFailed_ = true;
+        char text[kMenuLineWidth + 1];
+        std::snprintf(text, sizeof text, " NO SE GUARDO: %s", storageReason(error));
+        status(text);
+        std::snprintf(detail, sizeof detail, "version=%lu error %d", static_cast<unsigned long>(version), error);
+    }
+    event("menu_save", detail);
+}
+
 // An image that came over TNFS: validated like a local one, then assigned to
 // D1 or mounted on D2..D8. Refused, its slot goes back to the loader.
 void MenuController::place(unsigned number, const Shown& image, const LoaderStatus* xex)
@@ -1402,6 +1638,7 @@ void MenuController::place(unsigned number, const Shown& image, const LoaderStat
             shown_[0] = image;
             view_ = View::Main;
             say(" D1: %s (A ARRANCA)", image.name);
+            changed();  // remembered empty: TNFS images are not restored
         }
     } else {
         const rb::core::Result<rb::app::MountReport> mounted =

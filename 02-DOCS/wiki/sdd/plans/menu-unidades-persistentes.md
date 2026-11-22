@@ -259,3 +259,25 @@ T1, T4 y T5 pueden ir en paralelo.
 | R7 | Leer el ADC desde la tarea SIO retrasa una respuesta | Lectura justo antes de una trama | Reintento del Atari | Solo cada 50 ms y sin trama pendiente; 8 muestras ≈ 0,2 ms |
 
 **Decisiones abiertas:** ninguna bloquea. El valor exacto del código BREAK queda para T5, con su prueba en Altirra.
+
+## 8. Tareas
+
+> Rama `feat/menu-unidades-persistentes` desde `main` `861ddb7` (PR #77 fusionado). Riesgo: 0 = local y
+> reversible; 1 = toca el comportamiento del menú; 2 = firmware en la placa o el NVS. Paralelo = sin archivos
+> compartidos con otra tarea abierta.
+>
+> Comprobación común de host: `cmake --build build/host && ctest --test-dir build/host --output-on-failure`
+> (abreviada «ctest»). Programa del menú: `python -I -m unittest discover -s tools/tests` («pytests»).
+
+| # | Tarea | Criterios | Riesgo | Hecho cuando (literal) | Depende | Paralelo |
+|---|---|---|---|---|---|---|
+| T1 | `DriveMemory` y `DriveMemoryCodec` en `rb_menu` | C1, C9 | 0 | ctest verde con `test/host/menu/test_drive_memory.cpp`: ida y vuelta de 8 nombres; CRC, magia, versión y longitud dañados → inválido; `newest` elige la `seq` válida más alta y devuelve nada si ninguna vale | — | Sí |
+| T2 | `SlotFileStore` (stdio) | C1, C5, C8, C9a, C9b, C9c | 1 | ctest verde con `test_drive_slot_store.cpp`: ida y vuelta en directorio temporal; directorio de solo lectura → `error`; 9a → E1; 9b-1 y 9b-2 → E0; 9c → E1; dos guardados alternan ranura | T1 | No |
+| T3 | `MenuController`: versión, `snapshot`, `saveResult`, `beginRestore`, `restore` | C1, C3, C4, C5, C8, C12 | 1 | ctest verde con `test_menu_unidades.cpp`: `GUARDANDO`→`GUARDADO`/`NO SE GUARDO`; versión vieja no confirma; `A` deshabilitada en RESTAURANDO; `FALTA`, `INVALIDA`, `MICROSD`; D1 queda asignada y no servida; los tests de menú existentes siguen verdes | T1 | No (comparte controlador con T5) |
+| T4 | `SioPowerWatch` | C10 | 0 | ctest verde con `test_sio_power_watch.cpp`: apagado tras ≥ 100 ms < 1000 mV; 60 ms bajo no dispara; encendido solo tras apagado; ciclo de 300 ms detectado | — | Sí |
+| T5 | BREAK: código reservado, controlador a Main, `make_menu.py` con «Break pendiente» y `resend` | C7, C11 | 1 | ctest verde con BREAK desde List, Pick, Folder (3 niveles) y FolderPick → Main sin cambiar unidades; test de transporte: montaje aplicado, respuesta perdida, misma `AUX1`/`AUX2` → un montaje y misma respuesta, luego BREAK → Main; pytests verdes con un test que comprueba que `resend` está después de `INC seq` y que un 128 no escribe `NO_HOST_TEXT` | T3 | No |
+| T6 | Pegamento ESP en `main/menu_sio.cpp` | C1–C6, C8, C10, C12 | 2 | CI verde con el paquete `menu-sio`; `check_sio_calls` sigue en 45 llamadas; la consola registra «unidades restauradas a X ms», resultados de guardado y apagado/encendido | T2, T3, T4 | No |
+| T7 | Empaquetador sin `nvs_*` y banco | todos | 2 | Prueba RED: una llamada `nvs_flash_erase` falsa hace fallar el empaquetador; el árbol real pasa. Paquete CI flasheado con verify 3 de 3; línea de tiempo USB con D1 < 1 s; banco 65XE: C1, C2, C4, C6 (dos ciclos solo SIO), C10 (2 s y ciclo corto con USB), C12; Altirra: C2, C3, C5, C7, C11; evidencia en `docs/mediciones/` | T5, T6 | No |
+
+**Orden:** T1 y T4 en paralelo → T2 y T3 → T5 → T6 → T7. Cada tarea pasa su revisión según `rsc risk` antes de la
+siguiente; T6 y T7 piden aprobación antes de flashear o escribir en COM3.

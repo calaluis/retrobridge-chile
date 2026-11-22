@@ -51,17 +51,21 @@ private:
 // exactly `index` source lines, `name` is added at the end. A null `name`
 // deletes that source line (M44); there must be one. Comments, blank
 // lines and the other lines are kept byte for byte. The new text goes to
-// `path`.tmp, which then replaces `path`: on failure `path` is unchanged and
-// `error` says why. A `path` that does not exist is read as an empty file, so
-// saving source 2 creates it (menu-sio-wifi-tnfs T5, C6).
+// `path`.tmp; then `path` is renamed `path`.bak, the .tmp is named `path` and
+// the .bak is removed. On failure `path` holds the old text and `error` says
+// why. A `path` that does not exist is read as an empty file, so saving
+// source 2 creates it (menu-sio-wifi-tnfs T5, C6).
 bool writeSourcesFile(const char* path, std::size_t index, const char* name, char* error,
                       std::size_t errorSize) noexcept;
 
-// A `path`.tmp left by a write that power cut short (T5 review). Called once at start,
-// before the file is read: with `path` there, the .tmp is an unfinished new text and is
-// removed; with `path` missing, the old file was already removed and the .tmp, complete,
-// becomes `path`.
+// What a save cut by a power loss left (T5 review). Called once at start, before the file is
+// read. A .tmp is always removed: a cut one cannot be told from a whole one. With `path` there,
+// a .bak is stale and goes; with `path` missing, the .bak is the old file and becomes `path`
+// again. A first save cut short (there was no file before) is lost: E types it again.
 enum class SourcesRecovery { Nothing, Discarded, Restored, Failed };
 SourcesRecovery recoverSourcesFile(const char* path) noexcept;
+
+// The rename the sources file uses (std::rename); a test sets it to make one step fail.
+extern int (*sourcesFileRename)(const char* from, const char* to);
 
 }  // namespace rb::host

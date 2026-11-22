@@ -8,34 +8,47 @@ namespace {
 
 enum class Line { Ok, TooLong, End, Error };
 
-// Reads one line into `out` (at most `max` bytes, NUL added) without its CR/LF. End: the
+void put(char* out, std::size_t max, std::size_t& length, bool& tooLong, char c) noexcept
+{
+    if (length < max) {
+        out[length] = c;
+    } else {
+        tooLong = true;
+    }
+    ++length;
+}
+
+// Reads one line into `out` (at most `max` bytes, NUL added) without its line end: LF, CR LF,
+// or a CR at the end of the file. A CR is held back until the next byte shows it is not part of
+// the line end, so it never counts against `max` (T5 review: files saved on Windows). End: the
 // file ended before any byte of this line.
 Line readLine(std::FILE* file, char* out, std::size_t max, std::size_t& length) noexcept
 {
     length = 0;
     bool any = false;
     bool tooLong = false;
+    bool cr = false;  // a CR read and not stored yet
     for (;;) {
         const int c = std::fgetc(file);
         if (c == EOF) {
             if (std::ferror(file) != 0) {
                 return Line::Error;
             }
-            break;
+            break;  // a held CR at the end of the file is a line end
         }
         any = true;
         if (c == '\n') {
-            break;
+            break;  // a held CR before it is part of the line end
         }
-        if (length < max) {
-            out[length] = static_cast<char>(c);
+        if (cr) {
+            put(out, max, length, tooLong, '\r');  // a CR inside the line is text
+            cr = false;
+        }
+        if (c == '\r') {
+            cr = true;
         } else {
-            tooLong = true;
+            put(out, max, length, tooLong, static_cast<char>(c));
         }
-        ++length;
-    }
-    if (length > 0 && length <= max && out[length - 1] == '\r') {
-        --length;
     }
     if (length <= max) {
         out[length] = '\0';

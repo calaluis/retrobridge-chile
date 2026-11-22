@@ -84,6 +84,23 @@ void test_the_limits_of_the_name_and_the_key()
     assertEmpty(wifi);
 }
 
+// T5 review: a file saved on Windows (CR LF) takes the same limits as one with LF.
+void test_crlf_lines_take_the_full_limits_and_a_cr_inside_is_text()
+{
+    WifiConfig wifi;
+    const std::string name32(32, 'n');
+    const std::string key63(63, 'k');
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(Result::Ok), static_cast<int>(readText(wifi, name32 + "\r\n" + key63 + "\r\n")));
+    TEST_ASSERT_EQUAL_UINT(32, wifi.nameLength());
+    TEST_ASSERT_EQUAL_UINT(63, wifi.keyLength());
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(Result::Ok), static_cast<int>(readText(wifi, name32 + "\r\n" + key63 + "\r")));
+    TEST_ASSERT_EQUAL_UINT(63, wifi.keyLength());
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(Result::BadName), static_cast<int>(readText(wifi, name32 + "n\r\n" + key63)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(Result::BadKey), static_cast<int>(readText(wifi, "red\r\n" + key63 + "k\r\n")));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(Result::Ok), static_cast<int>(readText(wifi, "a\rb\r\nclave1234\r\n")));
+    TEST_ASSERT_EQUAL_STRING("a\rb", wifi.name());
+}
+
 void test_a_third_line_makes_the_file_not_valid_and_keeps_nothing()
 {
     WifiConfig wifi;
@@ -115,6 +132,7 @@ int main()
     RUN_TEST(test_two_lines_give_the_name_and_the_key_with_their_spaces);
     RUN_TEST(test_an_open_network_has_one_line_or_an_empty_second_line);
     RUN_TEST(test_the_limits_of_the_name_and_the_key);
+    RUN_TEST(test_crlf_lines_take_the_full_limits_and_a_cr_inside_is_text);
     RUN_TEST(test_a_third_line_makes_the_file_not_valid_and_keeps_nothing);
     RUN_TEST(test_no_reason_holds_the_key);
     return UNITY_END();

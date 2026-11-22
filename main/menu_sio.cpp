@@ -451,13 +451,13 @@ void netTask(void*)
 {
     switch (rb::host::recoverSourcesFile(kSourcesPath)) {
     case rb::host::SourcesRecovery::Discarded:
-        ESP_LOGW(kTag, "%s.tmp from an unfinished save removed", kSourcesPath);
+        ESP_LOGW(kTag, "leftovers of an unfinished save of %s removed", kSourcesPath);
         break;
     case rb::host::SourcesRecovery::Restored:
-        ESP_LOGW(kTag, "%s restored from its .tmp", kSourcesPath);
+        ESP_LOGW(kTag, "%s restored from its .bak (the last save did not finish)", kSourcesPath);
         break;
     case rb::host::SourcesRecovery::Failed:
-        ESP_LOGE(kTag, "%s missing and its .tmp could not be renamed", kSourcesPath);
+        ESP_LOGE(kTag, "%s missing and its .bak could not be renamed", kSourcesPath);
         break;
     case rb::host::SourcesRecovery::Nothing:
         break;

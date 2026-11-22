@@ -1039,10 +1039,11 @@ LOAD = "_ZN2rb4host13SlotFileStore4loadEv"
 SAVE = "_ZN2rb4host13SlotFileStore4saveERKNS0_11DriveMemoryE"
 SAVE_TASK = "_ZN2rb7menusio12_GLOBAL__N_1L13driveSaveTaskEPv"
 PLAN = "_ZN2rb4host15planDriveMemoryEPKciPKNS0_13SlotFileStore10LoadResultEbRNS0_15DriveMemoryPlanE"
+DECODE = "_ZN2rb4host18drive_memory_codec6decodeEPKhjRNS0_15DriveMemorySlotE"
 MENU_FRAMES = {"vPortTaskWrapper": 32, "main_task": 48, "app_main": 80, FINISH: 400, LOAD: 160, PLAN: 32,
-               SAVE_TASK: 80, SAVE: 112, **FS_FRAMES}
+               SAVE_TASK: 80, SAVE: 112, DECODE: 48, **FS_FRAMES}
 # 7a1ebf0: finish() held a ~1 KB LoadResult and load() three slot-sized buffers; app_main overflowed.
-FRAMES_7A1EBF0 = {**MENU_FRAMES, FINISH: 2128, LOAD: 3136, SAVE: 2128}
+FRAMES_7A1EBF0 = {**MENU_FRAMES, FINISH: 2128, LOAD: 3136, SAVE: 2128, DECODE: 1072}
 MENU_MARKERS = CASSETTE_ELF + b"_ZN2rb3esp10EspSioUart5beginEv\0_ZN2rb7menusio5startERKNS_5board12BoardProfileEb\0"
 MENU_ELF = xtensa_elf(MENU_FRAMES) + MENU_MARKERS
 MENU_STACKS = "CONFIG_ESP_MAIN_TASK_STACK_SIZE=3584\nCONFIG_RB_DRIVE_SAVE_STACK=6144\n"
@@ -1238,6 +1239,20 @@ class MenuSioPackageTest(unittest.TestCase):
 
     def test_a_large_load_result_left_in_finish_is_refused(self):
         self.build(menu_option=True, app=MENU_APP_MARKERS, elf=xtensa_elf({**MENU_FRAMES, FINISH: 400 + 1040}) + MENU_MARKERS)
+        self.assert_refused(fp.STACK_CHECK)
+
+    def test_a_slot_copy_left_in_decode_is_refused(self):
+        # fc176ee: decode() built a DriveMemorySlot on its stack (1072 B) under load(), in both tasks
+        self.build(menu_option=True, app=MENU_APP_MARKERS, elf=xtensa_elf({**MENU_FRAMES, DECODE: 1072}) + MENU_MARKERS)
+        log = self.package()
+        self.assertFalse(log.ok)
+        detail = next(c.detail for c in log.checks if c.name == fp.STACK_CHECK)
+        self.assertIn("decode", detail)
+
+    def test_a_missing_decode_symbol_is_refused(self):
+        frames = dict(MENU_FRAMES)
+        del frames[DECODE]
+        self.build(menu_option=True, app=MENU_APP_MARKERS, elf=xtensa_elf(frames) + MENU_MARKERS)
         self.assert_refused(fp.STACK_CHECK)
 
     def test_a_missing_chain_symbol_is_refused(self):

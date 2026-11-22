@@ -194,11 +194,15 @@ STACK_TASKS = {  # task -> sdkconfig option with its stack size, and the frames 
 }
 _FINISH = r"_ZN2rb7menusio6finishE\w*"
 _LOAD = r"_ZN2rb4host13SlotFileStore4loadEv"
+_SAVE = r"_ZN2rb4host13SlotFileStore4saveE\w*"
+_DECODE = r"_ZN2rb4host18drive_memory_codec6decodeE\w*"  # load() decodes each slot after reading it
 STACK_CHAINS = (  # (task, chain below the task's own frames, reaches the microSD)
     ("app_main", (_FINISH, _LOAD), True),
+    ("app_main", (_FINISH, _LOAD, _DECODE), False),
     ("app_main", (_FINISH, r"_ZN2rb4host15planDriveMemoryE\w*"), False),
-    ("rb_drive_save", (r"_ZN2rb4host13SlotFileStore4saveE\w*", _LOAD), True),  # save() reads again after an error
-    ("rb_drive_save", (r"_ZN2rb4host13SlotFileStore4saveE\w*",), True),       # save() writes
+    ("rb_drive_save", (_SAVE, _LOAD), True),  # save() reads again after an error
+    ("rb_drive_save", (_SAVE, _LOAD, _DECODE), False),
+    ("rb_drive_save", (_SAVE,), True),        # save() writes
 )
 # The stdio/FatFs/SD paths below load() and save(): reading as in the 7a1ebf0 panic backtrace, and writing.
 STACK_FS_PATHS = {

@@ -30,15 +30,22 @@ Spec: `specs/menu-unidades-persistentes.md`. Plan: `plans/menu-unidades-persiste
   controlador; `resend`, `brk` y `brk_hold` en `make_menu.py`. Pruebas: `test_menu_break.cpp` (C7, 7 casos),
   `test_a_mount_whose_reply_was_lost_to_break_is_applied_once_then_break_shows_main` (C11 en el transporte) y
   9 pruebas de Break en `test_menu_program.py`. Altirra: `02-DOCS/raw/2026-11-22-t5-break-altirra.md`.
-- **T6 pegamento ESP (pendiente de evidencia de banco):** rama `feat/menu-unidades-esp` desde `ef77ccf`; `1efe7d4`
+- **T6 pegamento ESP (evidencia de banco registrada, cierre pendiente):** rama `feat/menu-unidades-esp` desde `ef77ccf`; `1efe7d4`
   y corrección posterior. `beginRestore()` en `start()`; `finish()` lee catálogo y ranuras una vez, arma el plan
   (`planDriveMemory`, `drive_memory_link`) y lo publica con release; la tarea SIO solo toca el plan y las colas tras
   verlo con acquire, y las colas solo si el guardado está activo. Guardado activo solo con `rb_drive_save` en marcha y
   primera lectura Loaded o Empty; tras Error o fallo de microSD queda desactivado toda la sesión (`NO SE GUARDO`).
   Regresión `test_a_failed_first_read_keeps_saving_off_and_e0_survives` (E0 ilegible al arrancar, la tarjeta se
   recupera, cambio de unidad: funciona, `NO SE GUARDO`, E0 al reiniciar); el mutante «guardar tras Error» la hace
-  fallar. `check_sio_calls` en 45; sin `nvs_*`. Falta: consola en banco (restauración, guardado, apagado/encendido).
-- T7 empaquetador y banco: pendiente.
+  fallar. `check_sio_calls` en 45; sin `nvs_*`. Banco en la FN32ROV-1.3-Q24 con `0679621` (`test/menu-unidades-banco` =
+  `main` + #80 + #81): confirmados el arranque USB con microSD sin pánicos, el guardado y la restauración solo
+  por SIO (A arranca la ATR restaurada); NVS intacta. Falta la traza de guardado en consola, y C10 (regreso al
+  menú) es parcial: falta confirmar que la FujiNet siguió en USB y que D1 quedó lista antes de la primera trama.
+  Registro:
+  `docs/mediciones/menu-unidades-persistentes-banco.md`. El paquete `7a1ebf0` hacía pánico por desborde de pila
+  de `app_main`; el arreglo está en #81, pendiente de fusión.
+- T7 empaquetador y banco: guarda `nvs_*` en #80 y guarda de pila en #81, ambas en verde y probadas en el banco;
+  pendiente la fusión de los dos PR.
 
 ## Evidencia de T2 y T3
 

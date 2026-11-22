@@ -97,12 +97,16 @@ El reposo E1 y la fase 0 se anotan en filas separadas: son firmwares distintos.
 3. Dada la placa con el banco, cuando termina el ensayo, entonces la NVS es igual a la de antes (hash o comparación).
 4. **Criterio eléctrico (C1 de E2).**
    - **T1a:** dada la FujiNet alimentada desde una fuente externa a través de un medidor y **sin conexión eléctrica
-     con el Atari**, cuando se mide la media de cada fila de la tabla, entonces cada fila queda en 50 mA o menos.
-   - **T1b:** solo si T1a lo confirma. Dada la FujiNet alimentada por el pin 10 del SIO del 65XE con el USB
-     desconectado y el medidor en serie, cuando se mide cada fila, entonces cada fila queda en 50 mA o menos.
+     con el Atari**, cuando se miden la media y el pico de cada fila de la tabla, registrados por separado, entonces
+     cada fila cumple el presupuesto de 50 mA. Si todas las medias quedan en 50 mA o menos con los picos sin medir,
+     el resultado es **preliminar** y T1a no confirma el presupuesto.
+   - **T1b:** solo cuando T1a confirma el presupuesto eléctrico. Dada la FujiNet alimentada por el pin 10 del SIO
+     del 65XE con el USB desconectado y el medidor en serie, cuando se mide cada fila, entonces cada fila queda en
+     50 mA o menos.
    - **Comprobación funcional complementaria, que no sustituye a T1a ni a T1b:** en cada ensayo, al menos 3 ciclos
-     sin `reset BROWNOUT` ni arranques nuevos a mitad del ciclo, y todas las descargas TNFS con el SHA-256
-     esperado.
+     sin reinicios imprevistos (ningún arranque nuevo después del inicial, ningún `reset BROWNOUT`), y todas las
+     descargas TNFS con el SHA-256 esperado. El motivo del arranque inicial (`POWERON` al alimentar, `OTHER (7)`
+     tras un reinicio por RTS) se registra aparte y no cuenta como reinicio imprevisto.
 5. Dada cualquier salida del banco, cuando se busca la clave, entonces no aparece.
 
 ## Fuera de alcance
@@ -115,7 +119,8 @@ El reposo E1 y la fase 0 se anotan en filas separadas: son firmwares distintos.
 
 - **decisión diferida** — T1a y T1b esperan un medidor de corriente. *Base:* el responsable confirmó el 2026-11-22
   que no hay instrumentos. Mientras tanto solo se hace la comprobación funcional con alimentación USB
-  (`02-DOCS/raw/2026-11-22-banco-wifi-e2-usb.md`).
+  (`02-DOCS/raw/2026-11-22-banco-wifi-e2-usb.md`). Ese ensayo documenta un ciclo completo con 9 descargas TNFS con
+  el SHA-256 correcto y un arranque inicial `OTHER (7)` tras RTS; la comprobación de 3 ciclos sigue pendiente.
 - **suposición tomada** — 30 s por fase bastan para leer una media estable. *Base:* el multímetro promedia en pocos
   segundos. *Riesgo:* si no, se alarga la fase en el firmware.
 - **suposición tomada** — el método de lectura de la NVS es el del plan E2. *Base:* C10 deja el método al plan.

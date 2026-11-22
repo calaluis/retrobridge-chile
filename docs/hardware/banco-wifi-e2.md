@@ -32,8 +32,13 @@ ATR de ensayo: `/Aportes_Eduardo_Antonio (Chalo)/Demoscene/NumenPAL.atr`, 196 49
 ## T1a: sin el Atari
 
 La FujiNet **no** se conecta al 65XE. Se alimenta a 5 V por USB a través de un medidor en línea, o desde una fuente
-de laboratorio con el amperímetro en serie. Anotar la media de cada fase (y el pico, si hay osciloscopio).
-Si alguna fase pasa de 50 mA: parar y llevar las cifras al responsable. T1b no se hace.
+de laboratorio con el amperímetro en serie. Anotar por separado la media y el pico de cada fase: son columnas
+distintas de la tabla.
+
+- Si alguna media pasa de 50 mA: parar y llevar las cifras al responsable. T1b no se hace.
+- Si todas las medias quedan en 50 mA o menos pero los picos no se midieron, el resultado es **preliminar**. T1a no
+  confirma el presupuesto eléctrico y T1b no se hace.
+- T1a confirma el presupuesto (C1 de E2) solo con medias y picos medidos.
 
 Antes de grabar el banco, medir el reposo del firmware `menu-sio` actual (placa en el menú). Se anota en su propia
 fila, aparte de la fase 0 del banco: son firmwares distintos.
@@ -50,7 +55,8 @@ Spec del banco: `02-DOCS/wiki/sdd/specs/banco-wifi-e2.md`.
 
 ## T1b: con el SIO del 65XE
 
-**Solo si T1a confirma que todas las filas quedan en 50 mA o menos** (C1 de E2). Sin esa medida, T1b no se hace.
+**Solo si T1a confirma el presupuesto eléctrico** (C1 de E2), con medias y picos medidos. Con un resultado
+preliminar, o sin medida, T1b no se hace.
 USB desconectado; cable SIO de paso con el pin 10 abierto y el amperímetro en serie. Las fases se leen después en
 `retrobridge-banco-wifi.txt`. Pasa si todas las filas quedan en 50 mA o menos.
 
@@ -61,9 +67,16 @@ No sustituye a T1a ni a T1b. Con la alimentación que se use (USB en el banco, o
 1. Dejar correr al menos 3 ciclos (unos 6 minutos).
 2. Leer `retrobridge-banco-wifi.txt` (o la consola USB).
 
-Pasa si cada arranque dice `start, reset POWERON`, no hay `reset BROWNOUT` ni arranques nuevos a mitad del ciclo, y
-todas las descargas TNFS dan el SHA-256 esperado. Hecha con USB el 2026-11-22 en la FN32ROV-1.3-Q24
-(`02-DOCS/raw/2026-11-22-banco-wifi-e2-usb.md`).
+Pasa si, durante los 3 ciclos, no hay ningún reinicio imprevisto (ningún `start` nuevo después del arranque
+inicial, ningún `reset BROWNOUT`) y todas las descargas TNFS dan el SHA-256 esperado.
+
+El motivo del arranque inicial es aparte y no cuenta como reinicio imprevisto. Lo fija cómo se arrancó la placa:
+`POWERON` al conectar la alimentación; `OTHER (7)` tras un reinicio por RTS desde el PC, porque esta placa pasa por un
+reinicio del watchdog RTC antes de arrancar.
+
+Estado: **pendiente**. El ensayo con USB del 2026-11-22 en la FN32ROV-1.3-Q24
+(`02-DOCS/raw/2026-11-22-banco-wifi-e2-usb.md`) documenta un solo ciclo completo: arranque inicial `OTHER (7)` tras
+RTS, ningún reinicio imprevisto y 9 descargas TNFS con el SHA-256 correcto. Faltan los 3 ciclos.
 
 ## Volver al firmware anterior
 

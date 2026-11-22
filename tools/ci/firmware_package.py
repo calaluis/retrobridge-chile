@@ -175,6 +175,40 @@ MENU_BUTTON_INPUT = "gpio_set_direction(kButtonA, GPIO_MODE_INPUT)"
 MENU_SIO_KCONFIG = "CONFIG_RB_MENU_SIO"
 MENU_SIO_CHECK = "paquete de prueba menu-sio (sdkconfig, aplicación y ELF)"
 MENU_CODE_CHECK = "GPIO/UART del SIO solo en rb_esp_cassette y menu-sio (código)"
+
+# Task stacks of menu-sio (menu-unidades-persistentes): a stack overflow in app_main (finish() -> load() with
+# ~5 KB of frames in a 3584 B stack) panicked the 7a1ebf0 package on the bench. The ELF is read directly: every
+# Xtensa function starts with `entry a1, N`, and N is its frame. For each call chain below, the frames, plus
+# the deepest stdio/FatFs/SD-over-SPI path measured in the same ELF, plus STACK_FIXED_RESERVE, must fit in the
+# task's configured stack. A missing symbol, a function that does not start with `entry` or a missing size
+# fails the check (it cannot be proven to fit).
+STACK_CHECK = "pila de app_main y rb_drive_save en menu-sio (ELF)"
+# Exception frame of an interrupt on the task stack, and what runs below the SPI driver (locks, heap, log).
+STACK_FIXED_RESERVE = 768
+# No frame of these chains may hold an object as big as one remembered memory (DriveMemory: 8 x 128 B): a
+# LoadResult, a slot or a slot buffer belongs to the store (heap), not to the caller's stack.
+STACK_FRAME_MAX = 1024
+STACK_TASKS = {  # task -> sdkconfig option with its stack size, and the frames that start it
+    "app_main": ("CONFIG_ESP_MAIN_TASK_STACK_SIZE", ("vPortTaskWrapper", "main_task", "app_main")),
+    "rb_drive_save": ("CONFIG_RB_DRIVE_SAVE_STACK", ("vPortTaskWrapper", r"_ZN2rb7menusio\w*driveSaveTask\w*")),
+}
+_FINISH = r"_ZN2rb7menusio6finishE\w*"
+_LOAD = r"_ZN2rb4host13SlotFileStore4loadEv"
+STACK_CHAINS = (  # (task, chain below the task's own frames, reaches the microSD)
+    ("app_main", (_FINISH, _LOAD), True),
+    ("app_main", (_FINISH, r"_ZN2rb4host15planDriveMemoryE\w*"), False),
+    ("rb_drive_save", (r"_ZN2rb4host13SlotFileStore4saveE\w*", _LOAD), True),  # save() reads again after an error
+    ("rb_drive_save", (r"_ZN2rb4host13SlotFileStore4saveE\w*",), True),       # save() writes
+)
+# The stdio/FatFs/SD paths below load() and save(): reading as in the 7a1ebf0 panic backtrace, and writing.
+STACK_FS_PATHS = {
+    "lectura": ("fopen", "open", "esp_vfs_open", "vfs_fat_open", "f_open", "follow_path", "dir_find", "move_window",
+                "ff_disk_read", "ff_sdmmc_read", "sdmmc_read_sectors", "sdmmc_read_sectors_dma", "sdmmc_send_cmd",
+                "sdspi_host_do_transaction", "spi_device_polling_transmit"),
+    "escritura": ("fwrite", "__bufio_put", "__bufio_flush_locked", "write", "esp_vfs_write", "vfs_fat_write",
+                  "f_write", "ff_disk_write", "ff_sdmmc_write", "sdmmc_write_sectors", "sdmmc_write_sectors_dma",
+                  "sdmmc_send_cmd", "sdspi_host_do_transaction", "spi_device_polling_transmit"),
+}
 BOARD_PROFILE_HEADER = "components/rb_board/include/rb/board/board_profile.hpp"
 CODE_CHECK = "sin GPIO/UART del SIO (código)"
 CASSETTE_CODE_CHECK = "GPIO/UART del SIO solo en rb_esp_cassette (código)"
@@ -413,6 +447,76 @@ def scan_calls(src: Path, skip: tuple = ()):
                 for match in FORBIDDEN_CALLS.finditer(line):
                     hits.append((path.relative_to(src).as_posix(), number, match.group(1)))
     return hits
+
+
+def elf_function_frames(elf: bytes) -> dict:
+    """{name: frame in bytes, or None if it does not start with `entry a1, N`} for every function symbol of
+    a 32-bit little-endian ELF (Xtensa). Raises ValueError if it is not one."""
+    if len(elf) < 52 or elf[:4] != b"\x7fELF" or elf[4] != 1 or elf[5] != 1:
+        raise ValueError("no es un ELF de 32 bits little-endian")
+    shoff, = struct.unpack_from("<I", elf, 32)
+    shentsize, shnum = struct.unpack_from("<HH", elf, 46)
+    sections = [struct.unpack_from("<IIIIIIIIII", elf, shoff + i * shentsize) for i in range(shnum)]
+    symtabs = [s for s in sections if s[1] == 2]  # SHT_SYMTAB
+    if not symtabs:
+        raise ValueError("sin tabla de símbolos")
+    symtab = symtabs[0]
+    strtab = sections[symtab[6]]
+    frames = {}
+    for offset in range(symtab[4], symtab[4] + symtab[5], 16):
+        name_at, value, _size, info, _other, _shndx = struct.unpack_from("<IIIBBH", elf, offset)
+        if info & 0xF != 2:  # STT_FUNC
+            continue
+        start = strtab[4] + name_at
+        name = elf[start:elf.index(b"\0", start)].decode("ascii", "replace")
+        frame = None
+        for s in sections:
+            if s[1] == 1 and s[3] <= value < s[3] + s[5] and s[4] + value - s[3] + 3 <= len(elf):  # PROGBITS
+                at = s[4] + value - s[3]
+                word = elf[at] | elf[at + 1] << 8 | elf[at + 2] << 16
+                if word & 0xFFF == 0x136:  # entry a1, imm12 * 8
+                    frame = (word >> 12) * 8
+                break
+        frames.setdefault(name, frame)
+    return frames
+
+
+def check_stack(elf: bytes, sdk: dict):
+    """Returns (ok, detail) for STACK_CHECK."""
+    try:
+        frames = elf_function_frames(elf)
+    except (ValueError, struct.error) as error:
+        return False, f"ELF ilegible: {error}"
+    wrong, seen, big = [], [], set()
+
+    def frame_of(pattern):
+        names = [n for n in frames if re.fullmatch(pattern, n)]
+        if len(names) != 1:
+            wrong.append(f"{pattern}: {len(names)} símbolos")
+            return 0
+        if frames[names[0]] is None:
+            wrong.append(f"{names[0]}: no empieza con entry")
+            return 0
+        if frames[names[0]] >= STACK_FRAME_MAX and names[0] not in big:
+            big.add(names[0])
+            wrong.append(f"{names[0]}: marco de {frames[names[0]]} B (máximo {STACK_FRAME_MAX - 1} B)")
+        return frames[names[0]]
+
+    fs = {label: sum(frame_of(name) for name in path) for label, path in STACK_FS_PATHS.items()}
+    fs_worst = max(fs.values())
+    for task, chain, reaches_card in STACK_CHAINS:
+        option, base = STACK_TASKS[task]
+        size = sdk.get(option, "")
+        if not size.isdigit():
+            wrong.append(f"{task}: {option} sin valor")
+            continue
+        used = sum(frame_of(p) for p in base + chain)
+        total = used + (fs_worst if reaches_card else 0) + STACK_FIXED_RESERVE
+        seen.append(f"{task} {used}+{fs_worst if reaches_card else 0}+{STACK_FIXED_RESERVE}={total}/{size}")
+        if total > int(size):
+            wrong.append(f"{task}: {' -> '.join(chain)} necesita {total} B de {size} B")
+    detail = "; ".join(wrong) if wrong else ", ".join(seen)
+    return not wrong, detail + f" (FatFs: lectura {fs['lectura']} B, escritura {fs['escritura']} B)"
 
 
 def strip_code(text: str) -> str:
@@ -751,6 +855,9 @@ def check_variant(files: Files, variant: Variant, commit: str, log: CheckLog) ->
     log.require(MENU_SIO_CHECK, menu_on == menu_in_app == menu_in_elf == variant.menu_sio,
                 f"{MENU_SIO_KCONFIG}={'y' if menu_on else 'no'}, en la aplicación: {'sí' if menu_in_app else 'no'}, "
                 f"en el ELF: {'sí' if menu_in_elf else 'no'} (esperado: {'sí' if variant.menu_sio else 'no'})")
+    if variant.menu_sio:
+        stack_ok, stack_detail = check_stack(elf, sdk)
+        log.require(STACK_CHECK, stack_ok, stack_detail)
     if variant.version_matches_commit:
         version = str(log.facts["app_desc"].get("version", ""))
         ok = len(version) >= 7 and all(c in "0123456789abcdef" for c in version) and commit.startswith(version)

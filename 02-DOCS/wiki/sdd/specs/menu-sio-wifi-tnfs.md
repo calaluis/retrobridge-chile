@@ -88,8 +88,9 @@ la microSD una vez en el PC con dos archivos de texto; después usa solo el Atar
 - **Lo ya construido:** `rb_net_tnfs`, `MenuController` y `MenuSources` son los mismos del PC. El arranque de `.XEX`
   desde TNFS reutiliza el flujo del PC (`menu-xex`: el mismo cargador 6502 propio y la misma imagen de D1); no se
   escribe un cargador nuevo para el ESP32. Sus pruebas de host y la regresión en Altirra siguen en verde.
-- **Unidades persistentes** (`menu-unidades-persistentes`, en curso en otra rama): las imágenes TNFS se recuerdan
-  vacías; esta spec no cambia eso.
+- **Unidades persistentes** (`menu-unidades-persistentes`, en `main` desde `b3bd374`, T6 cerrada en el banco): las
+  imágenes TNFS se recuerdan vacías; esta spec no cambia eso. Tampoco cambia la vuelta de D1 al menú al apagar el
+  65XE (PR #84).
 - **Aprobaciones:** cada flash, escritura por COM3, commit y PR necesita la aprobación del responsable.
 
 ## Cómo lo demuestra
@@ -124,8 +125,9 @@ la microSD una vez en el PC con dos archivos de texto; después usa solo el Atar
 ## Criterios de aceptación
 
 1. **Viabilidad eléctrica.** Dado el USB desconectado, cuando la FujiNet busca la red, se conecta y trae una imagen
-   TNFS, entonces la corriente que toma del pin 10 del SIO no supera los 50 mA documentados para ese pin, y la
-   caracterización en banco (método y cifras de cada fase) está documentada. Si los supera, la ejecución se detiene y
+   TNFS, entonces la corriente **media de cada fase** que toma del pin 10 del SIO no supera los 50 mA documentados
+   para ese pin, y la caracterización en banco (método y cifras de cada fase) está documentada. Los picos se
+   registran si hay osciloscopio; si no, constan como «no medidos». Los picos no deciden el criterio. Si los supera, la ejecución se detiene y
    se presentan opciones al responsable, todas manteniendo el requisito de E2 solo por SIO.
 2. **Arranque intacto.** Dado `retrobridge-wifi.txt` válido y solo el SIO, cuando se enciende el 65XE 10 veces,
    entonces el menú aparece cada vez, `listo_ms` < 1000 y `brownout` = 0 en el registro de arranques.
@@ -212,6 +214,10 @@ la microSD una vez en el PC con dos archivos de texto; después usa solo el Atar
 - 2026-11-22 · ¿El arranque desde TNFS se valida solo con ATR? → no: con `.ATR` y con un `.XEX` real (criterio 4b),
   reutilizando el flujo del PC; el rechazo de un `.XEX` se cubre en host (criterio 13) → el objetivo del producto
   incluye `.XEX` y el servidor del responsable los mezcla con las ATR.
+
+- 2026-11-22 · ¿Los 50 mA de C1 son media o pico? → media de cada fase (reposo, búsqueda, conexión,
+  transferencia); picos registrados si hay osciloscopio, sin decidir el criterio → el multímetro da la media y el
+  criterio debe ser binario con los instrumentos del banco.
 
 ## Objeción registrada
 

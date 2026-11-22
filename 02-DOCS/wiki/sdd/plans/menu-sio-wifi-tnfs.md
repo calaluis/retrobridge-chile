@@ -19,7 +19,8 @@ status: approved
 
 - E2 funciona con el USB **físicamente desconectado** y la FujiNet alimentada por el Atari. Pasar a USB es decisión
   del responsable.
-- Presupuesto del pin 10 del SIO: **50 mA**. Si el consumo medido lo supera, **se detiene** el trabajo y se presentan
+- Presupuesto del pin 10 del SIO: **50 mA de media en cada fase**. Los picos se registran si hay osciloscopio y no
+  deciden. Si la media de alguna fase lo supera, **se detiene** el trabajo y se presentan
   opciones, todas solo por SIO.
 - D1 sirve el menú en **< 1000 ms desde EN** (`listo_ms` del registro de arranques). Nada de Wi-Fi antes de eso.
 - La clave del Wi-Fi vive solo en RAM. **Nunca** en el repositorio, la consola, `retrobridge-arranques.txt` ni otro
@@ -51,7 +52,8 @@ status: approved
   de corriente.
 - No hay tabla de particiones propia: el firmware usa la de ESP-IDF por defecto. La pila Wi-Fi añade varios cientos
   de KB de código.
-- Otra rama en curso (`feat/menu-unidades-persistentes`) también toca `main/menu_sio.cpp` y escribe en la microSD.
+- `menu-unidades-persistentes` ya está en `main` (`b3bd374`): `main/menu_sio.cpp` guarda D1–D8 en la microSD y
+  devuelve D1 al menú al apagar el 65XE (PR #84). E2 parte de ese `main` y no cambia esos comportamientos.
 
 ## §2. Arquitectura
 
@@ -134,7 +136,7 @@ ni a `nvs_flash_erase`.
 
 | Criterio | Nivel | Qué afirma | Qué se finge |
 | --- | --- | --- | --- |
-| C1 eléctrico | Banco (T1a, luego T1b) | T1a: demanda de la FujiNet **sin conexión eléctrica al Atari**, en reposo (E1 actual), búsqueda, conexión y transferencia, ≤ 50 mA. T1b, solo si T1a cumple: lo mismo alimentada por el SIO del 65XE. Método y cifras en `02-DOCS/raw/` | Nada |
+| C1 eléctrico | Banco (T1a, luego T1b) | T1a: demanda de la FujiNet **sin conexión eléctrica al Atari**, en reposo (E1 actual), búsqueda, conexión y transferencia, media de cada fase ≤ 50 mA; picos registrados o «no medidos». T1b, solo si T1a cumple: lo mismo alimentada por el SIO del 65XE. Método y cifras en `02-DOCS/raw/` | Nada |
 | C2 arranque | Banco | 10 encendidos solo SIO: menú, `listo_ms` < 1000, `brownout` = 0 | Nada |
 | C3 navegar | Host + banco | Listado de carpetas en el 65XE; en host, `test_menu_tnfs` y `test_menu_navegacion` siguen verdes tras mover el cargador | Servidor TNFS falso en host |
 | C4 arrancar | Host + Altirra + banco | a: la ATR de ensayo del servidor en D1 arranca con `A`. b: un `.XEX` real de `tnfs.calaluis.cl:16384`, elegido navegando una carpeta, asignado a D1 y arrancado con `A`, queda corriendo. En host, las pruebas de `menu-xex` con TNFS siguen verdes tras mover el cargador; en Altirra, el mismo `.XEX` corre antes del banco | Servidor TNFS falso en host; nada en el banco |
@@ -186,14 +188,14 @@ publica.
 | R4 | No cabe en la partición de la aplicación | La pila Wi-Fi + lwIP | No compila | Tabla de particiones propia sin tocar la NVS (mismo desplazamiento y tamaño); se comprueba en T6 |
 | R5 | La radio retrasa la tarea SIO | Interrupciones Wi-Fi en el mismo núcleo | Tramas perdidas | Wi-Fi en el núcleo 0, tarea SIO fija en el otro núcleo; contador de tramas cortas del registro de arranques en T8 |
 | R6 | Imágenes grandes agotan la PSRAM | ATR de muchos MB | Fallo de reserva | Límite por imagen y total en `MemoryImageStore`, criterio 11 |
-| R7 | Conflicto con `feat/menu-unidades-persistentes` | Ambas tocan `menu_sio.cpp` | Fusión manual | La segunda en llegar a `main` se rebasa; T6 empieza tras ver cuál va primero |
+| R7 | Romper las unidades persistentes o la vuelta al menú al apagar | T6 toca `menu_sio.cpp`, que ya las tiene (`b3bd374`) | Regresión de T6 de `menu-unidades-persistentes` | T6 parte del `main` actual; sus pruebas de host (`test_drive_memory`, `test_sio_power_watch`) y las guardas de pila y NVS del empaquetador siguen verdes |
 
 ## §8. Tareas
 
 | T | Qué | Criterios | Riesgo (tier) | Comprobación de hecho | Depende de | Paralelo |
 | --- | --- | --- | --- | --- | --- | --- |
-| T1a | **Demanda sin el Atari.** Firmware de banco (no publicado) que, por fases separadas y anunciadas en la consola, queda en reposo, busca red, conecta y descarga por TNFS la ATR de ensayo, con red y clave leídas de la microSD; medir la demanda de cada fase con alimentación externa, sin conexión eléctrica al 65XE. Incluye el reposo del firmware E1 actual | C1 | 2 | `02-DOCS/raw/<fecha>-consumo-e2-sin-atari.md` con método, foto, media (y pico si hay osciloscopio) por fase y veredicto ≤ 50 mA; si no, opciones presentadas y parada | Instrumentos confirmados | No |
-| T1b | **Demanda con el SIO del 65XE.** Las mismas fases con la FujiNet alimentada por el pin 10 y el USB desconectado | C1 | 2 | `02-DOCS/raw/<fecha>-consumo-pin10-e2.md` con las mismas cifras y veredicto ≤ 50 mA | T1a ≤ 50 mA | No |
+| T1a | **Demanda sin el Atari.** Firmware de banco (no publicado) que, por fases separadas y anunciadas en la consola, queda en reposo, busca red, conecta y descarga por TNFS la ATR de ensayo, con red y clave leídas de la microSD; medir la demanda de cada fase con alimentación externa, sin conexión eléctrica al 65XE. Incluye el reposo del firmware E1 actual | C1 | 2 | `02-DOCS/raw/<fecha>-consumo-e2-sin-atari.md` con método, foto, media (y pico si hay osciloscopio) por fase y veredicto con la media ≤ 50 mA; si no, opciones presentadas y parada | Instrumentos confirmados | No |
+| T1b | **Demanda con el SIO del 65XE.** Las mismas fases con la FujiNet alimentada por el pin 10 y el USB desconectado | C1 | 2 | `02-DOCS/raw/<fecha>-consumo-pin10-e2.md` con las mismas cifras y veredicto con la media ≤ 50 mA | T1a con la media ≤ 50 mA | No |
 | T2 | `WifiConfig` + pruebas de host (formato, espacios, límites, archivo ausente, clave centinela nunca en motivos ni salidas) | C7, C9 | 1 | ctest verde con `test_wifi_config`; un mutante que imprime la clave es detectado | T1b ok | Sí |
 | T3 | Mover `TnfsLoader` (trabajos ATR y XEX), `TnfsLink`, `UdpTnfsPort`, `SystemNameResolver` a `rb_menu_tnfs`; `NetworkGate` opcional; el PC usa «siempre hay red» | C3, C4, C5, C8, C11, C12, C13 | 1 | ctest verde con todas las pruebas TNFS y `menu-xex` de host sin cambios de comportamiento; `rb_menu_tnfs` compila como componente ESP en CI | T1b ok | Sí |
 | T4 | `rb_esp_wifi::WifiStation`: estación en segundo plano, reintentos, estado, sin NVS; opciones de `sdkconfig.menu-sio` | C7, C9, C10 | 2 | CI verde con el paquete `menu-sio`; comprobación del empaquetador falla con `CONFIG_ESP_WIFI_NVS_ENABLED=y` (test rojo primero) | T1b ok | Sí |
@@ -204,7 +206,7 @@ publica.
 
 **Orden:** T1a → T1b → (T2 ∥ T3 ∥ T4) → T5 → T6 → T7 → T8. La medición eléctrica (T1) sigue siendo el paso previo a
 integrar el Wi-Fi por SIO. Cada tarea pasa su revisión según `rsc risk` antes de la
-siguiente. Ninguna tarea después de T1b empieza si T1a y T1b no dan ≤ 50 mA o si el responsable no ha decidido una opción.
+siguiente. Ninguna tarea después de T1b empieza si T1a y T1b no dan una media ≤ 50 mA en cada fase o si el responsable no ha decidido una opción.
 
 ## Ensayo de transferencia
 

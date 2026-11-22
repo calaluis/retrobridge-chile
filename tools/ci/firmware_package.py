@@ -121,8 +121,9 @@ WATCHED_IDENTIFIER = re.compile(r"(?<![.>\w])((?:gpio|uart|rmt|esp_rom_gpio|ledc
 _DATA_IN = "components/rb_esp_cassette/src/esp_data_in.cpp"
 # NVS holds the owner's Wi-Fi settings and must never be erased or rewritten by a package
 # (menu-unidades-persistentes T7): no nvs_* identifier at all in main/ or components/ (a call, a call
-# split over lines, a pointer or a type), with comments and strings left out. Every variant checks it.
-NVS_IDENTIFIER = re.compile(r"(?<![.>\w])(nvs_\w+)\b")
+# split over lines, a pointer, a member after . or -> or a type, also right after <), with comments and
+# strings left out. Every variant checks it.
+NVS_IDENTIFIER = re.compile(r"\bnvs_\w+\b")
 NVS_CHECK = "sin nvs_* en main/ ni components/ (código)"
 _SERVICE = "components/rb_esp_cassette/src/cassette_service.cpp"
 CASSETTE_SIO_CALLS = (

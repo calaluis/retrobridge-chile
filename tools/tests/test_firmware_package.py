@@ -1181,6 +1181,21 @@ class MenuSioPackageTest(unittest.TestCase):
               "void wipe() { auto erase = nvs_flash_erase_partition\n    ; (void)erase; }\n")
         self.assert_refused(fp.NVS_CHECK)
 
+    def test_nvs_after_a_dot_is_refused(self):
+        write(self.f.src / "components" / "rb_menu" / "src" / "extra.cpp",
+              "void f(Store& s) { s.nvs_flash_erase(); }\n")
+        self.assert_refused(fp.NVS_CHECK)
+
+    def test_nvs_after_an_arrow_is_refused(self):
+        write(self.f.src / "components" / "rb_menu" / "src" / "extra.cpp",
+              "void f(Store* s) { s->nvs_flash_erase(); }\n")
+        self.assert_refused(fp.NVS_CHECK)
+
+    def test_an_nvs_type_right_after_a_closing_bracket_is_refused(self):
+        write(self.f.src / "components" / "rb_menu" / "src" / "extra.cpp",
+              "template <typename T> T make();\ntemplate<>nvs_handle_t make<int>();\n")
+        self.assert_refused(fp.NVS_CHECK)
+
     def test_nvs_in_comments_strings_and_tests_is_not_refused(self):
         write(self.f.src / "main" / "notes.cpp",
               '#include "nvs_flash.h"\n// nvs_flash_erase() is never called\nconst char* k = "nvs_flash_init";\n')

@@ -219,6 +219,10 @@ set_tests_properties(test_memory_image_store PROPERTIES FIXTURES_REQUIRED menu_i
 # The local list: up to 999 .atr names (menu-navegacion N002).
 rb_add_host_test(test_menu_catalog menu/test_menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp)
 target_include_directories(test_menu_catalog PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
+rb_add_host_test(test_drive_memory menu/test_drive_memory.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp)
+target_include_directories(test_drive_memory PRIVATE ${rb_root}/components/rb_menu/include)
+rb_add_host_test(test_sio_power_watch menu/test_sio_power_watch.cpp)
+target_include_directories(test_sio_power_watch PRIVATE ${rb_root}/components/rb_menu/include)
 # Creating a blank ATR from the menu (menu-formatear-disco, F003).
 rb_add_host_test(test_create_atr menu/test_create_atr.cpp ${rb_root}/components/rb_menu/src/create_atr.cpp
                  ${rb_root}/components/rb_menu/src/menu_catalog.cpp)

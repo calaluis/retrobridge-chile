@@ -30,7 +30,7 @@ Spec: `specs/menu-unidades-persistentes.md`. Plan: `plans/menu-unidades-persiste
   controlador; `resend`, `brk` y `brk_hold` en `make_menu.py`. Pruebas: `test_menu_break.cpp` (C7, 7 casos),
   `test_a_mount_whose_reply_was_lost_to_break_is_applied_once_then_break_shows_main` (C11 en el transporte) y
   9 pruebas de Break en `test_menu_program.py`. Altirra: `02-DOCS/raw/2026-11-22-t5-break-altirra.md`.
-- **T6 pegamento ESP (evidencia de banco registrada, cierre pendiente):** rama `feat/menu-unidades-esp` desde `ef77ccf`; `1efe7d4`
+- **T6 pegamento ESP (cerrada en el banco: guardado con traza en `2552703`, C10 con `0afb749`, PR #84):** rama `feat/menu-unidades-esp` desde `ef77ccf`; `1efe7d4`
   y corrección posterior. `beginRestore()` en `start()`; `finish()` lee catálogo y ranuras una vez, arma el plan
   (`planDriveMemory`, `drive_memory_link`) y lo publica con release; la tarea SIO solo toca el plan y las colas tras
   verlo con acquire, y las colas solo si el guardado está activo. Guardado activo solo con `rb_drive_save` en marcha y

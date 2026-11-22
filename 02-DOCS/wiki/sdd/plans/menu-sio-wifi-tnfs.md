@@ -19,10 +19,12 @@ status: approved
 
 - E2 funciona con el USB **físicamente desconectado** y la FujiNet alimentada por el Atari. Pasar a USB es decisión
   del responsable.
-- Presupuesto del pin 10 del SIO: **50 mA de media en cada fase**. Los picos se registran si hay osciloscopio y no
-  deciden. Si la media de alguna fase lo supera, **se detiene** el trabajo y se presentan
-  opciones, todas solo por SIO.
-- D1 sirve el menú en **< 1000 ms desde EN** (`listo_ms` del registro de arranques). Nada de Wi-Fi antes de eso.
+- Presupuesto del pin 10 del SIO: **50 mA**, para la media y para el pico de cada fase, medidos y registrados por
+  separado según la guía de banco vigente, `docs/hardware/banco-wifi-e2.md` (rama `test/banco-wifi-e2`). Sin picos medidos el resultado es **preliminar**: no confirma el
+  presupuesto y T1b no se hace. Si alguna cifra lo supera, **se detiene** el trabajo y se presentan opciones, todas
+  solo por SIO.
+- D1 sirve el menú en **< 1000 ms desde EN**: `listo_ms` (dato interno del ESP32, registro de arranques) más el
+  desfase de arranque medido con USB (§5, T8). Nada de Wi-Fi antes de eso.
 - La clave del Wi-Fi vive solo en RAM. **Nunca** en el repositorio, la consola, `retrobridge-arranques.txt` ni otro
   registro. Pruebas con una clave centinela.
 - **NVS conservada**: ni se borra ni se escribe. Igualdad antes del primer arranque del candidato y después del
@@ -136,8 +138,8 @@ ni a `nvs_flash_erase`.
 
 | Criterio | Nivel | Qué afirma | Qué se finge |
 | --- | --- | --- | --- |
-| C1 eléctrico | Banco (T1a, luego T1b) | T1a: demanda de la FujiNet **sin conexión eléctrica al Atari**, en reposo (E1 actual), búsqueda, conexión y transferencia, media de cada fase ≤ 50 mA; picos registrados o «no medidos». T1b, solo si T1a cumple: lo mismo alimentada por el SIO del 65XE. Método y cifras en `02-DOCS/raw/` | Nada |
-| C2 arranque | Banco | 10 encendidos solo SIO: menú, `listo_ms` < 1000, `brownout` = 0 | Nada |
+| C1 eléctrico | Banco (T1a, luego T1b) | T1a: demanda de la FujiNet **sin conexión eléctrica al Atari**, en reposo (E1 actual), búsqueda, conexión y transferencia, media y pico de cada fase ≤ 50 mA, registrados por separado; sin picos, preliminar. T1b, solo si T1a confirma con medias y picos: lo mismo alimentada por el SIO del 65XE. Método y cifras en `02-DOCS/raw/` | Nada |
+| C2 arranque | Banco | 10 encendidos solo SIO: menú, `brownout` = 0 y `listo_ms` + desfase USB < 1000 ms en cada uno (método en «Arranque desde EN») | Nada |
 | C3 navegar | Host + banco | Listado de carpetas en el 65XE; en host, `test_menu_tnfs` y `test_menu_navegacion` siguen verdes tras mover el cargador | Servidor TNFS falso en host |
 | C4 arrancar | Host + Altirra + banco | a: la ATR de ensayo del servidor en D1 arranca con `A`. b: un `.XEX` real de `tnfs.calaluis.cl:16384`, elegido navegando una carpeta, asignado a D1 y arrancado con `A`, queda corriendo. En host, las pruebas de `menu-xex` con TNFS siguen verdes tras mover el cargador; en Altirra, el mismo `.XEX` corre antes del banco | Servidor TNFS falso en host; nada en el banco |
 | C5 D2–D8 | Host + Altirra | Sectores de una imagen TNFS en D2 | Servidor falso |
@@ -145,30 +147,56 @@ ni a `nvs_flash_erase`.
 | C7 sin red | Host | Sin archivo, red inexistente o clave mala → motivo; fuente 1 operativa | `NetworkGate` falso |
 | C8 servidor caído | Host | Motivo en el plazo del menú TNFS del PC; pantalla principal operativa | Servidor que no responde |
 | C9 clave | Host + banco | La clave centinela no aparece en la consola, el registro de arranques ni el repo; `WifiConfig` no la formatea | Captura de salida |
-| C10 NVS | Banco | Hash SHA-256 de la partición NVS antes del primer arranque del candidato = hash tras el ensayo; solo se registran los hashes | Nada |
+| C10 NVS | Banco | SHA-256 de la partición NVS antes del primer arranque del candidato = SHA-256 tras el ensayo, con la lectura en memoria; solo se registran los SHA-256 | Nada |
 | C11 imagen grande | Host | Imagen mayor que el límite → aviso, ninguna unidad cambia | Servidor falso |
 | C12 regresión | Host + CI + Altirra | Todas las pruebas de host y la regresión NetSIO en verde | — |
 | C13 XEX rechazado | Host | Un `.XEX` inválido o no compatible del servidor da `XEX NO VALIDO` / `XEX NO COMPATIBLE` y ninguna unidad cambia, con el cargador ya movido | Servidor falso |
 
-**Lectura de la NVS (C10).** Un script lee la partición por COM3 con `esptool read_flash` a un archivo temporal fuera
-del repositorio, calcula su SHA-256, borra el archivo y escribe solo el hash. Desplazamiento y tamaño de la
-partición se toman de la tabla de particiones del candidato. Cada lectura por COM3 pide aprobación.
+**Lectura de la NVS (C10).** Se reutiliza la lectura en memoria que ya funcionó en el banco USB de
+`menu-unidades-persistentes` (T6, del 2026-11-21 al 2026-11-22): `esptool` lee la partición NVS por COM3 a la RAM del
+PC, calcula su SHA-256 y no escribe nada en disco. Se registra **solo el SHA-256**; el contenido no se guarda ni se
+muestra. Partición en 0x9000, tamaño 0x6000; T6 comprueba que la tabla de particiones del candidato la deja igual.
+La FujiNet va por USB para leerla y el SIO se desconecta. Cada lectura por COM3 pide aprobación.
+
+**Arranque desde EN hasta D1 lista (C2, T8).** Con el USB desconectado no hay RTS ni consola: EN sube cuando el 65XE
+alimenta la placa. `listo_ms` es el dato interno del ESP32 (`esp_timer`): no incluye la ROM, el cargador de arranque
+ni el primer arranque que reinicia el watchdog. Por eso se mide en dos partes:
+
+1. **Desfase, con USB y el mismo candidato y microSD**, antes de los encendidos solo SIO: 3 arranques en frío con el
+   script de captura que suelta EN por RTS y marca t0. Desfase = hora del PC de la línea «D1 ready at» − el valor que
+   esa línea imprime. Se toma el mayor de los 3. Es una cota superior (115200 baudios y retardo USB). Referencia:
+   en el banco de `menu-unidades-persistentes` la línea llegó a 825,6 ms desde EN con D1 lista a 145 ms (desfase
+   ≈ 681 ms, con el reinicio por watchdog conocido).
+2. **10 encendidos solo con el SIO**, USB desconectado: cada uno añade una línea a `retrobridge-arranques.txt` en la
+   microSD (`listo_ms`, `razon`, `brownout`, `primera_trama_ms`, `sio5v_arranque_mv`). El tiempo desde EN hasta D1
+   lista es `listo_ms` + desfase. Pasa si es < 1000 ms en los 10 y `brownout` = 0.
+
+**Recogida de la evidencia solo con el SIO.** La consola no existe en esa parte. La evidencia es:
+
+- `retrobridge-arranques.txt`: tras el ensayo se saca la microSD y se copia el archivo, sin borrarlo, a
+  `D:\GitHub\Respaldos\` (fuera del repositorio);
+- fotos de la pantalla: el menú tras cada encendido, la carpeta del servidor, la ATR arrancada y el `.XEX` corriendo;
+- la búsqueda de la clave centinela en `retrobridge-arranques.txt` y en la captura USB del desfase: 0 apariciones;
+- el SHA-256 de la NVS, antes y después, con la FujiNet por USB y el SIO desconectado.
 
 **Medida eléctrica (C1), en dos pasos.**
 
 - **T1a, sin el Atari.** La FujiNet no se conecta eléctricamente al 65XE. Se alimenta a 5 V desde una fuente externa
   con el amperímetro en serie (fuente de laboratorio o medidor USB en línea). Se mide cada fase del firmware de banco.
-  Si alguna fase supera 50 mA, T1b no se hace: parada y opciones al responsable.
-- **T1b, con el 65XE.** Solo si T1a cumple. Cable SIO de paso con el pin 10 abierto y el amperímetro en serie, USB
+  Se registran por separado la media y el pico de cada fase, más el reposo del firmware `menu-sio` actual en su
+  propia fila. Si alguna cifra supera 50 mA, T1b no se hace: parada y opciones al responsable. Con todas las medias
+  en 50 mA o menos y los picos sin medir, el resultado es **preliminar** y T1b tampoco se hace.
+- **T1b, con el 65XE.** Solo si T1a confirma el presupuesto con medias y picos medidos. Cable SIO de paso con el pin 10 abierto y el amperímetro en serie, USB
   desconectado; mismas fases.
 
-En los dos pasos, la media por fase sale del multímetro. Si hay osciloscopio, una resistencia de 1 Ω en serie da los picos. Sin osciloscopio, los picos se
-registran como **no medidos** y el ADC propio (`logSio5v`) solo aporta la caída del +5 V como indicio.
+En los dos pasos, la media por fase sale del multímetro o del medidor en línea, y el pico de un osciloscopio con una
+resistencia de 1 Ω en serie. Sin osciloscopio, el pico queda **sin medir**, el resultado es preliminar y el ADC
+propio (`logSio5v`) solo aporta la caída del +5 V como indicio. Procedimiento y tabla: `docs/hardware/banco-wifi-e2.md` (rama `test/banco-wifi-e2`).
 
 ## §6. Secuencia
 
 ```text
-T1a (sin Atari, gate) ──▶ STOP si > 50 mA ──▶ T1b (SIO del 65XE, gate) ──▶ STOP si > 50 mA: opciones
+T1a (sin Atari, gate) ──▶ STOP si > 50 mA o preliminar ──▶ T1b (SIO del 65XE, gate) ──▶ STOP si > 50 mA: opciones
    │ ok
    ├─▶ T2 WifiConfig ─┐
    ├─▶ T3 mover cargador ─┼─▶ T5 motivos en el menú ─▶ T6 pegamento ESP ─▶ T7 CI y Altirra ─▶ T8 banco 65XE
@@ -194,19 +222,19 @@ publica.
 
 | T | Qué | Criterios | Riesgo (tier) | Comprobación de hecho | Depende de | Paralelo |
 | --- | --- | --- | --- | --- | --- | --- |
-| T1a | **Demanda sin el Atari.** Firmware de banco (no publicado) que, por fases separadas y anunciadas en la consola, queda en reposo, busca red, conecta y descarga por TNFS la ATR de ensayo, con red y clave leídas de la microSD; medir la demanda de cada fase con alimentación externa, sin conexión eléctrica al 65XE. Incluye el reposo del firmware E1 actual | C1 | 2 | `02-DOCS/raw/<fecha>-consumo-e2-sin-atari.md` con método, foto, media (y pico si hay osciloscopio) por fase y veredicto con la media ≤ 50 mA; si no, opciones presentadas y parada | Instrumentos confirmados | No |
-| T1b | **Demanda con el SIO del 65XE.** Las mismas fases con la FujiNet alimentada por el pin 10 y el USB desconectado | C1 | 2 | `02-DOCS/raw/<fecha>-consumo-pin10-e2.md` con las mismas cifras y veredicto con la media ≤ 50 mA | T1a con la media ≤ 50 mA | No |
+| T1a | **Demanda sin el Atari.** Firmware de banco (no publicado) que, por fases separadas y anunciadas en la consola, queda en reposo, busca red, conecta y descarga por TNFS la ATR de ensayo, con red y clave leídas de la microSD; medir la demanda de cada fase con alimentación externa, sin conexión eléctrica al 65XE. Incluye el reposo del firmware E1 actual | C1 | 2 | `02-DOCS/raw/<fecha>-consumo-e2-sin-atari.md` con método, foto, media y pico por fase registrados por separado y veredicto: confirmado (todo ≤ 50 mA), preliminar (picos sin medir) o superado; si no, opciones presentadas y parada | Instrumentos confirmados | No |
+| T1b | **Demanda con el SIO del 65XE.** Las mismas fases con la FujiNet alimentada por el pin 10 y el USB desconectado | C1 | 2 | `02-DOCS/raw/<fecha>-consumo-pin10-e2.md` con las mismas cifras y veredicto con media y pico ≤ 50 mA | T1a confirmado con medias y picos | No |
 | T2 | `WifiConfig` + pruebas de host (formato, espacios, límites, archivo ausente, clave centinela nunca en motivos ni salidas) | C7, C9 | 1 | ctest verde con `test_wifi_config`; un mutante que imprime la clave es detectado | T1b ok | Sí |
 | T3 | Mover `TnfsLoader` (trabajos ATR y XEX), `TnfsLink`, `UdpTnfsPort`, `SystemNameResolver` a `rb_menu_tnfs`; `NetworkGate` opcional; el PC usa «siempre hay red» | C3, C4, C5, C8, C11, C12, C13 | 1 | ctest verde con todas las pruebas TNFS y `menu-xex` de host sin cambios de comportamiento; `rb_menu_tnfs` compila como componente ESP en CI | T1b ok | Sí |
 | T4 | `rb_esp_wifi::WifiStation`: estación en segundo plano, reintentos, estado, sin NVS; opciones de `sdkconfig.menu-sio` | C7, C9, C10 | 2 | CI verde con el paquete `menu-sio`; comprobación del empaquetador falla con `CONFIG_ESP_WIFI_NVS_ENABLED=y` (test rojo primero) | T1b ok | Sí |
 | T5 | Motivos de red en `MenuController` (`SIN WI-FI: …`) y `E` crea el archivo si falta | C6, C7, C8 | 1 | ctest verde con pruebas nuevas de motivos y de creación del archivo; pruebas de menú existentes verdes | T3 | No |
 | T6 | Pegamento en `main/menu_sio.cpp` (`finish()`), tabla de particiones propia, publicación atómica de fuentes y cargador | C2–C7, C11 | 2 | CI verde; tamaño de la aplicación dentro de su partición; NVS en el mismo desplazamiento y tamaño que hoy | T2, T4, T5 | No |
 | T7 | Regresión: host, CI, Altirra con servidor TNFS | C4, C12, C13 | 1 | CI verde; registro de Altirra con navegación, la ATR de ensayo arrancada y el `.XEX` del banco corriendo | T6 | No |
-| T8 | **Banco 65XE, USB desconectado** (aprobación de flash y COM3): hash NVS antes, flash, 10 encendidos solo SIO; abrir `tnfs.calaluis.cl:16384` desde RetroBridge, navegar una carpeta, elegir el `.XEX` real, asignarlo a D1 y pulsar `A` hasta ver el programa corriendo; lo mismo con la ATR de ensayo; captura de consola; hash NVS después | C2, C4a, C4b, C9, C10 + criterio final | 2 | `02-DOCS/raw/<fecha>-banco-e2.md` con registros de arranque, foto de la carpeta, foto del `.XEX` corriendo y de la ATR arrancada, hashes iguales y búsqueda de la centinela en la captura con 0 apariciones | T7 | No |
+| T8 | **Banco 65XE, USB desconectado** (aprobación de flash y COM3): SHA-256 de la NVS en memoria antes, flash, desfase EN–D1 con USB (3 arranques), 10 encendidos solo SIO; abrir `tnfs.calaluis.cl:16384` desde RetroBridge, navegar una carpeta, elegir el `.XEX` real, asignarlo a D1 y pulsar `A` hasta ver el programa corriendo; lo mismo con la ATR de ensayo; captura de consola del desfase; SHA-256 de la NVS en memoria después | C2, C4a, C4b, C9, C10 + criterio final | 2 | `02-DOCS/raw/<fecha>-banco-e2.md` con `retrobridge-arranques.txt` copiado, desfase y `listo_ms` + desfase < 1000 ms en los 10, foto de la carpeta, foto del `.XEX` corriendo y de la ATR arrancada, SHA-256 de la NVS iguales y búsqueda de la centinela en la captura con 0 apariciones | T7 | No |
 
 **Orden:** T1a → T1b → (T2 ∥ T3 ∥ T4) → T5 → T6 → T7 → T8. La medición eléctrica (T1) sigue siendo el paso previo a
 integrar el Wi-Fi por SIO. Cada tarea pasa su revisión según `rsc risk` antes de la
-siguiente. Ninguna tarea después de T1b empieza si T1a y T1b no dan una media ≤ 50 mA en cada fase o si el responsable no ha decidido una opción.
+siguiente. Ninguna tarea después de T1b empieza si T1a y T1b no confirman media y pico ≤ 50 mA en cada fase o si el responsable no ha decidido una opción.
 
 ## Ensayo de transferencia
 
@@ -225,4 +253,4 @@ siguiente. Ninguna tarea después de T1b empieza si T1a y T1b no dan una media �
 
 - **¿Qué instrumentos hay en el banco?** Para T1a: fuente de 5 V o medidor USB en línea, y multímetro con escala de
   mA. Para T1b: cable SIO de paso que se pueda abrir en el pin 10. Con osciloscopio y una resistencia de 1 Ω se miden
-  los picos; sin él, quedan como «no medidos». **La medición queda pendiente hasta confirmarlo.**
+  los picos; sin él, T1a solo da un resultado preliminar. **La medición queda pendiente hasta confirmarlo.**

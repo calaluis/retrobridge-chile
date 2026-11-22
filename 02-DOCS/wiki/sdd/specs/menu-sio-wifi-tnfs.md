@@ -125,12 +125,15 @@ la microSD una vez en el PC con dos archivos de texto; después usa solo el Atar
 ## Criterios de aceptación
 
 1. **Viabilidad eléctrica.** Dado el USB desconectado, cuando la FujiNet busca la red, se conecta y trae una imagen
-   TNFS, entonces la corriente **media de cada fase** que toma del pin 10 del SIO no supera los 50 mA documentados
-   para ese pin, y la caracterización en banco (método y cifras de cada fase) está documentada. Los picos se
-   registran si hay osciloscopio; si no, constan como «no medidos». Los picos no deciden el criterio. Si los supera, la ejecución se detiene y
-   se presentan opciones al responsable, todas manteniendo el requisito de E2 solo por SIO.
+   TNFS, entonces la **media y el pico** de cada fase, medidos y registrados por separado, no superan los 50 mA
+   documentados para el pin 10 del SIO, y la caracterización en banco (método y cifras de cada fase) está
+   documentada, según la guía de banco vigente (`docs/hardware/banco-wifi-e2.md` (rama `test/banco-wifi-e2`)). Con todas las medias en 50 mA o menos y los picos sin
+   medir, el resultado es **preliminar**: no cumple este criterio y T1b no se hace. Si alguna cifra supera 50 mA, la
+   ejecución se detiene y se presentan opciones al responsable, todas manteniendo el requisito de E2 solo por SIO.
 2. **Arranque intacto.** Dado `retrobridge-wifi.txt` válido y solo el SIO, cuando se enciende el 65XE 10 veces,
-   entonces el menú aparece cada vez, `listo_ms` < 1000 y `brownout` = 0 en el registro de arranques.
+   entonces el menú aparece cada vez, `brownout` = 0 en el registro de arranques, y en cada encendido el tiempo desde
+   EN hasta D1 lista es menor que 1000 ms. Ese tiempo es `listo_ms` (dato interno del reloj del ESP32, en el registro
+   de arranques) más el desfase de arranque medido con USB sobre el mismo candidato; el método lo fija el plan.
 3. **Navegar.** Dado un servidor TNFS alcanzable en `retrobridge-fuentes.txt`, cuando se abre su fuente en el 65XE,
    entonces se listan sus carpetas y se puede entrar y salir de ellas.
 4. **Arrancar desde la red, ATR y XEX.** Con el USB desconectado y solo el SIO:
@@ -150,8 +153,8 @@ la microSD una vez en el PC con dos archivos de texto; después usa solo el Atar
    ningún archivo del repositorio.
 10. **NVS conservada.** Dada la partición NVS leída antes del primer arranque del firmware candidato, cuando termina
     el ensayo (arranques, conexiones y transferencias), entonces la NVS leída de nuevo es idéntica a la primera. Solo
-    se registra el hash de cada lectura o el resultado de la comparación; el contenido de la NVS no se guarda ni se
-    muestra. El método de lectura lo fija el plan.
+    se registra el SHA-256 de cada lectura; el contenido de la NVS no se guarda en disco ni se muestra. La lectura es
+    la misma en memoria que ya funcionó en el banco USB de `menu-unidades-persistentes`.
 11. **Imagen demasiado grande.** Dada una imagen que no cabe en la memoria disponible, cuando se elige, entonces se
     rechaza con un aviso y ninguna unidad cambia.
 12. **Regresión.** Dadas las pruebas de host existentes y la regresión en Altirra, entonces siguen en verde.
@@ -215,9 +218,14 @@ la microSD una vez en el PC con dos archivos de texto; después usa solo el Atar
   reutilizando el flujo del PC; el rechazo de un `.XEX` se cubre en host (criterio 13) → el objetivo del producto
   incluye `.XEX` y el servidor del responsable los mezcla con las ATR.
 
-- 2026-11-22 · ¿Los 50 mA de C1 son media o pico? → media de cada fase (reposo, búsqueda, conexión,
-  transferencia); picos registrados si hay osciloscopio, sin decidir el criterio → el multímetro da la media y el
-  criterio debe ser binario con los instrumentos del banco.
+- 2026-11-22 · ¿Los 50 mA de C1 son media o pico? → las dos, medidas y registradas por separado en cada fase, como
+  dice la guía de banco vigente (`docs/hardware/banco-wifi-e2.md` (rama `test/banco-wifi-e2`)); sin picos medidos el resultado es preliminar y no cumple C1 → se mantiene
+  el presupuesto de 50 mA y la guía es la referencia del banco. (Sustituye la respuesta anterior del mismo día:
+  «media de cada fase; los picos no deciden».)
+- 2026-11-22 · ¿Cómo se lee la NVS en C10? → lectura en memoria ya usada en el banco USB de `menu-unidades-persistentes`: `esptool` lee la partición NVS (0x9000, 0x6000) por COM3 a la RAM del PC, calcula su SHA-256 y no escribe nada en disco; solo se registra el SHA-256 → el método ya se probó en el banco sin exponer la NVS.
+- 2026-11-22 · ¿Cómo se mide «menos de 1 s desde EN» solo con el SIO, sin consola? → `listo_ms` es el dato interno
+  del ESP32 y no incluye la ROM ni el cargador de arranque; el desfase hasta EN se mide con USB sobre el mismo
+  candidato y se suma (método en el plan, T8) → con el USB desconectado no hay RTS ni consola.
 
 ## Objeción registrada
 

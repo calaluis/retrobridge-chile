@@ -30,12 +30,14 @@ Spec: `specs/menu-unidades-persistentes.md`. Plan: `plans/menu-unidades-persiste
   controlador; `resend`, `brk` y `brk_hold` en `make_menu.py`. Pruebas: `test_menu_break.cpp` (C7, 7 casos),
   `test_a_mount_whose_reply_was_lost_to_break_is_applied_once_then_break_shows_main` (C11 en el transporte) y
   9 pruebas de Break en `test_menu_program.py`. Altirra: `02-DOCS/raw/2026-11-22-t5-break-altirra.md`.
-- **T6 pegamento ESP (en revisión del responsable):** rama `feat/menu-unidades-esp` desde `ef77ccf`. `beginRestore()`
-  en `start()`; `finish()` lee catálogo y ranuras y publica «MICROSD:»/«MEMORIA:» si fallan; la tarea SIO aplica la
-  restauración, pasa `snapshot()` a `rb_drive_save` por una cola de un hueco y aplica `saveResult()`; ADC cada 50 ms
-  sin trama en curso → `SioPowerWatch` → `returnToMenu()`. `check_sio_calls` en 45; sin `nvs_*`. Revisión tier 2:
-  hallazgo de D1 tras apagado refutado (`assignD1()` no sirve D1, `menu_controller.cpp:668`); log de restauración al
-  terminar y sin guardado si la microSD falló al arrancar.
+- **T6 pegamento ESP (pendiente de evidencia de banco):** rama `feat/menu-unidades-esp` desde `ef77ccf`; `1efe7d4`
+  y corrección posterior. `beginRestore()` en `start()`; `finish()` lee catálogo y ranuras una vez, arma el plan
+  (`planDriveMemory`, `drive_memory_link`) y lo publica con release; la tarea SIO solo toca el plan y las colas tras
+  verlo con acquire, y las colas solo si el guardado está activo. Guardado activo solo con `rb_drive_save` en marcha y
+  primera lectura Loaded o Empty; tras Error o fallo de microSD queda desactivado toda la sesión (`NO SE GUARDO`).
+  Regresión `test_a_failed_first_read_keeps_saving_off_and_e0_survives` (E0 ilegible al arrancar, la tarjeta se
+  recupera, cambio de unidad: funciona, `NO SE GUARDO`, E0 al reiniciar); el mutante «guardar tras Error» la hace
+  fallar. `check_sio_calls` en 45; sin `nvs_*`. Falta: consola en banco (restauración, guardado, apagado/encendido).
 - T7 empaquetador y banco: pendiente.
 
 ## Evidencia de T2 y T3

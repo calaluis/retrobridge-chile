@@ -235,6 +235,16 @@ rb_add_host_test(test_drive_slot_store menu/test_drive_slot_store.cpp ${rb_root}
                  ${rb_root}/components/rb_menu/src/drive_memory.cpp)
 target_include_directories(test_drive_slot_store PRIVATE ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_drive_slot_store PRIVATE RB_TEST_SLOT_DIR="${CMAKE_CURRENT_BINARY_DIR}/drive-slots")
+# The firmware's drive-memory glue without FreeRTOS (menu-unidades-persistentes T6).
+rb_add_host_test(test_drive_memory_link menu/test_drive_memory_link.cpp
+                 ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
+                 ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/menu_sources.cpp
+                 ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp
+                 ${rb_root}/components/rb_menu/src/drive_slot_store.cpp ${rb_root}/components/rb_menu/src/drive_memory_link.cpp)
+target_include_directories(test_drive_memory_link PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
+target_compile_definitions(test_drive_memory_link PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}"
+                           RB_TEST_SLOT_DIR="${CMAKE_CURRENT_BINARY_DIR}/drive-link-slots")
+set_tests_properties(test_drive_memory_link PROPERTIES FIXTURES_REQUIRED menu_images)
 # Creating a blank ATR from the menu (menu-formatear-disco, F003).
 rb_add_host_test(test_create_atr menu/test_create_atr.cpp ${rb_root}/components/rb_menu/src/create_atr.cpp
                  ${rb_root}/components/rb_menu/src/menu_catalog.cpp)

@@ -25,6 +25,7 @@
 #include "rb/esp/esp_sio_uart.hpp"
 #include "rb/esp/sd_card_storage.hpp"
 #include "rb/menu/drive_memory.hpp"
+#include "rb/menu/drive_memory_link.hpp"
 #include "rb/menu/drive_slot_store.hpp"
 #include "rb/menu/host_image_repository.hpp"
 #include "rb/menu/menu_catalog.hpp"
@@ -85,14 +86,14 @@ adc_cali_handle_t g_adcCali = nullptr;
 SemaphoreHandle_t g_adcLock = nullptr;  // the SIO task, the console and the boot record all read GPIO35
 constexpr int64_t kPowerSampleUs = 50000;  // plan §4: the SIO task samples the +5 V every 50 ms, between frames
 
-// Persistent drives (menu-unidades-persistentes). finish() reads the slots once and publishes the result;
-// the SIO task applies it after the catalog. Saving goes through two one-item queues to rb_drive_save, so
-// the SIO task never writes to the microSD.
-enum class RestoreState : uint8_t { Pending, Memory, Failed };
-std::atomic<RestoreState> g_restoreState{RestoreState::Pending};  // published once by finish()
-rb::host::DriveMemory g_restoreMemory;                            // written by finish() before the state
-char g_restoreMessage[48] = "";             // "MICROSD: ..." or "MEMORIA: ..."
-rb::host::SlotFileStore* g_store = nullptr;                       // used by rb_drive_save only, after finish()
+// Persistent drives (menu-unidades-persistentes). finish() reads the slots once, writes g_plan, creates the
+// queues and rb_drive_save, and only then publishes g_planPublished (release). The SIO task touches g_plan
+// and the queues only after it has seen that flag (acquire), and the queues only when g_plan allows saving.
+// The SIO task never writes to the microSD.
+rb::host::DriveMemoryPlan g_plan;            // written by finish() before g_planPublished
+std::atomic<bool> g_planPublished{false};
+rb::host::DriveMemoryLink g_link;            // SIO task only (~1 KB: not on its stack)
+rb::host::SlotFileStore* g_store = nullptr;  // finish() reads it once; then rb_drive_save only
 
 struct SaveRequest {
     uint32_t version = 0;
@@ -107,7 +108,6 @@ static_assert(std::is_trivially_copyable_v<SaveRequest> && std::is_trivially_cop
               "FreeRTOS queues copy items byte by byte");
 QueueHandle_t g_saveRequests = nullptr;  // one item, overwritten: only the newest memory matters
 QueueHandle_t g_saveOutcomes = nullptr;  // one item, overwritten: only the newest result changes the screen
-std::atomic<bool> g_saveReady{false};    // rb_drive_save is running
 constexpr uint32_t kSaveTaskStack = 6144;
 
 template <typename T, typename... Args>
@@ -219,40 +219,48 @@ uint32_t framesSoFar()
     return line.frames + line.shortFrames;
 }
 
-// Between two frames: applies what finish() read (after the catalog), hands a changed memory to
-// rb_drive_save and gives its results back to the controller.
-void serviceDriveMemory(rb::host::MenuController& controller, bool& restoreApplied, bool& restoreLogged)
-{
-    if (restoreApplied && !restoreLogged && !controller.restoring()) {  // D2..D8 mount one per step
-        restoreLogged = true;
-        ESP_LOGI(kTag, "unidades restauradas a %lld ms (%s)", msOf(esp_timer_get_time()),
-                 g_restoreState.load(std::memory_order_acquire) == RestoreState::Memory ? "memoria leida"
-                                                                                        : g_restoreMessage);
+// rb_drive_save seen from the SIO task: never blocks. Used only when the published plan allows saving.
+class QueueSaver final : public rb::host::DriveMemoryLink::Saver {
+public:
+    void submit(uint32_t version, const rb::host::DriveMemory& memory) noexcept override
+    {
+        request_.version = version;
+        request_.memory = memory;
+        (void)xQueueOverwrite(g_saveRequests, &request_);
     }
-    if (!restoreApplied) {
-        const RestoreState state = g_restoreState.load(std::memory_order_acquire);
-        if (state == RestoreState::Failed) {
-            controller.restoreFailed(g_restoreMessage);
-            restoreApplied = true;
-        } else if (state == RestoreState::Memory && g_catalogApplied) {  // names are looked up in the catalog
-            controller.restore(g_restoreMemory);
-            restoreApplied = true;
+    bool poll(uint32_t& version, bool& ok, int& error) noexcept override
+    {
+        SaveOutcome outcome;
+        if (xQueueReceive(g_saveOutcomes, &outcome, 0) != pdTRUE) {
+            return false;
         }
+        version = outcome.version;
+        ok = outcome.ok;
+        error = outcome.error;
+        return true;
     }
 
-    if (controller.memoryChanged()) {
-        static SaveRequest request;  // ~1 KB: kept off the SIO task's stack
-        request.version = controller.snapshot(request.memory);
-        if (g_saveReady.load(std::memory_order_acquire)) {
-            (void)xQueueOverwrite(g_saveRequests, &request);
-        } else {
-            controller.saveResult(request.version, false, ENOMEM);  // no save task: say so, never GUARDANDO forever
+private:
+    SaveRequest request_;
+};
+QueueSaver g_saver;  // SIO task only (~1 KB: not on its stack)
+
+// Between two frames: once the plan is published, restores (after the catalog) and handles saves.
+void serviceDriveMemory(rb::host::MenuController& controller, bool& planSeen, bool& restoreLogged)
+{
+    if (!planSeen) {
+        planSeen = g_planPublished.load(std::memory_order_acquire);
+        if (!planSeen) {
+            return;  // g_plan and the queues are not ready yet
         }
     }
-    SaveOutcome outcome;
-    while (g_saveOutcomes != nullptr && xQueueReceive(g_saveOutcomes, &outcome, 0) == pdTRUE) {
-        controller.saveResult(outcome.version, outcome.ok, outcome.error);
+    (void)g_link.apply(controller, g_plan, g_catalogApplied);
+    if (g_link.applied() && !restoreLogged && !controller.restoring()) {  // D2..D8 mount one per step
+        restoreLogged = true;
+        ESP_LOGI(kTag, "unidades restauradas a %lld ms (%s); guardado %s", msOf(esp_timer_get_time()),
+                 g_plan.restore ? "memoria leida" : g_plan.message, g_plan.saveAllowed ? "activo" : "DESACTIVADO");
     }
+    g_link.saves(controller, g_plan, g_saver);
 }
 
 void driveSaveTask(void*)
@@ -282,7 +290,7 @@ void sioTask(void*)
     bool buttonDown = false;
     bool buttonHandled = false;
     int64_t buttonSince = 0;
-    bool restoreApplied = false;
+    bool planSeen = false;
     bool restoreLogged = false;
     rb::host::SioPowerWatch power;
     int64_t lastPowerSample = 0;
@@ -294,7 +302,7 @@ void sioTask(void*)
             g_catalogApplied = true;
             ESP_LOGI(kTag, "catalog: %u image(s) on the microSD root", static_cast<unsigned>(g_catalog->count()));
         }
-        serviceDriveMemory(g_station->controller(), restoreApplied, restoreLogged);
+        serviceDriveMemory(g_station->controller(), planSeen, restoreLogged);
 
         const rb::sio::StepOutcome stepped = g_station->step();
 
@@ -536,14 +544,17 @@ void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot)
     if (g_station == nullptr) {
         return;  // start() failed: nothing is served
     }
-    const char* failure = nullptr;  // why the drives are not restored: "MICROSD: <reason>"
+    const char* failure = nullptr;  // why the drives are not restored: " MICROSD: <reason>"
+    int failureError = 0;
     g_loaded = createOnce<rb::host::MenuCatalog>();
     if (g_loaded == nullptr) {
         ESP_LOGE(kTag, "no memory for the catalog: the menu lists no images");
         failure = "SIN RAM";
+        failureError = ENOMEM;
     } else if (!sdMounted) {
         ESP_LOGW(kTag, "microSD not mounted: the menu lists no images");
         failure = "NO MONTADA";
+        failureError = ENODEV;
     } else {
         errno = 0;
         if (rb::host::readCatalog(rb::esp::SdCardStorage::kMountPoint, *g_loaded)) {
@@ -551,48 +562,47 @@ void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot)
         } else if (errno == ENOMEM) {
             ESP_LOGE(kTag, "microSD catalog not read: no memory for the 4 KB path buffer");
             failure = "SIN RAM";
+            failureError = ENOMEM;
         } else {
-            ESP_LOGW(kTag, "microSD catalog not read (%s): the menu lists no images", std::strerror(errno));
-            failure = rb::host::storageReason(errno);
+            failureError = errno != 0 ? errno : EIO;
+            ESP_LOGW(kTag, "microSD catalog not read (%s): the menu lists no images", std::strerror(failureError));
+            failure = rb::host::storageReason(failureError);
         }
     }
 
-    // Drive memory: read once here, applied by the SIO task; saved by rb_drive_save (never the SIO task).
-    g_store = createOnce<rb::host::SlotFileStore>(rb::esp::SdCardStorage::kMountPoint);
-    g_saveRequests = xQueueCreate(1, sizeof(SaveRequest));
-    g_saveOutcomes = xQueueCreate(1, sizeof(SaveOutcome));
-    if (g_store == nullptr || g_saveRequests == nullptr || g_saveOutcomes == nullptr ||
-        xTaskCreatePinnedToCore(driveSaveTask, "rb_drive_save", kSaveTaskStack, nullptr, tskIDLE_PRIORITY + 2,
-                                nullptr, 0) != pdPASS) {
-        ESP_LOGE(kTag, "drive memory save task not created: changes are NOT saved");
-    } else if (failure != nullptr) {
-        // The slots were never read: a save would replace the remembered drives with this session's.
-        ESP_LOGW(kTag, "drive memory not saved this session: microSD %s", failure);
-    } else {
-        g_saveReady.store(true, std::memory_order_release);
-    }
-    if (failure != nullptr) {
-        std::snprintf(g_restoreMessage, sizeof g_restoreMessage, "MICROSD: %s", failure);
-        g_restoreState.store(RestoreState::Failed, std::memory_order_release);
-    } else if (g_store == nullptr) {
-        std::snprintf(g_restoreMessage, sizeof g_restoreMessage, "MEMORIA: SIN RAM");
-        g_restoreState.store(RestoreState::Failed, std::memory_order_release);
-    } else {
-        const int64_t began = esp_timer_get_time();
-        const rb::host::SlotFileStore::LoadResult loaded = g_store->load();
-        if (loaded.status == rb::host::SlotFileStore::LoadStatus::Error) {
-            ESP_LOGW(kTag, "drive memory not read: %s (errno %d)", rb::host::storageReason(loaded.error),
-                     loaded.error);
-            std::snprintf(g_restoreMessage, sizeof g_restoreMessage, "MEMORIA: %s",
-                          rb::host::storageReason(loaded.error));
-            g_restoreState.store(RestoreState::Failed, std::memory_order_release);
-        } else {
-            g_restoreMemory = loaded.memory;  // Empty: nothing remembered yet, every drive stays empty
-            ESP_LOGI(kTag, "drive memory read in %lld ms: %s", msOf(esp_timer_get_time() - began),
-                     loaded.status == rb::host::SlotFileStore::LoadStatus::Loaded ? "slot found" : "no valid slot");
-            g_restoreState.store(RestoreState::Memory, std::memory_order_release);
+    // Drive memory: the slots are read once, here. Saving needs that read to give Loaded or Empty and
+    // rb_drive_save to run; otherwise it stays off for this session (a save could replace E0).
+    rb::host::SlotFileStore::LoadResult loaded;
+    bool read = false;
+    bool saverReady = false;
+    if (failure == nullptr) {
+        g_store = createOnce<rb::host::SlotFileStore>(rb::esp::SdCardStorage::kMountPoint);
+        if (g_store == nullptr) {
+            ESP_LOGE(kTag, "no memory for the drive memory store: drives neither restored nor saved");
         }
     }
+    if (g_store != nullptr) {
+        const int64_t began = esp_timer_get_time();
+        loaded = g_store->load();
+        read = true;
+        if (loaded.status == rb::host::SlotFileStore::LoadStatus::Error) {
+            ESP_LOGW(kTag, "drive memory not read: %s (errno %d); saving off this session",
+                     rb::host::storageReason(loaded.error), loaded.error);
+        } else {
+            ESP_LOGI(kTag, "drive memory read in %lld ms: %s", msOf(esp_timer_get_time() - began),
+                     loaded.status == rb::host::SlotFileStore::LoadStatus::Loaded ? "slot found" : "no valid slot");
+            g_saveRequests = xQueueCreate(1, sizeof(SaveRequest));
+            g_saveOutcomes = xQueueCreate(1, sizeof(SaveOutcome));
+            saverReady = g_saveRequests != nullptr && g_saveOutcomes != nullptr &&
+                         xTaskCreatePinnedToCore(driveSaveTask, "rb_drive_save", kSaveTaskStack, nullptr,
+                                                 tskIDLE_PRIORITY + 2, nullptr, 0) == pdPASS;
+            if (!saverReady) {
+                ESP_LOGE(kTag, "drive memory save task not created: changes are NOT saved");
+            }
+        }
+    }
+    rb::host::planDriveMemory(failure, failureError, read ? &loaded : nullptr, saverReady, g_plan);
+    g_planPublished.store(true, std::memory_order_release);  // after g_plan, the queues and the task
 
     if (!registerCommand("menu", "menu: D1 vuelve al menu (luego apaga y enciende el 65XE)", menuCommand) ||
         !registerCommand("sio", "sio status | sio arranques: linea SIO, D1, +5V y tiempos de arranque",

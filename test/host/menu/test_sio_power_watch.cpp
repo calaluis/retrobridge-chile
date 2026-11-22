@@ -7,6 +7,7 @@
 #include "unity.h"
 
 using rb::host::SioPowerWatch;
+using rb::sio::StepOutcome;
 using Event = rb::host::SioPowerWatch::Event;
 
 void setUp(void) {}
@@ -124,6 +125,37 @@ static void test_starting_with_the_atari_off_reports_a_power_off(void)
     TEST_ASSERT_EQUAL(Event::PoweredOn, feed(watch, kOn, now, 100000));
 }
 
+static void test_the_5v_is_read_only_after_steps_that_sent_nothing(void)
+{
+    TEST_ASSERT_TRUE(rb::host::powerSampleAfter(StepOutcome::Idle));
+    TEST_ASSERT_TRUE(rb::host::powerSampleAfter(StepOutcome::MailboxApplied));
+    TEST_ASSERT_TRUE(rb::host::powerSampleAfter(StepOutcome::Ignored));
+    TEST_ASSERT_TRUE(rb::host::powerSampleAfter(StepOutcome::TransportFailed));
+    TEST_ASSERT_FALSE(rb::host::powerSampleAfter(StepOutcome::Nacked));
+    TEST_ASSERT_FALSE(rb::host::powerSampleAfter(StepOutcome::Completed));
+}
+
+// Bench 2552703 (C10): the 65XE running a game is switched off with the FujiNet on USB. Its COMMAND line
+// stays low, so every step of the SIO task ends in TransportFailed (stuck low) and the +5 V reads 835 mV.
+static void test_an_atari_off_with_command_stuck_low_is_seen(void)
+{
+    SioPowerWatch watch;
+    uint64_t now = 0;
+    for (int i = 0; i < 4; ++i, now += kStepUs) {  // the game runs: frames answered
+        if (rb::host::powerSampleAfter(StepOutcome::Completed)) {
+            TEST_FAIL_MESSAGE("no read right after an answer");
+        }
+        TEST_ASSERT_EQUAL(Event::None, watch.sample(kOn, now));
+    }
+    Event seen = Event::None;
+    for (uint64_t end = now + 500000; now < end && seen == Event::None; now += kStepUs) {
+        if (rb::host::powerSampleAfter(StepOutcome::TransportFailed)) {  // what step() returns with COMMAND low
+            seen = watch.sample(835, now);
+        }
+    }
+    TEST_ASSERT_EQUAL(Event::PoweredOff, seen);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -135,5 +167,7 @@ int main(void)
     RUN_TEST(test_a_short_cycle_of_300_ms_is_detected);
     RUN_TEST(test_the_thresholds_are_exact);
     RUN_TEST(test_starting_with_the_atari_off_reports_a_power_off);
+    RUN_TEST(test_the_5v_is_read_only_after_steps_that_sent_nothing);
+    RUN_TEST(test_an_atari_off_with_command_stuck_low_is_seen);
     return UNITY_END();
 }

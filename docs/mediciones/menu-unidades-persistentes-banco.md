@@ -1,8 +1,8 @@
 # Unidades persistentes del menú en la FujiNet FN32ROV-1.3-Q24 (2026-11-22)
 
-> Estado: **T6 con evidencia de banco registrada; cierre pendiente.** Confirmados: arranque USB con microSD sin
-> pánicos, guardado de D1–D8 en la microSD y restauración al arrancar solo por el SIO. NVS intacta.
-> Pendientes: la traza de guardado en consola y la parte de C10 que no se vio (§6).
+> Estado: **T6 cerrada.** Confirmados: arranque USB con microSD sin pánicos, guardado de D1–D8 en la microSD
+> (con su traza en consola), restauración al arrancar solo por el SIO y vuelta al menú al apagar el Atari con un
+> programa corriendo (C10, firmware `0afb749`, PR #84). NVS intacta.
 > **H4 y M3a siguen sin aprobar.** menu-sio es un paquete de prueba que transmite por DATA IN.
 
 **Convención:**
@@ -72,33 +72,36 @@ superior** (línea a 115200 baudios y retardo USB). Entre paréntesis, el reloj 
 | C3 | Catálogo | ✅ [C] 18 imágenes a 1654.9 ms |
 | C4 | Lectura de la memoria (vacía) | ✅ [C] «no valid slot» en 40 ms; «guardado activo» |
 | C5 | Pila de `app_main` medida | ✅ [C] 1960 B nunca usados (la guarda prevé ≥ 1712 B) |
-| C6 | Montar `Congo Bongo.atr` en D1 desde la lista y guardar | ✅ confirmado: [P] «GUARDADO» y la ranura se lee tras reiniciar (C9). **Falta la traza de guardado en consola** |
+| C6 | Montar `Congo Bongo.atr` en D1 desde la lista y guardar | ✅ [P] «GUARDADO» y la ranura se lee tras reiniciar (C9); [C] con `2552703`: «drive memory version 1 saved in 366 ms» a 35.7 s desde EN |
 | C7 | Arrancar D1 con A | ✅ [P] cargó; [C] «D1: Congo Bongo.atr» |
 | C8 | Reinicio solo por SIO (sin USB) | ✅ confirmado: [P] D1 = Congo Bongo, «UNIDADES RESTAURADAS»; A la cargó |
 | C9 | Lectura de la ranura tras reiniciar | ✅ [C] «drive memory read in 53 ms: slot found» |
-| C10 | Apagar y encender el Atari con la FujiNet en USB | ⚠️ **parcial**: [P] volvió el menú con D1–D8 conservadas. Falta confirmar que la FujiNet siguió encendida por USB y que D1 quedó lista antes de la primera trama del Atari |
+| C10 | Apagar y encender el Atari con la FujiNet en USB | ✅ con `0afb749`: [C] «D1: demo-dos.atr» a 120.5 s; «65XE off … D1 back to the menu, D1-D8 kept» y «D1: menu» a 129.8 s; «65XE on (SIO +5V 4780 mV)» a 135.6 s; primera trama 1575 ms después del +5 V, con D1 ya en el menú. Sin `rst:` fuera del arranque inicial. [P] volvió el menú, no el programa. Con `2552703` fallaba (§6) |
 
 ## 6. Observaciones
 
 - **Arranque en frío:** al recibir corriente, el primer arranque de la ROM da `flash read err, 1000` y se
   recupera con `RTCWDT_RTC_RESET`; el segundo arranca normal. Es el reinicio por watchdog ya conocido.
-- **Consola muda tras reenchufar el USB:** con el ESP32 ya alimentado por el SIO, COM3 abrió sin error pero no
-  entregó líneas en dos capturas. Por eso C10 queda **parcial**: la pantalla no distingue si la FujiNet siguió
-  encendida por USB durante el ciclo del Atari, ni muestra cuándo quedó lista D1 frente a la primera trama.
-  Para cerrarla hace falta una captura con «65XE off … D1 back to the menu», sin reinicio del ESP32, y luego
-  la primera trama después de «D1 ready». No se diagnosticó más.
-- **Traza de guardado:** el guardado de C6 ocurrió antes de abrir la captura. Queda confirmado por la pantalla y
-  por la lectura de la ranura tras reiniciar (C9), pero falta la línea «drive memory version N saved» en la
-  consola.
+- **Consola muda tras reenchufar el USB (`0679621`):** con el ESP32 ya alimentado por el SIO, COM3 abrió sin
+  error pero no entregó líneas en dos capturas. Las capturas posteriores se abrieron con un reinicio por EN.
+- **C10 fallaba con `2552703`:** con DEMO DOS corriendo, el apagado del 65XE no se detectaba y al encender volvía
+  a cargar la imagen. Causa: con el Atari apagado la línea COMMAND queda baja, cada paso SIO termina en
+  `TransportFailed` y el +5 V solo se leía tras un paso `Idle`. El PR #84 (`0afb749`) lee el +5 V también tras
+  `TransportFailed`; en el banco se detectó el apagado sin reinicio del ESP32.
+- **Traza de guardado:** con `0679621` el guardado ocurrió antes de abrir la captura. Con `2552703` quedó en la
+  consola. En el ciclo C10 de `0afb749` no apareció, porque D1 ya tenía guardada demo-dos.atr.
 
 ## 7. Pendiente para cerrar T6
 
-- [ ] Traza de guardado en consola («drive memory version N saved») tras un cambio de unidad.
-- [ ] C10 completo: FujiNet encendida por USB durante el ciclo del Atari (sin reinicio en la consola) y D1 lista
-  antes de la primera trama del Atari.
+- [x] Traza de guardado en consola («drive memory version N saved») tras un cambio de unidad (`2552703`).
+- [x] C10 completo: FujiNet encendida por USB durante el ciclo del Atari (sin reinicio en la consola) y D1 lista
+  antes de la primera trama del Atari (`0afb749`).
 
 ## 8. Evidencia
 
 `D:\GitHub\Respaldos\FujiNet-RB-menu-sio-0679621\` (fuera del repo): ZIP y paquete, `esptool-write.txt`,
 `esptool-verify.txt`, `nvs-hash-antes.txt`, `nvs-hash-despues.txt`, `nvs-hash-final-banco.txt`,
 `consola-usb-con-sd.txt`, `consola-sio-montaje-d1.txt`, `consola-usb-ciclo-atari*.txt` (vacías).
+`D:\GitHub\Respaldos\FujiNet-RB-menu-sio-2552703\consola-cierre-t6.txt` (traza de guardado; fallo de C10).
+`D:\GitHub\Respaldos\FujiNet-RB-menu-sio-0afb749\consola-c10.txt` (C10 completo). Hash de la NVS sin cambios en
+todos los flasheos (`d8a04e88…a55c1d`).

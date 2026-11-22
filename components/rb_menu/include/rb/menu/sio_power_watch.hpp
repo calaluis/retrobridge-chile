@@ -8,7 +8,19 @@
 
 #include <cstdint>
 
+#include "rb/sio/sio_session.hpp"
+
 namespace rb::host {
+
+// Whether the SIO task may read the +5 V after a step: only when the step sent nothing on the bus (the
+// ADC reads never delay an answer). With the 65XE off its COMMAND line stays low, so every step ends
+// in TransportFailed (COMMAND stuck low), never Idle: reading only after Idle never saw the power-off
+// and D1 kept the image (bench 2552703, C10).
+constexpr bool powerSampleAfter(rb::sio::StepOutcome outcome) noexcept
+{
+    return outcome == rb::sio::StepOutcome::Idle || outcome == rb::sio::StepOutcome::MailboxApplied ||
+           outcome == rb::sio::StepOutcome::Ignored || outcome == rb::sio::StepOutcome::TransportFailed;
+}
 
 class SioPowerWatch {
 public:

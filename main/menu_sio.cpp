@@ -310,8 +310,9 @@ void sioTask(void*)
 
         const bool down = gpio_get_level(kButtonA) == 0;
         const int64_t now = esp_timer_get_time();
-        // +5 V only when the step saw no frame: the 8 ADC reads (~0.2 ms) never delay an answer.
-        if (stepped == rb::sio::StepOutcome::Idle && now - lastPowerSample >= kPowerSampleUs) {
+        // +5 V only after a step that sent nothing: the 8 ADC reads (~0.2 ms) never delay an answer.
+        // With the 65XE off, COMMAND stays low and every step ends in TransportFailed (powerSampleAfter).
+        if (rb::host::powerSampleAfter(stepped) && now - lastPowerSample >= kPowerSampleUs) {
             lastPowerSample = now;
             int pinMv = 0;
             int sioMv = 0;

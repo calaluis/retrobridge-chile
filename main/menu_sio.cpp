@@ -1,5 +1,7 @@
 #include "menu_sio.hpp"
 
+#include "sdkconfig.h"
+
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -108,7 +110,7 @@ static_assert(std::is_trivially_copyable_v<SaveRequest> && std::is_trivially_cop
               "FreeRTOS queues copy items byte by byte");
 QueueHandle_t g_saveRequests = nullptr;  // one item, overwritten: only the newest memory matters
 QueueHandle_t g_saveOutcomes = nullptr;  // one item, overwritten: only the newest result changes the screen
-constexpr uint32_t kSaveTaskStack = 6144;
+constexpr uint32_t kSaveTaskStack = CONFIG_RB_DRIVE_SAVE_STACK;  // the package checks the frames against it
 
 template <typename T, typename... Args>
 T* createOnce(Args&&... args)
@@ -572,8 +574,8 @@ void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot)
 
     // Drive memory: the slots are read once, here. Saving needs that read to give Loaded or Empty and
     // rb_drive_save to run; otherwise it stays off for this session (a save could replace E0).
-    rb::host::SlotFileStore::LoadResult loaded;
-    bool read = false;
+    // A pointer into the store (heap): no copy of the ~1 KB result on app_main's 3584 B stack.
+    const rb::host::SlotFileStore::LoadResult* loaded = nullptr;
     bool saverReady = false;
     if (failure == nullptr) {
         g_store = createOnce<rb::host::SlotFileStore>(rb::esp::SdCardStorage::kMountPoint);
@@ -583,14 +585,13 @@ void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot)
     }
     if (g_store != nullptr) {
         const int64_t began = esp_timer_get_time();
-        loaded = g_store->load();
-        read = true;
-        if (loaded.status == rb::host::SlotFileStore::LoadStatus::Error) {
+        loaded = &g_store->load();
+        if (loaded->status == rb::host::SlotFileStore::LoadStatus::Error) {
             ESP_LOGW(kTag, "drive memory not read: %s (errno %d); saving off this session",
-                     rb::host::storageReason(loaded.error), loaded.error);
+                     rb::host::storageReason(loaded->error), loaded->error);
         } else {
             ESP_LOGI(kTag, "drive memory read in %lld ms: %s", msOf(esp_timer_get_time() - began),
-                     loaded.status == rb::host::SlotFileStore::LoadStatus::Loaded ? "slot found" : "no valid slot");
+                     loaded->status == rb::host::SlotFileStore::LoadStatus::Loaded ? "slot found" : "no valid slot");
             g_saveRequests = xQueueCreate(1, sizeof(SaveRequest));
             g_saveOutcomes = xQueueCreate(1, sizeof(SaveOutcome));
             saverReady = g_saveRequests != nullptr && g_saveOutcomes != nullptr &&
@@ -601,7 +602,8 @@ void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot)
             }
         }
     }
-    rb::host::planDriveMemory(failure, failureError, read ? &loaded : nullptr, saverReady, g_plan);
+    // rb_drive_save touches the store only after g_planPublished, so *loaded is still this read.
+    rb::host::planDriveMemory(failure, failureError, loaded, saverReady, g_plan);
     g_planPublished.store(true, std::memory_order_release);  // after g_plan, the queues and the task
 
     if (!registerCommand("menu", "menu: D1 vuelve al menu (luego apaga y enciende el 65XE)", menuCommand) ||

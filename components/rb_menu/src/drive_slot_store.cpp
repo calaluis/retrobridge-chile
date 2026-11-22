@@ -28,9 +28,10 @@ SlotFileStore::SlotFileStore(const char* directory) noexcept
     valid_ = true;
 }
 
-SlotFileStore::LoadResult SlotFileStore::load() noexcept
+const SlotFileStore::LoadResult& SlotFileStore::load() noexcept
 {
-    LoadResult result;
+    LoadResult& result = result_;
+    result = LoadResult{};
     loaded_ = true;
     newest_ = -1;
     newestSeq_ = 0;
@@ -39,7 +40,7 @@ SlotFileStore::LoadResult SlotFileStore::load() noexcept
         result.error = ENAMETOOLONG;
         return result;
     }
-    DriveMemorySlot slots[2];
+    DriveMemorySlot* const slots = slots_;
     bool ok[2] = {false, false};
     int ioError = 0;
     for (int i = 0; i < 2; ++i) {
@@ -51,12 +52,11 @@ SlotFileStore::LoadResult SlotFileStore::load() noexcept
             }
             continue;
         }
-        uint8_t buffer[codec::kSlotSize + 1];  // one byte more: a longer file is not a slot
-        const std::size_t size = std::fread(buffer, 1, sizeof buffer, file);
+        const std::size_t size = std::fread(readBuffer_.data(), 1, readBuffer_.size(), file);
         if (std::ferror(file) != 0) {
             ioError = EIO;
         } else {
-            ok[i] = codec::decode(buffer, size, slots[i]);
+            ok[i] = codec::decode(readBuffer_.data(), size, slots[i]);
         }
         std::fclose(file);
     }
@@ -95,7 +95,7 @@ SlotFileStore::SaveResult SlotFileStore::save(const DriveMemory& memory) noexcep
     }
     const int target = newest_ == 0 ? 1 : 0;
     const uint32_t seq = newest_ < 0 ? 1 : newestSeq_ + 1;
-    codec::Block block{};
+    codec::Block& block = block_;
     codec::encode(memory, seq, block);
 
     // In place when the file already is one slot long (the FAT chain does not change); otherwise

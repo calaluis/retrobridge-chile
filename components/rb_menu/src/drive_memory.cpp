@@ -71,8 +71,8 @@ bool decode(const uint8_t* data, std::size_t size, DriveMemorySlot& out) noexcep
         get32(data) != kMagic || (data[4] | data[5] << 8) != kVersion || data[6] != 0 || data[7] != 0) {
         return false;
     }
-    DriveMemorySlot slot;
-    slot.seq = get32(data + 8);
+    // Every name field is checked before `out` is touched, so a rejected slot leaves `out` as it was
+    // without a DriveMemorySlot copy on the stack (~1 KB: it overflowed the 3584 B app_main stack).
     for (unsigned drive = 1; drive <= DriveMemory::kDrives; ++drive) {
         const uint8_t* field = data + kNamesOffset + (drive - 1) * kNameField;
         const void* nul = std::memchr(field, 0, kNameField);
@@ -80,16 +80,16 @@ bool decode(const uint8_t* data, std::size_t size, DriveMemorySlot& out) noexcep
             return false;
         }
         const std::size_t length = static_cast<std::size_t>(static_cast<const uint8_t*>(nul) - field);
-        for (std::size_t i = length; i < kNameField; ++i) {
-            if (field[i] != 0) {
-                return false;
+        for (std::size_t i = 0; i < kNameField; ++i) {
+            if (i < length ? !printable(static_cast<char>(field[i])) : field[i] != 0) {
+                return false;  // a character outside printable ASCII, or garbage after the NUL
             }
         }
-        if (!slot.memory.set(drive, reinterpret_cast<const char*>(field))) {
-            return false;  // a character outside printable ASCII
-        }
     }
-    out = slot;
+    for (unsigned drive = 1; drive <= DriveMemory::kDrives; ++drive) {
+        out.memory.set(drive, reinterpret_cast<const char*>(data + kNamesOffset + (drive - 1) * kNameField));
+    }
+    out.seq = get32(data + 8);
     return true;
 }
 

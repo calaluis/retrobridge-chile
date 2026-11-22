@@ -449,6 +449,19 @@ void sioTask(void*)
 // the SIO task, then keeps the Wi-Fi up. Never touches the SIO.
 void netTask(void*)
 {
+    switch (rb::host::recoverSourcesFile(kSourcesPath)) {
+    case rb::host::SourcesRecovery::Discarded:
+        ESP_LOGW(kTag, "%s.tmp from an unfinished save removed", kSourcesPath);
+        break;
+    case rb::host::SourcesRecovery::Restored:
+        ESP_LOGW(kTag, "%s restored from its .tmp", kSourcesPath);
+        break;
+    case rb::host::SourcesRecovery::Failed:
+        ESP_LOGE(kTag, "%s missing and its .tmp could not be renamed", kSourcesPath);
+        break;
+    case rb::host::SourcesRecovery::Nothing:
+        break;
+    }
     std::FILE* file = std::fopen(kSourcesPath, "r");
     if (file == nullptr) {
         ESP_LOGW(kTag, "no %s: sources 2..8 empty", kSourcesPath);

@@ -3,7 +3,8 @@
 // to the network named in /sd/retrobridge-wifi.txt and reconnects on its own when the link drops.
 //
 //   * File: line 1 the network name (1..32 bytes), line 2 the key (empty for an open network, or 8..63
-//     bytes). Only CR/LF are removed, so names and keys may hold spaces.
+//     bytes). Only CR/LF are removed, so names and keys may hold spaces; nothing may follow line 2
+//     (rb::host::WifiConfig).
 //   * The key lives only in RAM: it is never logged (only its length), never written to a file, and the
 //     Wi-Fi driver keeps its copy in RAM (WIFI_STORAGE_RAM; the NVS is neither read nor written:
 //     CONFIG_ESP_WIFI_NVS_ENABLED and CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE are off in

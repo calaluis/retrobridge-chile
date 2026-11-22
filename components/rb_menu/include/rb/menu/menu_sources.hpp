@@ -57,4 +57,11 @@ private:
 bool writeSourcesFile(const char* path, std::size_t index, const char* name, char* error,
                       std::size_t errorSize) noexcept;
 
+// A `path`.tmp left by a write that power cut short (T5 review). Called once at start,
+// before the file is read: with `path` there, the .tmp is an unfinished new text and is
+// removed; with `path` missing, the old file was already removed and the .tmp, complete,
+// becomes `path`.
+enum class SourcesRecovery { Nothing, Discarded, Restored, Failed };
+SourcesRecovery recoverSourcesFile(const char* path) noexcept;
+
 }  // namespace rb::host

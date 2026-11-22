@@ -12,6 +12,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
+#include "rb/menu/wifi_config.hpp"
 
 namespace rb::menusio {
 
@@ -31,8 +32,8 @@ void setState(WifiState state) noexcept { g_state.store(static_cast<int>(state),
 
 long long msNow() { return static_cast<long long>(esp_timer_get_time() / 1000); }
 
-// Line 1: network name (1..32 bytes), line 2: key (empty or 8..63 bytes). The key is copied straight
-// into `config` and the local copy is wiped; only its length is ever logged.
+// rb::host::WifiConfig reads and checks the file (plan §3); the key goes straight into `config`
+// and the reader's copy is wiped. Only its length is ever logged.
 bool readWifiFile(const char* path, wifi_config_t& config)
 {
     std::FILE* file = std::fopen(path, "rb");
@@ -41,33 +42,20 @@ bool readWifiFile(const char* path, wifi_config_t& config)
         setState(WifiState::NoFile);
         return false;
     }
-    char lines[2][80] = {};
-    for (auto& line : lines) {
-        if (std::fgets(line, sizeof line, file) == nullptr) {
-            line[0] = '\0';
-        }
-        line[std::strcspn(line, "\r\n")] = '\0';
-    }
+    rb::host::WifiConfig wifi;
+    const rb::host::WifiConfig::Result result = wifi.read(file);
     std::fclose(file);
-    const std::size_t ssid = std::strlen(lines[0]);
-    const std::size_t key = std::strlen(lines[1]);
-    bool ok = false;
-    if (ssid == 0 || ssid > sizeof config.sta.ssid) {
-        ESP_LOGW(kTag, "Wi-Fi off: network name of %u bytes in %s (1..32)", static_cast<unsigned>(ssid), path);
-    } else if (key != 0 && (key < 8 || key > 63)) {
-        ESP_LOGW(kTag, "Wi-Fi off: key of %u bytes in %s (empty or 8..63)", static_cast<unsigned>(key), path);
-    } else {
-        std::memcpy(config.sta.ssid, lines[0], ssid);
-        std::memcpy(config.sta.password, lines[1], key);
-        config.sta.threshold.authmode = key == 0 ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
-        ESP_LOGI(kTag, "Wi-Fi: network '%s', key of %u bytes", lines[0], static_cast<unsigned>(key));
-        ok = true;
-    }
-    std::memset(lines, 0, sizeof lines);  // the key stays only in the driver's RAM copy
-    if (!ok) {
+    if (result != rb::host::WifiConfig::Result::Ok) {
+        ESP_LOGW(kTag, "Wi-Fi off: %s in %s", rb::host::WifiConfig::reason(result), path);
         setState(WifiState::BadFile);
+        return false;
     }
-    return ok;
+    std::memcpy(config.sta.ssid, wifi.name(), wifi.nameLength());
+    std::memcpy(config.sta.password, wifi.key(), wifi.keyLength());
+    config.sta.threshold.authmode = wifi.hasKey() ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+    ESP_LOGI(kTag, "Wi-Fi: network '%s', key of %u bytes", wifi.name(), static_cast<unsigned>(wifi.keyLength()));
+    wifi.wipe();  // the key stays only in the driver's RAM copy
+    return true;
 }
 
 void onEvent(void*, esp_event_base_t base, int32_t id, void* data)
@@ -158,6 +146,7 @@ void runWifiStation(const char* path) noexcept
             ESP_LOGI(kTag, "Wi-Fi connected in %lld ms", msNow() - from);
             // Stay here until the link drops; then try again.
             xEventGroupWaitBits(g_events, kDisconnected, pdFALSE, pdFALSE, portMAX_DELAY);
+            setState(WifiState::Connecting);  // at once: the menu must not start TNFS during the pause
             ESP_LOGW(kTag, "Wi-Fi link lost: reconnecting");
             waiting = WifiState::Connecting;
         } else {

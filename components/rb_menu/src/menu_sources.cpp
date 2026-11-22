@@ -56,6 +56,13 @@ bool replaceFile(const char* from, const char* to) noexcept
 #if defined(_WIN32)
     return MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 #else
+    // FAT on ESP-IDF (f_rename) refuses a target that exists, so the old file goes first; the
+    // PC on Linux takes the same path, so the host tests run what the FujiNet runs. Power lost
+    // between the two calls leaves only `from`: recoverSourcesFile() puts it back at the next start.
+    errno = 0;
+    if (std::remove(to) != 0 && errno != ENOENT) {
+        return false;
+    }
     return std::rename(from, to) == 0;
 #endif
 }
@@ -189,6 +196,28 @@ bool MenuSources::validServer(const char* text) noexcept
         }
     }
     return true;
+}
+
+SourcesRecovery recoverSourcesFile(const char* path) noexcept
+{
+    char temporary[512];
+    if (std::snprintf(temporary, sizeof temporary, "%s.tmp", path) >= static_cast<int>(sizeof temporary)) {
+        return SourcesRecovery::Nothing;
+    }
+    std::FILE* tmp = std::fopen(temporary, "rb");
+    if (tmp == nullptr) {
+        return SourcesRecovery::Nothing;
+    }
+    std::fclose(tmp);
+    std::FILE* file = std::fopen(path, "rb");
+    if (file != nullptr) {
+        // Cut before the replacement: the old file is whole, the new text was never committed.
+        std::fclose(file);
+        std::remove(temporary);
+        return SourcesRecovery::Discarded;
+    }
+    // Cut between removing the old file and renaming the new one: the new text is whole.
+    return std::rename(temporary, path) == 0 ? SourcesRecovery::Restored : SourcesRecovery::Failed;
 }
 
 bool writeSourcesFile(const char* path, std::size_t index, const char* name, char* error,

@@ -219,6 +219,44 @@ void test_a_missing_file_is_created_by_the_first_source_saved()
     TEST_ASSERT_EQUAL_STRING("<none>", readFile(RB_TEST_MENU_DIR "/sources-created.txt.tmp").c_str());
 }
 
+// T5 review: a save cut by a power loss leaves sources.txt.tmp; the next start fixes it.
+void test_a_tmp_left_by_a_cut_save_is_dropped_or_restored_at_start()
+{
+    constexpr const char* tmp = RB_TEST_MENU_DIR "/sources-edit.txt.tmp";
+    std::remove(tmp);
+    writeFile(kFile, kOriginal);
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(rb::host::SourcesRecovery::Nothing),
+                          static_cast<int>(rb::host::recoverSourcesFile(kFile)));
+    // Cut before the replacement: the old file stays, the half-written text goes.
+    writeFile(tmp, "a medio escribir");
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(rb::host::SourcesRecovery::Discarded),
+                          static_cast<int>(rb::host::recoverSourcesFile(kFile)));
+    TEST_ASSERT_EQUAL_STRING(kOriginal, readFile(kFile).c_str());
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(tmp).c_str());
+    // Cut after the old file was removed: the complete new text becomes the file.
+    std::remove(kFile);
+    writeFile(tmp, "nuevo.cl\n");
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(rb::host::SourcesRecovery::Restored),
+                          static_cast<int>(rb::host::recoverSourcesFile(kFile)));
+    TEST_ASSERT_EQUAL_STRING("nuevo.cl\n", readFile(kFile).c_str());
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(tmp).c_str());
+}
+
+// T5 review: on the FujiNet the second save replaces a file that exists; both saves stick.
+void test_two_saves_in_a_row_both_reach_the_file()
+{
+    constexpr const char* file = RB_TEST_MENU_DIR "/sources-created.txt";
+    std::remove(file);
+    EditRig rig{file, ""};
+    rig.pressE(1);
+    assert_line(rig.type("primero.cl"), rb::host::kMainMessage, line(" FUENTE 2 GUARDADA"));
+    rig.pressE(1);
+    assert_line(rig.type("segundo.cl"), rb::host::kMainMessage, line(" FUENTE 2 GUARDADA"));
+    TEST_ASSERT_EQUAL_STRING("segundo.cl", rig.sources.name(2));
+    TEST_ASSERT_EQUAL_STRING("segundo.cl\n", readFile(file).c_str());
+    std::remove(file);
+}
+
 // --- E on the main screen -----------------------------------------------------------
 
 void test_e_opens_the_row_of_the_bar_with_its_name_in_the_field()
@@ -486,6 +524,8 @@ int main()
     RUN_TEST(test_a_new_source_goes_at_the_end_even_without_a_last_newline);
     RUN_TEST(test_a_file_that_cannot_be_rewritten_is_left_as_it_was);
     RUN_TEST(test_a_missing_file_is_created_by_the_first_source_saved);
+    RUN_TEST(test_a_tmp_left_by_a_cut_save_is_dropped_or_restored_at_start);
+    RUN_TEST(test_two_saves_in_a_row_both_reach_the_file);
     RUN_TEST(test_e_opens_the_row_of_the_bar_with_its_name_in_the_field);
     RUN_TEST(test_return_saves_the_name_in_the_file_and_on_the_screen);
     RUN_TEST(test_source_2_is_added_on_an_empty_list);

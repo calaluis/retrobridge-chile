@@ -229,6 +229,10 @@ rb_add_host_test(test_menu_catalog menu/test_menu_catalog.cpp ${rb_root}/compone
 target_include_directories(test_menu_catalog PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu_tnfs/include ${rb_root}/components/rb_menu/include)
 rb_add_host_test(test_drive_memory menu/test_drive_memory.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp)
 target_include_directories(test_drive_memory PRIVATE ${rb_root}/components/rb_menu/include)
+# retrobridge-wifi.txt: the two lines, their limits, nothing after line 2 (menu-sio-wifi-tnfs, T5 review).
+rb_add_host_test(test_wifi_config menu/test_wifi_config.cpp ${rb_root}/components/rb_menu/src/wifi_config.cpp)
+target_include_directories(test_wifi_config PRIVATE ${rb_root}/components/rb_menu/include)
+target_compile_definitions(test_wifi_config PRIVATE RB_TEST_WIFI_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 rb_add_host_test(test_sio_power_watch menu/test_sio_power_watch.cpp)
 target_include_directories(test_sio_power_watch PRIVATE ${rb_root}/components/rb_menu/include)
 target_link_libraries(test_sio_power_watch PRIVATE rb_menu)

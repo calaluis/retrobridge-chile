@@ -26,11 +26,19 @@ Spec: `specs/menu-unidades-persistentes.md`. Plan: `plans/menu-unidades-persiste
   prematura en `c3c9e2b`. Entre `beginRestore()` y `restore()` no se aplica nada: D1 sirve el menú, D2–D8 quedan
   vacías y la pantalla muestra `RESTAURANDO UNIDADES` con `A` deshabilitada. Regresión
   `test_service_before_restore_waits_and_mounts_nothing`.
-- **T5 BREAK (en revisión del responsable):** código reservado `$F0` (`kMenuBreakKey`); `onBreak()` en el
+- T5 BREAK (completada): `4e157c3`, en main por el PR #78 (`ef77ccf`); CI #306 verde, 85/85 con ASan/UBSan. Código reservado `$F0` (`kMenuBreakKey`); `onBreak()` en el
   controlador; `resend`, `brk` y `brk_hold` en `make_menu.py`. Pruebas: `test_menu_break.cpp` (C7, 7 casos),
   `test_a_mount_whose_reply_was_lost_to_break_is_applied_once_then_break_shows_main` (C11 en el transporte) y
   9 pruebas de Break en `test_menu_program.py`. Altirra: `02-DOCS/raw/2026-11-22-t5-break-altirra.md`.
-- T6 pegamento ESP y T7 empaquetador y banco: pendientes.
+- **T6 pegamento ESP (pendiente de evidencia de banco):** rama `feat/menu-unidades-esp` desde `ef77ccf`; `1efe7d4`
+  y corrección posterior. `beginRestore()` en `start()`; `finish()` lee catálogo y ranuras una vez, arma el plan
+  (`planDriveMemory`, `drive_memory_link`) y lo publica con release; la tarea SIO solo toca el plan y las colas tras
+  verlo con acquire, y las colas solo si el guardado está activo. Guardado activo solo con `rb_drive_save` en marcha y
+  primera lectura Loaded o Empty; tras Error o fallo de microSD queda desactivado toda la sesión (`NO SE GUARDO`).
+  Regresión `test_a_failed_first_read_keeps_saving_off_and_e0_survives` (E0 ilegible al arrancar, la tarjeta se
+  recupera, cambio de unidad: funciona, `NO SE GUARDO`, E0 al reiniciar); el mutante «guardar tras Error» la hace
+  fallar. `check_sio_calls` en 45; sin `nvs_*`. Falta: consola en banco (restauración, guardado, apagado/encendido).
+- T7 empaquetador y banco: pendiente.
 
 ## Evidencia de T2 y T3
 

@@ -260,6 +260,13 @@ bool writeSourcesFile(const char* path, std::size_t index, const char* name, cha
         std::snprintf(error, errorSize, "path too long");
         return false;
     }
+    // A .bak with no file is the last whole text, left by a save whose renames both failed:
+    // it comes back before anything is read, or nothing is saved (an empty read would drop
+    // the other sources).
+    if (!exists(path) && exists(backup) && sourcesFileRename(backup, path) != 0) {
+        std::snprintf(error, errorSize, "cannot restore %s", backup);
+        return false;
+    }
     // "r+b" also proves the file can be written: a read-only file stops here. A file that
     // does not exist reads as an empty one, so the first source saved creates it (T5, C6).
     errno = 0;

@@ -291,6 +291,35 @@ void test_a_failed_rename_keeps_the_old_file_and_leaves_nothing_else()
     }
 }
 
+// T5 review (a081114): both renames fail, so only the .bak holds the sources. A retry with E
+// must not read the missing file as empty: it puts the .bak back first, or saves nothing.
+void test_a_retry_after_a_failed_restore_keeps_every_source()
+{
+    std::remove(kTmp);
+    std::remove(kBak);
+    writeFile(kFile, "uno.cl\ndos.cl\n");
+    char error[96] = {};
+    rb::host::sourcesFileRename = [](const char* from, const char* to) {
+        const std::size_t length = std::strlen(from);
+        return length >= 4 && (std::strcmp(from + length - 4, ".tmp") == 0 || std::strcmp(from + length - 4, ".bak") == 0)
+                   ? -1
+                   : std::rename(from, to);
+    };
+    TEST_ASSERT_FALSE(rb::host::writeSourcesFile(kFile, 0, "tres.cl", error, sizeof error));
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(kFile).c_str());
+    TEST_ASSERT_EQUAL_STRING("uno.cl\ndos.cl\n", readFile(kBak).c_str());
+    // The .bak still cannot come back: the retry saves nothing and the .bak stays.
+    TEST_ASSERT_FALSE(rb::host::writeSourcesFile(kFile, 0, "tres.cl", error, sizeof error));
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(kFile).c_str());
+    TEST_ASSERT_EQUAL_STRING("uno.cl\ndos.cl\n", readFile(kBak).c_str());
+    // Renames work again: the retry restores the .bak, then edits source 2 and keeps source 3.
+    rb::host::sourcesFileRename = [](const char* from, const char* to) { return std::rename(from, to); };
+    TEST_ASSERT_TRUE(rb::host::writeSourcesFile(kFile, 0, "tres.cl", error, sizeof error));
+    TEST_ASSERT_EQUAL_STRING("tres.cl\ndos.cl\n", readFile(kFile).c_str());
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(kBak).c_str());
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(kTmp).c_str());
+}
+
 // T5 review: on the FujiNet the second save replaces a file that exists; both saves stick.
 void test_two_saves_in_a_row_both_reach_the_file()
 {
@@ -577,6 +606,7 @@ int main()
     RUN_TEST(test_a_missing_file_is_created_by_the_first_source_saved);
     RUN_TEST(test_a_cut_save_never_loses_the_last_whole_file);
     RUN_TEST(test_a_failed_rename_keeps_the_old_file_and_leaves_nothing_else);
+    RUN_TEST(test_a_retry_after_a_failed_restore_keeps_every_source);
     RUN_TEST(test_two_saves_in_a_row_both_reach_the_file);
     RUN_TEST(test_e_opens_the_row_of_the_bar_with_its_name_in_the_field);
     RUN_TEST(test_return_saves_the_name_in_the_file_and_on_the_screen);

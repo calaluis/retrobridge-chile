@@ -188,6 +188,8 @@ El dueño del 65XE con la FujiNet conectada solo al SIO, sin PC ni consola USB.
   nuevo: manda la copia válida más reciente (9c). → La confirmación es aviso al usuario, no condición de validez.
 - 2026-11-22 — ¿Qué pasa con la orden en curso al pulsar Break? → El menú la repite idéntica hasta terminarla y
   después atiende Break. → Un montaje cuya respuesta se perdió se aplica una sola vez.
+- 2026-11-22 — ¿Y Break mientras se restauran las unidades? → Se descarta, como toda tecla durante
+  `RESTAURANDO UNIDADES`. → La pantalla principal ya está a la vista; no hay carpeta de la que salir.
 - 2026-11-21 — ¿Cuándo cuenta un cambio como guardado? → Solo tras escribir y sincronizar bien la microSD; el menú
   lo dice. → Que el usuario sepa qué sobrevivirá a un apagado.
 

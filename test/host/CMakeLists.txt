@@ -223,6 +223,10 @@ rb_add_host_test(test_drive_memory menu/test_drive_memory.cpp ${rb_root}/compone
 target_include_directories(test_drive_memory PRIVATE ${rb_root}/components/rb_menu/include)
 rb_add_host_test(test_sio_power_watch menu/test_sio_power_watch.cpp)
 target_include_directories(test_sio_power_watch PRIVATE ${rb_root}/components/rb_menu/include)
+rb_add_host_test(test_drive_slot_store menu/test_drive_slot_store.cpp ${rb_root}/components/rb_menu/src/drive_slot_store.cpp
+                 ${rb_root}/components/rb_menu/src/drive_memory.cpp)
+target_include_directories(test_drive_slot_store PRIVATE ${rb_root}/components/rb_menu/include)
+target_compile_definitions(test_drive_slot_store PRIVATE RB_TEST_SLOT_DIR="${CMAKE_CURRENT_BINARY_DIR}/drive-slots")
 # Creating a blank ATR from the menu (menu-formatear-disco, F003).
 rb_add_host_test(test_create_atr menu/test_create_atr.cpp ${rb_root}/components/rb_menu/src/create_atr.cpp
                  ${rb_root}/components/rb_menu/src/menu_catalog.cpp)

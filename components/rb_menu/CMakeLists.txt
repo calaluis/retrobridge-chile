@@ -7,6 +7,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/rb_build_flags.cmake)
 set(rb_srcs
     "src/create_atr.cpp"
     "src/drive_memory.cpp"
+    "src/drive_slot_store.cpp"
     "src/menu_catalog.cpp"
     "src/menu_controller.cpp"
     "src/menu_image.cpp"

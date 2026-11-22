@@ -92,6 +92,15 @@ extern "C" void app_main(void)
              rb::hwdiag::reset_reason_name(boot.reason), static_cast<unsigned>(boot.bootsSincePowerOn),
              static_cast<unsigned>(boot.watchdogResets), static_cast<unsigned>(boot.panicResets));
 
+#if CONFIG_RB_MENU_SIO
+    // Powered only from the SIO, the board starts together with the 65XE: D1 answers before the microSD
+    // mount (~0.7 s) and the catalog, so the first boot attempt of the Atari finds the menu.
+    const bool menuStarted = rb::menusio::start(kBoard);
+    if (!menuStarted) {
+        ESP_LOGE(kTag, "menu-sio: the menu is not served");
+    }
+#endif
+
     const auto mounted = g_storage.mount(kBoard);  // refused without touching hardware if unconfirmed
     g_diagnostics.recordMount(mounted.ok(), g_storage.lastEspError(),
                               mounted.ok() ? 0 : static_cast<uint8_t>(mounted.error()), g_clock.nowMicros());
@@ -110,8 +119,8 @@ extern "C" void app_main(void)
     if (!rb::console::start_diagnostic_console(g_console)) {
         ESP_LOGE(kTag, "diagnostic console could not start");
     }
-    if (!rb::menusio::start(kBoard, mounted.ok())) {
-        ESP_LOGE(kTag, "menu-sio: the menu is not served");
+    if (menuStarted) {
+        rb::menusio::finish(mounted.ok(), boot);  // catalog, console commands, boot record
     }
     return;
 #endif

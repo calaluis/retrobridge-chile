@@ -1,5 +1,6 @@
 #include "menu_sio.hpp"
 
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
@@ -10,6 +11,7 @@
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
 #include "esp_adc/adc_oneshot.h"
+#include "esp_app_desc.h"
 #include "esp_console.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -49,8 +51,23 @@ rb::host::MenuSources g_sources;  // E2 (TNFS) fills them; E1 has none
 rb::host::HostImageRepository g_repository{rb::esp::SdCardStorage::kMountPoint, g_menuImage};
 rb::esp::EspSioUart* g_line = nullptr;
 rb::sio::SioLineTransport* g_transport = nullptr;
-rb::host::MenuCatalog* g_catalog = nullptr;  // ~129 KB: PSRAM
+rb::host::MenuCatalog* g_catalog = nullptr;  // ~129 KB: PSRAM; read and written only by the SIO task after start()
 rb::host::MenuStation* g_station = nullptr;
+
+// Early start: D1 is served before the microSD is mounted. finish() reads the catalog into g_loaded and
+// publishes it; the SIO task copies it into g_catalog between two frames, so the controller never sees it
+// change while it handles one.
+rb::host::MenuCatalog* g_loaded = nullptr;
+std::atomic<bool> g_catalogPublished{false};
+std::atomic<bool> g_catalogApplied{false};  // written by the SIO task only
+
+// Boot timing (esp_timer: microseconds since the application started; the ROM and the bootloader come first).
+int64_t g_readyUs = 0;                     // D1 served
+std::atomic<int64_t> g_firstFrameUs{0};    // first COMMAND frame from the Atari (complete or short)
+int g_boot5vMv = -1;                       // SIO +5V at start(); -1: not readable
+rb::hwdiag::BootRecord g_boot{};
+constexpr const char* kBootRecordPath = "/sd/retrobridge-arranques.txt";
+constexpr uint32_t kBootRecordDelayMs = 10000;
 
 std::atomic<bool> g_returnRequested{false};  // console `menu`: applied by the SIO task
 portMUX_TYPE g_d1Lock = portMUX_INITIALIZER_UNLOCKED;
@@ -120,17 +137,21 @@ bool readSio5v(int& pinMv, int& sioMv)
     return true;
 }
 
-void logSio5v(const char* when)
+// Logs the SIO +5V; returns it in mV, or -1 if the ADC is not available.
+int logSio5v(const char* when)
 {
     int pinMv = 0;
     int sioMv = 0;
     if (readSio5v(pinMv, sioMv)) {
         ESP_LOGI(kTag, "%s: SIO +5V (pin 10) %d mV (GPIO35 %d mV)%s", when, sioMv, pinMv,
                  sioMv == 0 ? ": no power from the Atari" : "");
-    } else {
-        ESP_LOGW(kTag, "%s: SIO +5V not readable (ADC unavailable)", when);
+        return sioMv;
     }
+    ESP_LOGW(kTag, "%s: SIO +5V not readable (ADC unavailable)", when);
+    return -1;
 }
+
+long long msOf(int64_t us) { return static_cast<long long>(us / 1000); }
 
 void setD1(const char* text)
 {
@@ -155,10 +176,24 @@ void sioTask(void*)
     bool buttonHandled = false;
     int64_t buttonSince = 0;
     for (;;) {
+        if (!g_catalogApplied && g_catalogPublished.load(std::memory_order_acquire)) {
+            *g_catalog = *g_loaded;  // between two frames: the controller is not using it
+            g_catalogApplied = true;
+            ESP_LOGI(kTag, "catalog: %u image(s) on the microSD root", static_cast<unsigned>(g_catalog->count()));
+        }
+
         (void)g_station->step();
 
         const bool down = gpio_get_level(kButtonA) == 0;
         const int64_t now = esp_timer_get_time();
+        if (g_firstFrameUs.load(std::memory_order_relaxed) == 0) {
+            const rb::sio::SioLineStats& line = g_transport->stats();
+            if (line.frames + line.shortFrames > 0) {
+                g_firstFrameUs.store(now, std::memory_order_relaxed);
+                ESP_LOGI(kTag, "first COMMAND frame from the Atari at %lld ms (D1 ready at %lld ms)", msOf(now),
+                         msOf(g_readyUs));
+            }
+        }
         if (down && !buttonDown) {
             buttonSince = now;
             buttonHandled = false;
@@ -190,10 +225,39 @@ int menuCommand(int, char**)
     return 0;
 }
 
+// Prints the end of the boot records file (the last ~2 KB).
+int printBootRecords()
+{
+    FILE* file = std::fopen(kBootRecordPath, "r");
+    if (file == nullptr) {
+        std::printf("sin registros de arranque (%s): %s\n", kBootRecordPath, std::strerror(errno));
+        return 1;
+    }
+    if (std::fseek(file, 0, SEEK_END) == 0) {
+        const long size = std::ftell(file);
+        if (size > 2048) {
+            (void)std::fseek(file, size - 2048, SEEK_SET);
+            std::array<char, 256> partial{};
+            (void)std::fgets(partial.data(), static_cast<int>(partial.size()), file);  // skip the partial first line
+        } else {
+            (void)std::fseek(file, 0, SEEK_SET);
+        }
+    }
+    std::array<char, 256> line{};
+    while (std::fgets(line.data(), static_cast<int>(line.size()), file) != nullptr) {
+        std::printf("%s", line.data());
+    }
+    std::fclose(file);
+    return 0;
+}
+
 int sioCommand(int argc, char** argv)
 {
+    if (argc >= 2 && std::strcmp(argv[1], "arranques") == 0) {
+        return printBootRecords();
+    }
     if (argc < 2 || std::strcmp(argv[1], "status") != 0) {
-        std::printf("uso: sio status\n");
+        std::printf("uso: sio status | sio arranques\n");
         return 1;
     }
     const rb::sio::SioLineStats& s = g_transport->stats();
@@ -220,7 +284,44 @@ int sioCommand(int argc, char** argv)
     } else {
         std::printf("SIO +5V: ADC no disponible\n");
     }
+    const int64_t first = g_firstFrameUs.load(std::memory_order_relaxed);
+    std::printf("arranque (ms desde el inicio de la app): D1 listo %lld, primera trama %lld%s, catalogo %s\n",
+                msOf(g_readyUs), msOf(first), first == 0 ? " (ninguna)" : "",
+                g_catalogApplied ? "cargado" : "pendiente");
     return 0;
+}
+
+// Appends one line per boot to the microSD, once the boot has settled: works without USB, and is read
+// afterwards with `sio arranques` or on a PC. Distinguishes a brownout or a reset loop (reason and counters
+// since power-on) from a D1 that came too late (D1 ready vs. first frame).
+void bootRecordTask(void*)
+{
+    vTaskDelay(pdMS_TO_TICKS(kBootRecordDelayMs));
+    int pinMv = 0;
+    int sioMv = -1;
+    if (!readSio5v(pinMv, sioMv)) {
+        sioMv = -1;
+    }
+    const rb::sio::SioLineStats& s = g_transport->stats();
+    const rb::host::MenuTransportStats& m = g_station->stats();
+    const int64_t first = g_firstFrameUs.load(std::memory_order_relaxed);
+    FILE* file = std::fopen(kBootRecordPath, "a");
+    if (file == nullptr) {
+        ESP_LOGW(kTag, "boot record not written (%s): %s", kBootRecordPath, std::strerror(errno));
+    } else {
+        std::fprintf(file,
+                     "version=%s arranque=%lu razon=%s brownout=%lu watchdog=%lu panic=%lu listo_ms=%lld "
+                     "primera_trama_ms=%lld tramas=%lu cortas=%lu ordenes=%lu sio5v_arranque_mv=%d sio5v_10s_mv=%d\n",
+                     esp_app_get_description()->version, static_cast<unsigned long>(g_boot.bootsSincePowerOn),
+                     rb::hwdiag::reset_reason_name(g_boot.reason), static_cast<unsigned long>(g_boot.brownoutResets),
+                     static_cast<unsigned long>(g_boot.watchdogResets), static_cast<unsigned long>(g_boot.panicResets),
+                     msOf(g_readyUs), first == 0 ? -1LL : msOf(first), static_cast<unsigned long>(s.frames),
+                     static_cast<unsigned long>(s.shortFrames), static_cast<unsigned long>(m.menuCommands),
+                     g_boot5vMv, sioMv);
+        std::fclose(file);
+        ESP_LOGI(kTag, "boot record appended to %s", kBootRecordPath);
+    }
+    vTaskDelete(nullptr);
 }
 
 bool registerCommand(const char* name, const char* help, esp_console_cmd_func_t func)
@@ -234,7 +335,7 @@ bool registerCommand(const char* name, const char* help, esp_console_cmd_func_t 
 
 }  // namespace
 
-bool start(const rb::board::BoardProfile& board, bool sdMounted)
+bool start(const rb::board::BoardProfile& board)
 {
     ESP_LOGW(kTag, "menu-sio TEST PACKAGE: transmits on SIO DATA IN. H4 and M3a NOT approved. Use only with the "
                    "owner's written risk acceptance and the SIO adapter without pin 8.");
@@ -247,26 +348,13 @@ bool start(const rb::board::BoardProfile& board, bool sdMounted)
     if (!startAdc()) {
         ESP_LOGW(kTag, "ADC1 for GPIO35 not available");
     }
-    logSio5v("boot");
+    g_boot5vMv = logSio5v("boot");
 
-    g_catalog = createOnce<rb::host::MenuCatalog>();
+    g_catalog = createOnce<rb::host::MenuCatalog>();  // empty until finish() reads the microSD
     if (g_catalog == nullptr) {
         ESP_LOGE(kTag, "no memory for the catalog");
         return false;
     }
-    if (!sdMounted) {
-        ESP_LOGW(kTag, "microSD not mounted: the menu lists no images");
-    } else {
-        errno = 0;
-        if (!rb::host::readCatalog(rb::esp::SdCardStorage::kMountPoint, *g_catalog)) {
-            if (errno == ENOMEM) {
-                ESP_LOGE(kTag, "microSD catalog not read: no memory for the 4 KB path buffer");
-            } else {
-                ESP_LOGW(kTag, "microSD catalog not read (%s): the menu lists no images", std::strerror(errno));
-            }
-        }
-    }
-    ESP_LOGI(kTag, "catalog: %u image(s) on the microSD root", static_cast<unsigned>(g_catalog->count()));
 
     static rb::esp::EspSioUart line{rb::esp::EspSioUart::Pins{board.sio.command, board.sio.rx, board.sio.tx}};
     g_line = &line;
@@ -287,19 +375,51 @@ bool start(const rb::board::BoardProfile& board, bool sdMounted)
     g_station->start();  // D1 = menu: the next boot of the Atari loads it
     transport.releaseDataLine();
 
-    if (!registerCommand("menu", "menu: D1 vuelve al menu (luego apaga y enciende el 65XE)", menuCommand) ||
-        !registerCommand("sio", "sio status: linea SIO, D1, latencia y +5V del SIO", sioCommand)) {
-        ESP_LOGW(kTag, "console commands menu/sio not registered");
-    }
+    g_readyUs = esp_timer_get_time();  // set before the SIO task exists: it reads it without a lock
     if (xTaskCreatePinnedToCore(sioTask, "rb_sio_menu", kTaskStack, nullptr, kTaskPriority, nullptr, kTaskCore) !=
         pdPASS) {
         ESP_LOGE(kTag, "SIO task not created");
+        g_station = nullptr;
         line.end();
         return false;
     }
     ESP_LOGI(kTag, "D1: menu. Switch the 65XE on.");
-    ESP_LOGI(kTag, "app_main stack: %u B never used", static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+    ESP_LOGI(kTag, "D1 ready at %lld ms (before the microSD and the catalog)", msOf(g_readyUs));
     return true;
+}
+
+void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot)
+{
+    g_boot = boot;
+    if (g_station == nullptr) {
+        return;  // start() failed: nothing is served
+    }
+    g_loaded = createOnce<rb::host::MenuCatalog>();
+    if (g_loaded == nullptr) {
+        ESP_LOGE(kTag, "no memory for the catalog: the menu lists no images");
+    } else if (!sdMounted) {
+        ESP_LOGW(kTag, "microSD not mounted: the menu lists no images");
+    } else {
+        errno = 0;
+        if (rb::host::readCatalog(rb::esp::SdCardStorage::kMountPoint, *g_loaded)) {
+            g_catalogPublished.store(true, std::memory_order_release);  // the SIO task applies it
+        } else if (errno == ENOMEM) {
+            ESP_LOGE(kTag, "microSD catalog not read: no memory for the 4 KB path buffer");
+        } else {
+            ESP_LOGW(kTag, "microSD catalog not read (%s): the menu lists no images", std::strerror(errno));
+        }
+    }
+
+    if (!registerCommand("menu", "menu: D1 vuelve al menu (luego apaga y enciende el 65XE)", menuCommand) ||
+        !registerCommand("sio", "sio status | sio arranques: linea SIO, D1, +5V y tiempos de arranque",
+                         sioCommand)) {
+        ESP_LOGW(kTag, "console commands menu/sio not registered");
+    }
+    if (sdMounted && xTaskCreate(bootRecordTask, "rb_boot_rec", 4096, nullptr, tskIDLE_PRIORITY + 1, nullptr) !=
+                         pdPASS) {
+        ESP_LOGW(kTag, "boot record task not created");
+    }
+    ESP_LOGI(kTag, "app_main stack: %u B never used", static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
 }
 
 }  // namespace rb::menusio

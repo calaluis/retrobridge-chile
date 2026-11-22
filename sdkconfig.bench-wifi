@@ -1,0 +1,10 @@
+# Bench test of the Wi-Fi demand (menu-sio-wifi-tnfs T1a/T1b): never published.
+# Applied after the board fragment, only for the bench-wifi package:
+#   idf.py -B build-bench-wifi -D SDKCONFIG=build-bench-wifi/sdkconfig \
+#          -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board.fujinet-atari-v1x;sdkconfig.bench-wifi" build
+# The NVS is kept as it is: the Wi-Fi driver and the radio calibration neither read nor write it.
+CONFIG_RB_BENCH_WIFI=y
+# CONFIG_ESP_WIFI_NVS_ENABLED is not set
+# CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE is not set
+# The key lives in RAM: no core dump to flash.
+CONFIG_ESP_COREDUMP_ENABLE_TO_NONE=y

@@ -33,6 +33,9 @@
 #if CONFIG_RB_MENU_SIO
 #include "menu_sio.hpp"
 #endif
+#if CONFIG_RB_BENCH_WIFI
+#include "bench_wifi.hpp"
+#endif
 
 namespace {
 
@@ -122,6 +125,15 @@ extern "C" void app_main(void)
     if (menuStarted) {
         rb::menusio::finish(mounted.ok(), boot);  // catalog, console commands, boot record
     }
+    return;
+#endif
+#if CONFIG_RB_BENCH_WIFI
+    // Bench test of the Wi-Fi demand (menu-sio-wifi-tnfs T1): no SIO pin, no cassette. The console stays for
+    // the USB log; the phases run on this task and never return while they work.
+    if (!rb::console::start_diagnostic_console(g_console)) {
+        ESP_LOGE(kTag, "diagnostic console could not start");
+    }
+    (void)rb::bench::run_wifi(mounted.ok());
     return;
 #endif
     // The cassette needs the microSD (its tapes) and PSRAM (its bank).

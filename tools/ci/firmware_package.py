@@ -81,7 +81,8 @@ SECRET_VALUE = re.compile(r'^CONFIG_\w*(PASSWORD|PASSWD|PSK|SSID|SECRET|TOKEN)\w
 PRIVATE_KEY = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 TEXT_SUFFIXES = {".txt", ".json", ".csv", ".md", ""}
 IDENTITY_PATHS = ("main", "components", "partitions", "sdkconfig.defaults",
-                  "sdkconfig.board.fujinet-atari-v1x", "CMakeLists.txt", "sdkconfig.bench-c8", "sdkconfig.menu-sio")
+                  "sdkconfig.board.fujinet-atari-v1x", "CMakeLists.txt", "sdkconfig.bench-c8", "sdkconfig.menu-sio",
+                  "sdkconfig.bench-wifi")
 
 # Bytes that exist only when a feature is linked in: string literals in the
 # application image (flash .rodata) and C++ symbols in the ELF symbol table.
@@ -102,9 +103,21 @@ FEATURE_MARKERS = {
         "app": (b"menu-sio TEST PACKAGE: transmits on SIO DATA IN", b"D1: menu. Switch the 65XE on."),
         "elf": (b"_ZN2rb3esp10EspSioUart5begin", b"_ZN2rb7menusio5start"),
     },
+    "bench_wifi": {  # main/bench_wifi.cpp: bench test of the Wi-Fi demand (menu-sio-wifi-tnfs T1), only with
+        # CONFIG_RB_BENCH_WIFI
+        "app": (b"WIFI BENCH: bench package, never published; no SIO pin is used",),
+        "elf": (b"_ZN2rb5bench8run_wifi",),
+    },
 }
 FEATURE_LABELS = {"hw_diag": "diagnóstico incorporado", "cassette": "casetera incorporada",
-                  "bench_c8": "prueba de banco C8 incorporada", "menu_sio": "menú por SIO físico incorporado"}
+                  "bench_c8": "prueba de banco C8 incorporada", "menu_sio": "menú por SIO físico incorporado",
+                  "bench_wifi": "prueba de banco Wi-Fi incorporada"}
+BENCH_WIFI_KCONFIG = "CONFIG_RB_BENCH_WIFI"
+BENCH_WIFI_CHECK = "prueba de banco Wi-Fi (sdkconfig y aplicación)"
+# The Wi-Fi bench keeps the NVS as it is and the key out of flash: no Wi-Fi or PHY data in NVS, no core dump.
+WIFI_NVS_CHECK = "Wi-Fi sin NVS ni volcado de núcleo a flash (sdkconfig)"
+WIFI_NVS_FORBIDDEN = ("CONFIG_ESP_WIFI_NVS_ENABLED", "CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE",
+                      "CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH")
 BENCH_KCONFIG = "CONFIG_RB_BENCH_C8"
 BENCH_CHECK = "prueba de banco C8 (sdkconfig y aplicación)"
 BENCH_GRANT_CHECK = "concesión de banco solo en main/bench_c8.cpp (código)"
@@ -203,6 +216,7 @@ class Variant:
     closed_gates: bool = False            # H4 and M3a must NOT be approved (profile and record)
     bench: bool = False                   # the bench test C8 build (CONFIG_RB_BENCH_C8); every other variant refuses it
     menu_sio: bool = False                # the menu-sio test package (CONFIG_RB_MENU_SIO); every other variant refuses it
+    bench_wifi: bool = False              # the Wi-Fi bench (CONFIG_RB_BENCH_WIFI); every other variant refuses it
     profile_text: str = "microSD por SPI3 en GPIO 18/23/19/5; sin pines SIO"
 
     @property
@@ -255,6 +269,15 @@ VARIANTS = {
                         profile_text="microSD por SPI3 en GPIO 18/23/19/5; H4 y M3a sin aprobar; paquete de prueba "
                                      "menu-sio: UART2 TX en DATA IN (GPIO21), RX en DATA OUT (GPIO33), COMMAND en GPIO39; "
                                      "solo con aceptación de riesgo escrita y el adaptador sin pin 8"),
+    # Bench test of the Wi-Fi demand (menu-sio-wifi-tnfs T1a/T1b): never published. No SIO pin; the cassette is not
+    # started (its source calls are still counted, as in cassette-lectura). The NVS is neither read nor written.
+    "bench-wifi": Variant("retrobridge-fw-bench-wifi-fujinet-atari-v1x",
+                          "firmware de prueba de banco Wi-Fi (demanda de la radio, sin pines SIO, no publicado) para "
+                          "FujiNet Atari FN32ROV-1.3/1.5",
+                          features=("bench_wifi",), version_matches_commit=True, sio_calls=CASSETTE_SIO_CALLS,
+                          closed_gates=True, bench_wifi=True,
+                          profile_text="microSD por SPI3 en GPIO 18/23/19/5; H4 y M3a sin aprobar; prueba de banco "
+                                       "Wi-Fi: sin pines SIO, sin NVS; red y clave leídas de la microSD"),
 }
 
 
@@ -751,6 +774,14 @@ def check_variant(files: Files, variant: Variant, commit: str, log: CheckLog) ->
     log.require(MENU_SIO_CHECK, menu_on == menu_in_app == menu_in_elf == variant.menu_sio,
                 f"{MENU_SIO_KCONFIG}={'y' if menu_on else 'no'}, en la aplicación: {'sí' if menu_in_app else 'no'}, "
                 f"en el ELF: {'sí' if menu_in_elf else 'no'} (esperado: {'sí' if variant.menu_sio else 'no'})")
+    wifi_on = sdk.get(BENCH_WIFI_KCONFIG) == "y"
+    wifi_in_app = any(m in app for m in FEATURE_MARKERS["bench_wifi"]["app"])
+    log.require(BENCH_WIFI_CHECK, wifi_on == wifi_in_app == variant.bench_wifi,
+                f"{BENCH_WIFI_KCONFIG}={'y' if wifi_on else 'no'}, prueba en la aplicación: {'sí' if wifi_in_app else 'no'}"
+                f" (esperado: {'sí' if variant.bench_wifi else 'no'})")
+    if variant.bench_wifi:
+        on = [name for name in WIFI_NVS_FORBIDDEN if sdk.get(name) == "y"]
+        log.require(WIFI_NVS_CHECK, not on, ", ".join(f"{name}=y" for name in on) or "ninguna opción activa")
     if variant.version_matches_commit:
         version = str(log.facts["app_desc"].get("version", ""))
         ok = len(version) >= 7 and all(c in "0123456789abcdef" for c in version) and commit.startswith(version)
@@ -1029,7 +1060,7 @@ def main(argv=None) -> int:
     p.add_argument("--baseline", required=True)
     p.add_argument("--variant", choices=sorted(VARIANTS), default="h3c",
                    help="package identity: h3c (default, unchanged), diag (H4, requires rb_hw_diag) or "
-                        "cassette (C107, requires H4 and M3a approved), cassette-lectura, bench-c8 or menu-sio "
+                        "cassette (C107, requires H4 and M3a approved), cassette-lectura, bench-c8, menu-sio or bench-wifi "
                         "(require both unsigned)")
     v = sub.add_parser("verify")
     v.add_argument("package_dir", type=Path)

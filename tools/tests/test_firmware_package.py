@@ -1180,5 +1180,79 @@ class MenuSioPackageTest(unittest.TestCase):
         ok, detail = fp.check_sio_calls(repo, fp.VARIANTS["menu-sio"].sio_calls)
         self.assertTrue(ok, detail)
 
+
+WIFI_APP_MARKERS = CASSETTE_APP_MARKERS + (b"\x1b[0;33mW (%lu) %s: WIFI BENCH: bench package, never published; no SIO "
+                                           b"pin is used\x1b[0m\n\0")
+WIFI_ELF = CASSETTE_ELF + b"_ZN2rb5bench8run_wifiEb\0"
+WIFI_SDKCONFIG = SDKCONFIG + "CONFIG_RB_BENCH_WIFI=y\n"
+
+
+class BenchWifiPackageTest(unittest.TestCase):
+    """bench-wifi: the Wi-Fi demand bench (menu-sio-wifi-tnfs T1), only with H4 and M3a unsigned, the option on and
+    no Wi-Fi or PHY data in NVS nor core dump to flash; every other variant refuses the option and the code."""
+
+    def setUp(self):
+        CassetteReadOnlyPackageTest.setUp(self)
+        self.build(WIFI_SDKCONFIG, WIFI_APP_MARKERS)
+
+    tearDown = CassettePackageTest.tearDown
+    profile = CassettePackageTest.profile
+    gates = CassettePackageTest.gates
+    failed = CassettePackageTest.failed
+
+    def build(self, sdkconfig, app, elf=WIFI_ELF):
+        write(self.f.build / "sdkconfig", sdkconfig)
+        write(self.f.build / "retrobridge.elf", elf)
+        write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=elf, extra=app))
+
+    def package(self, variant="bench-wifi"):
+        return CassettePackageTest.package(self, variant)
+
+    def assert_refused(self, check_name, variant="bench-wifi"):
+        CassettePackageTest.assert_refused(self, check_name, variant)
+
+    def test_bench_wifi_package_with_both_gates_unsigned(self):
+        log = self.package()
+        self.assertTrue(log.ok, self.failed(log))
+        provenance = json.loads((self.f.out / "PROVENANCE.json").read_text(encoding="utf-8"))
+        self.assertEqual(provenance["package"], "retrobridge-fw-bench-wifi-fujinet-atari-v1x")
+        self.assertEqual(provenance["variant"], "bench-wifi")
+        self.assertEqual(provenance["features"], ["bench_wifi"])
+        self.assertIn(fp.WIFI_NVS_CHECK, [c["name"] for c in provenance["checks"]])
+        log = fp.verify_package(self.f.out)
+        self.assertTrue(log.ok, self.failed(log))
+
+    def test_bench_wifi_package_refuses_signed_gates(self):
+        self.profile(True, True)
+        self.gates(gate_record())
+        self.assert_refused(CLOSED_PROFILE)
+
+    def test_bench_wifi_package_needs_the_option(self):
+        self.build(SDKCONFIG, WIFI_APP_MARKERS)
+        self.assert_refused(fp.BENCH_WIFI_CHECK)
+
+    def test_bench_wifi_package_needs_the_bench_code(self):
+        self.build(WIFI_SDKCONFIG, CASSETTE_APP_MARKERS)
+        self.assert_refused(fp.BENCH_WIFI_CHECK)
+
+    def test_bench_wifi_package_refuses_nvs_and_core_dump_options(self):
+        for name in fp.WIFI_NVS_FORBIDDEN:
+            with self.subTest(option=name):
+                self.build(WIFI_SDKCONFIG + f"{name}=y\n", WIFI_APP_MARKERS)
+                self.assert_refused(fp.WIFI_NVS_CHECK)
+
+    def test_other_variants_refuse_the_wifi_bench(self):
+        self.assert_refused(fp.BENCH_WIFI_CHECK, variant="cassette-lectura")
+        self.build(WIFI_SDKCONFIG, CASSETTE_APP_MARKERS)  # the option alone
+        self.assert_refused(fp.BENCH_WIFI_CHECK, variant="cassette-lectura")
+
+    def test_the_real_bench_fragment_keeps_nvs_out(self):
+        repo = Path(__file__).resolve().parents[2]
+        sdk = fp.parse_sdkconfig((repo / "sdkconfig.bench-wifi").read_text(encoding="utf-8"))
+        self.assertEqual(sdk.get(fp.BENCH_WIFI_KCONFIG), "y")
+        for name in fp.WIFI_NVS_FORBIDDEN:
+            self.assertNotEqual(sdk.get(name), "y", name)
+
+
 if __name__ == "__main__":
     unittest.main()

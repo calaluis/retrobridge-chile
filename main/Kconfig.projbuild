@@ -38,9 +38,19 @@ menu "RetroBridge Chile"
             gives DATA IN to the cassette. H4 and M3a stay unsigned. Flash it only
             with the FujiNet on USB and the SIO cable disconnected from the Atari.
 
+    config RB_BENCH_WIFI
+        bool "Bench test of the Wi-Fi demand (menu-sio-wifi-tnfs T1a/T1b), never published"
+        depends on RB_BOARD_FUJINET_ATARI_V1X && !RB_BENCH_C8
+        default n
+        help
+            Bench build only (plan menu-sio-wifi-tnfs, T1). Reads the network name and key from
+            retrobridge-wifi.txt on the microSD and runs fixed phases over and over (radio off,
+            scan, connected idle, TNFS transfer of the test ATR) so the current can be measured.
+            Uses no SIO pin (no UART2, GPIO or ADC), stores nothing in NVS and never prints the key.
+
     config RB_MENU_SIO
         bool "Test package menu-sio: serve the RetroBridge menu as D1 over the physical SIO"
-        depends on RB_BOARD_FUJINET_ATARI_V1X && !RB_BENCH_C8
+        depends on RB_BOARD_FUJINET_ATARI_V1X && !RB_BENCH_C8 && !RB_BENCH_WIFI
         default n
         help
             Test package only (menu-sio-fisico). Serves the boot menu as D1 over

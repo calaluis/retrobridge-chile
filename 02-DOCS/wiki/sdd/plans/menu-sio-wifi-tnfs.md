@@ -111,8 +111,17 @@ TnfsLoader (sin cambios de contrato; recibe un NetworkGate opcional)
   si gate y no ready(): el trabajo termina al momento con LoaderError::SinRed(motivo)
 
 MenuController
-  loaderText(SinRed) -> " SIN WI-FI: <motivo>" (texto exacto fijado en T5)
-  E sin archivo de fuentes: crea el archivo al guardar (hoy ya lo reescribe entero)
+  setNetworkGate(gate): antes de cada trabajo de una fuente 2..8 (nunca la 1) consulta gate.state();
+  si no es Ready, el trabajo no empieza, la vista no cambia y la línea de mensajes dice (T5):
+    Connecting  " WI-FI CONECTANDO, REPITE EN UN RATO"
+    NoFile      " SIN WI-FI: FALTA RETROBRIDGE-WIFI.TXT"
+    BadFile     " SIN WI-FI: ARCHIVO WI-FI NO VALIDO"
+    NoNetwork   " SIN WI-FI: RED NO ENCONTRADA"     (motivo WIFI_REASON_NO_AP_FOUND)
+    BadKey      " SIN WI-FI: CLAVE INCORRECTA"      (AUTH_FAIL o fin del saludo de 4 pasos)
+    Failed      " SIN WI-FI: EL WI-FI NO ARRANCO"
+  Con Wi-Fi y servidor inaccesible siguen los textos de menu-tnfs (SERVIDOR NO ENCONTRADO / NO RESPONDE).
+  E sin archivo de fuentes: guardar la fuente 2 crea el archivo; si no se puede escribir, dice
+  " NO SE PUDO GUARDAR EL ARCHIVO" y las fuentes en memoria y en la microSD quedan como estaban.
 ```
 
 ## §4. Datos y flujo

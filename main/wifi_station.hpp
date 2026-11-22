@@ -15,8 +15,9 @@
 // finish() creates after D1 is already served, so the Wi-Fi never delays the menu.
 namespace rb::menusio {
 
-// The state the menu may show later (T5); for the first demo only the console logs it.
-enum class WifiState : int { NoFile, BadFile, Failed, Connecting, Connected };
+// The state the menu shows when a TNFS source is opened without a network (T5). While it retries after a
+// failed attempt, the state keeps the reason of that attempt (NoNetwork, BadKey) instead of Connecting.
+enum class WifiState : int { NoFile, BadFile, Failed, Connecting, Connected, NoNetwork, BadKey };
 
 WifiState wifiState() noexcept;
 

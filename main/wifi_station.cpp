@@ -24,6 +24,7 @@ constexpr EventBits_t kGotIp = BIT0;
 constexpr EventBits_t kDisconnected = BIT1;
 
 std::atomic<int> g_state{static_cast<int>(WifiState::Connecting)};
+std::atomic<int> g_reason{0};  // the reason of the last WIFI_EVENT_STA_DISCONNECTED
 EventGroupHandle_t g_events = nullptr;
 
 void setState(WifiState state) noexcept { g_state.store(static_cast<int>(state), std::memory_order_relaxed); }
@@ -72,6 +73,7 @@ bool readWifiFile(const char* path, wifi_config_t& config)
 void onEvent(void*, esp_event_base_t base, int32_t id, void* data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        g_reason.store(static_cast<const wifi_event_sta_disconnected_t*>(data)->reason, std::memory_order_relaxed);
         xEventGroupClearBits(g_events, kGotIp);
         xEventGroupSetBits(g_events, kDisconnected);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
@@ -96,6 +98,22 @@ esp_err_t eventLoop()
 {
     const esp_err_t err = esp_event_loop_create_default();
     return err == ESP_ERR_INVALID_STATE ? ESP_OK : err;
+}
+
+// What a failed attempt says to the menu: the network is not there, or it refused the key; any other
+// reason (a timeout, a weak signal) is shown as still connecting.
+WifiState failureOf(int reason) noexcept
+{
+    switch (reason) {
+    case WIFI_REASON_NO_AP_FOUND:
+        return WifiState::NoNetwork;
+    case WIFI_REASON_AUTH_FAIL:
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:
+        return WifiState::BadKey;
+    default:
+        return WifiState::Connecting;
+    }
 }
 
 }  // namespace
@@ -128,8 +146,10 @@ void runWifiStation(const char* path) noexcept
         setState(WifiState::Failed);
         return;
     }
+    WifiState waiting = WifiState::Connecting;  // the first attempt, and after a lost link
     for (;;) {
-        setState(WifiState::Connecting);
+        setState(waiting);
+        g_reason.store(0, std::memory_order_relaxed);
         xEventGroupClearBits(g_events, kGotIp | kDisconnected);
         const long long from = msNow();
         if (esp_wifi_connect() == ESP_OK &&
@@ -139,8 +159,12 @@ void runWifiStation(const char* path) noexcept
             // Stay here until the link drops; then try again.
             xEventGroupWaitBits(g_events, kDisconnected, pdFALSE, pdFALSE, portMAX_DELAY);
             ESP_LOGW(kTag, "Wi-Fi link lost: reconnecting");
+            waiting = WifiState::Connecting;
         } else {
-            ESP_LOGW(kTag, "Wi-Fi: no IP after %lld ms; retry in 5 s", msNow() - from);
+            const int reason = g_reason.load(std::memory_order_relaxed);
+            waiting = failureOf(reason);
+            setState(waiting);
+            ESP_LOGW(kTag, "Wi-Fi: no IP after %lld ms (reason %d); retry in 5 s", msNow() - from, reason);
             (void)esp_wifi_disconnect();
         }
         vTaskDelay(kRetryPause);

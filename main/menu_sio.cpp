@@ -34,6 +34,7 @@
 #include "rb/menu/menu_image.hpp"
 #include "rb/menu/menu_sources.hpp"
 #include "rb/menu/menu_station.hpp"
+#include "rb/menu/network_gate.hpp"
 #include "rb/menu/sio_power_watch.hpp"
 #include "rb/menu/storage_reason.hpp"
 #include "rb/sio/sio_line_transport.hpp"
@@ -91,6 +92,34 @@ public:
     }
 };
 FirmwareMenuEvents g_events;
+
+// T5 (C7): what the menu asks before a TNFS job. It reads the station's flag; it never waits.
+class WifiGate final : public rb::host::NetworkGate {
+public:
+    rb::host::NetworkState state() const noexcept override
+    {
+        using rb::host::NetworkState;
+        switch (rb::menusio::wifiState()) {
+        case rb::menusio::WifiState::Connected:
+            return NetworkState::Ready;
+        case rb::menusio::WifiState::NoFile:
+            return NetworkState::NoFile;
+        case rb::menusio::WifiState::BadFile:
+            return NetworkState::BadFile;
+        case rb::menusio::WifiState::Failed:
+            return NetworkState::Failed;
+        case rb::menusio::WifiState::NoNetwork:
+            return NetworkState::NoNetwork;
+        case rb::menusio::WifiState::BadKey:
+            return NetworkState::BadKey;
+        case rb::menusio::WifiState::Connecting:
+            break;
+        }
+        return NetworkState::Connecting;
+    }
+};
+
+WifiGate g_wifiGate;
 rb::host::HostImageRepository g_repository{rb::esp::SdCardStorage::kMountPoint, g_menuImage};
 rb::esp::EspSioUart* g_line = nullptr;
 rb::sio::SioLineTransport* g_transport = nullptr;
@@ -346,6 +375,7 @@ void sioTask(void*)
                 }
             }
             g_station->controller().setSourcesFile(kSourcesPath);  // E edits it (menu-editar-servidor)
+            g_station->controller().setNetworkGate(&g_wifiGate);    // T5: sources 2..8 say why without a network
             g_sourcesApplied = true;
             ESP_LOGI(kTag, "sources: %u TNFS server(s)", static_cast<unsigned>(g_sources.count()));
         }

@@ -1294,8 +1294,21 @@ void MenuController::startJob(Job job, unsigned source, const char* path, std::s
     jobPath_[length > kTnfsMaxPath ? 0 : length] = '\0';
     jobPathLength_ = length > kTnfsMaxPath ? 0 : length;
     jobSource_ = source;
-    job_ = job;
     percent_ = 0;
+    const NetworkState network = network_ != nullptr && source >= 2 ? network_->state() : NetworkState::Ready;
+    if (network != NetworkState::Ready) {
+        // T5 (C7): no job starts; the view stays where it was and the line says why.
+        // Source 1 never asks, so the microSD keeps working without a network.
+        job_ = Job::None;
+        jobNumber_ = 0;
+        say("%s", networkText(network));
+        char detail[kTnfsMaxPath + 64];
+        std::snprintf(detail, sizeof detail, "source=%u path=%s not started: %s", source, jobPath_,
+                      networkName(network));
+        event("menu_tnfs", detail);
+        return;
+    }
+    job_ = job;
     jobNumber_ = job == Job::Fetch ? loader_->startFetch(source, path, length)
                  : job == Job::Xex ? loader_->startXex(source, path, length)
                                    : loader_->startList(source, path, length);
@@ -1339,6 +1352,9 @@ MenuReply MenuController::onBreak()
 
 MenuReply MenuController::advance()
 {
+    if (job_ == Job::None) {
+        return render(kMenuActionShow);  // the job did not start (T5: no network)
+    }
     loader_->await(jobNumber_, kLoadWaitMicros);
     const LoaderStatus status = loader_->poll(jobNumber_, folder_);
     switch (status.kind) {

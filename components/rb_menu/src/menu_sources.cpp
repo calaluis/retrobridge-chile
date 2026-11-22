@@ -1,5 +1,6 @@
 #include "rb/menu/menu_sources.hpp"
 
+#include <cerrno>
 #include <cstring>
 
 #if defined(_WIN32)
@@ -198,15 +199,19 @@ bool writeSourcesFile(const char* path, std::size_t index, const char* name, cha
         std::snprintf(error, errorSize, "path too long");
         return false;
     }
-    // "r+b" also proves the file can be written: a read-only file stops here.
+    // "r+b" also proves the file can be written: a read-only file stops here. A file that
+    // does not exist reads as an empty one, so the first source saved creates it (T5, C6).
+    errno = 0;
     std::FILE* in = std::fopen(path, "r+b");
-    if (in == nullptr) {
+    if (in == nullptr && errno != ENOENT) {
         std::snprintf(error, errorSize, "cannot open %s for writing", path);
         return false;
     }
     std::FILE* out = std::fopen(temporary, "wb");
     if (out == nullptr) {
-        std::fclose(in);
+        if (in != nullptr) {
+            std::fclose(in);
+        }
         std::snprintf(error, errorSize, "cannot create %s", temporary);
         return false;
     }
@@ -217,7 +222,7 @@ bool writeSourcesFile(const char* path, std::size_t index, const char* name, cha
     bool skipping = false;  // the rest of the replaced line is dropped
     std::size_t sources = 0;
     char line[256];
-    while (ok && std::fgets(line, sizeof line, in) != nullptr) {
+    while (ok && in != nullptr && std::fgets(line, sizeof line, in) != nullptr) {
         const std::size_t length = std::strlen(line);
         const bool complete = length > 0 && line[length - 1] == '\n';
         if (lineStart) {
@@ -234,7 +239,7 @@ bool writeSourcesFile(const char* path, std::size_t index, const char* name, cha
         lineStart = complete;
         endsWithNewline = complete;
     }
-    ok = ok && std::ferror(in) == 0;
+    ok = ok && (in == nullptr || std::ferror(in) == 0);
     if (ok && !written) {
         if (sources != index || name == nullptr) {
             ok = false;
@@ -246,7 +251,9 @@ bool writeSourcesFile(const char* path, std::size_t index, const char* name, cha
     } else if (!ok) {
         std::snprintf(error, errorSize, "read or write error");
     }
-    std::fclose(in);
+    if (in != nullptr) {
+        std::fclose(in);
+    }
     ok = std::fclose(out) == 0 && ok;
     if (ok && !replaceFile(temporary, path)) {
         std::snprintf(error, errorSize, "cannot replace %s", path);

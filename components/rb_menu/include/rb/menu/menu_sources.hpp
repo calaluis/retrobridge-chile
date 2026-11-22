@@ -52,7 +52,8 @@ private:
 // deletes that source line (M44); there must be one. Comments, blank
 // lines and the other lines are kept byte for byte. The new text goes to
 // `path`.tmp, which then replaces `path`: on failure `path` is unchanged and
-// `error` says why.
+// `error` says why. A `path` that does not exist is read as an empty file, so
+// saving source 2 creates it (menu-sio-wifi-tnfs T5, C6).
 bool writeSourcesFile(const char* path, std::size_t index, const char* name, char* error,
                       std::size_t errorSize) noexcept;
 

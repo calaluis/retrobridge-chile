@@ -204,6 +204,21 @@ void test_a_file_that_cannot_be_rewritten_is_left_as_it_was()
     TEST_ASSERT_FALSE(rb::host::writeSourcesFile(RB_TEST_MENU_DIR "/no/such/file", 0, "x", error, sizeof error));
 }
 
+void test_a_missing_file_is_created_by_the_first_source_saved()
+{
+    constexpr const char* file = RB_TEST_MENU_DIR "/sources-created.txt";
+    std::remove(file);
+    char error[96];
+    TEST_ASSERT_TRUE(rb::host::writeSourcesFile(file, 0, "tnfs.calaluis.cl", error, sizeof error));
+    TEST_ASSERT_EQUAL_STRING("tnfs.calaluis.cl\n", readFile(file).c_str());
+    std::remove(file);
+    // Only source 2 can be the first: a gap or a deletion leaves no file behind.
+    TEST_ASSERT_FALSE(rb::host::writeSourcesFile(file, 1, "x", error, sizeof error));
+    TEST_ASSERT_FALSE(rb::host::writeSourcesFile(file, 0, nullptr, error, sizeof error));
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(file).c_str());
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(RB_TEST_MENU_DIR "/sources-created.txt.tmp").c_str());
+}
+
 // --- E on the main screen -----------------------------------------------------------
 
 void test_e_opens_the_row_of_the_bar_with_its_name_in_the_field()
@@ -401,6 +416,31 @@ void test_a_file_that_cannot_be_written_says_so_and_keeps_the_source()
                                   rig.events.last.c_str());
 }
 
+// T5 (C6): with no sources file yet, E on the Atari creates it with the first server.
+void test_e_creates_the_sources_file_when_it_is_missing()
+{
+    constexpr const char* file = RB_TEST_MENU_DIR "/sources-created.txt";
+    std::remove(file);
+    EditRig rig{file, ""};  // no source read: the file the menu edits does not exist
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionEdit, rig.pressE(1).action());
+    const MenuReply saved = rig.type("tnfs.calaluis.cl");
+    assert_line(saved, rb::host::kMainMessage, line(" FUENTE 2 GUARDADA"));
+    TEST_ASSERT_EQUAL_STRING("tnfs.calaluis.cl", rig.sources.name(2));
+    TEST_ASSERT_EQUAL_STRING("tnfs.calaluis.cl\n", readFile(file).c_str());
+    std::remove(file);
+}
+
+// T5: a file that cannot be created (its folder is missing) says so; the sources stay.
+void test_a_sources_file_that_cannot_be_created_says_so_and_keeps_the_sources()
+{
+    EditRig rig{RB_TEST_MENU_DIR "/no-such-folder/sources.txt"};
+    rig.pressE(1);
+    const MenuReply failed = rig.type("otro.cl");
+    assert_line(failed, rb::host::kMainMessage, line(" NO SE PUDO GUARDAR EL ARCHIVO"));
+    TEST_ASSERT_EQUAL_STRING("tnfs.example.cl", rig.sources.name(2));
+    TEST_ASSERT_EQUAL_STRING(kOriginal, readFile(kFile).c_str());
+}
+
 // --- 'T' through the transport decorator ---------------------------------------------
 
 void test_text_command_gets_ack_and_complete_and_a_retry_writes_the_same()
@@ -445,6 +485,7 @@ int main()
     RUN_TEST(test_rewriting_a_source_keeps_comments_blank_lines_and_the_others);
     RUN_TEST(test_a_new_source_goes_at_the_end_even_without_a_last_newline);
     RUN_TEST(test_a_file_that_cannot_be_rewritten_is_left_as_it_was);
+    RUN_TEST(test_a_missing_file_is_created_by_the_first_source_saved);
     RUN_TEST(test_e_opens_the_row_of_the_bar_with_its_name_in_the_field);
     RUN_TEST(test_return_saves_the_name_in_the_file_and_on_the_screen);
     RUN_TEST(test_source_2_is_added_on_an_empty_list);
@@ -457,6 +498,8 @@ int main()
     RUN_TEST(test_a_save_repeated_by_siov_deletes_one_source);
     RUN_TEST(test_e_on_source_1_or_without_a_file_says_why);
     RUN_TEST(test_a_file_that_cannot_be_written_says_so_and_keeps_the_source);
+    RUN_TEST(test_e_creates_the_sources_file_when_it_is_missing);
+    RUN_TEST(test_a_sources_file_that_cannot_be_created_says_so_and_keeps_the_sources);
     RUN_TEST(test_text_command_gets_ack_and_complete_and_a_retry_writes_the_same);
     return UNITY_END();
 }

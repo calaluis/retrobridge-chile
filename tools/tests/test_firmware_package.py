@@ -1222,6 +1222,40 @@ class MenuSioPackageTest(unittest.TestCase):
                   "gpio_set_direction(kButtonA, GPIO_MODE_INPUT_OUTPUT)")
         self.assert_refused(fp.MENU_CODE_CHECK)
 
+    # NVS (menu-unidades-persistentes T7): no package may erase or touch it
+
+    def test_nvs_flash_erase_in_menu_main_is_refused(self):
+        self.edit("main/menu_sio.cpp", "(void)gpio_pullup_en(kButtonA);",
+                  "(void)gpio_pullup_en(kButtonA);\n    (void)nvs_flash_erase();")
+        self.assert_refused(fp.NVS_CHECK)
+
+    def test_nvs_split_over_lines_in_a_component_is_refused(self):
+        write(self.f.src / "components" / "rb_menu" / "src" / "extra.cpp",
+              "void wipe() { auto erase = nvs_flash_erase_partition\n    ; (void)erase; }\n")
+        self.assert_refused(fp.NVS_CHECK)
+
+    def test_nvs_after_a_dot_is_refused(self):
+        write(self.f.src / "components" / "rb_menu" / "src" / "extra.cpp",
+              "void f(Store& s) { s.nvs_flash_erase(); }\n")
+        self.assert_refused(fp.NVS_CHECK)
+
+    def test_nvs_after_an_arrow_is_refused(self):
+        write(self.f.src / "components" / "rb_menu" / "src" / "extra.cpp",
+              "void f(Store* s) { s->nvs_flash_erase(); }\n")
+        self.assert_refused(fp.NVS_CHECK)
+
+    def test_an_nvs_type_right_after_a_closing_bracket_is_refused(self):
+        write(self.f.src / "components" / "rb_menu" / "src" / "extra.cpp",
+              "template <typename T> T make();\ntemplate<>nvs_handle_t make<int>();\n")
+        self.assert_refused(fp.NVS_CHECK)
+
+    def test_nvs_in_comments_strings_and_tests_is_not_refused(self):
+        write(self.f.src / "main" / "notes.cpp",
+              '#include "nvs_flash.h"\n// nvs_flash_erase() is never called\nconst char* k = "nvs_flash_init";\n')
+        write(self.f.src / "components" / "rb_menu" / "test" / "fake.cpp", "void t() { nvs_flash_erase(); }\n")
+        log = self.package()
+        self.assertTrue(log.ok, self.failed(log))
+
     # Task stacks (menu-unidades-persistentes): app_main -> finish() -> load() overflowed on the bench
 
     def test_the_7a1ebf0_frames_are_refused(self):
@@ -1278,6 +1312,11 @@ class MenuSioPackageTest(unittest.TestCase):
         self.assert_refused(fp.MENU_CODE_CHECK)
 
     # the real tree
+
+    def test_real_tree_has_no_nvs(self):
+        repo = Path(__file__).resolve().parents[2]
+        ok, detail = fp.check_nvs(repo)
+        self.assertTrue(ok, detail)
 
     def test_real_tree_has_exactly_the_cassette_and_menu_sio_calls(self):
         repo = Path(__file__).resolve().parents[2]

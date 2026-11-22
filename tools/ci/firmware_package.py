@@ -119,6 +119,12 @@ REGISTER_WRITE = re.compile(r"\b(REG_WRITE|REG_SET_BIT|REG_CLR_BIT|REG_SET_FIELD
 # times. Anything else, anywhere in main/ or components/, fails the cassette package.
 WATCHED_IDENTIFIER = re.compile(r"(?<![.>\w])((?:gpio|uart|rmt|esp_rom_gpio|ledc|sigmadelta|dedic_gpio)_\w+)\b")
 _DATA_IN = "components/rb_esp_cassette/src/esp_data_in.cpp"
+# NVS holds the owner's Wi-Fi settings and must never be erased or rewritten by a package
+# (menu-unidades-persistentes T7): no nvs_* identifier at all in main/ or components/ (a call, a call
+# split over lines, a pointer, a member after . or -> or a type, also right after <), with comments and
+# strings left out. Every variant checks it.
+NVS_IDENTIFIER = re.compile(r"\bnvs_\w+\b")
+NVS_CHECK = "sin nvs_* en main/ ni components/ (código)"
 _SERVICE = "components/rb_esp_cassette/src/cassette_service.cpp"
 CASSETTE_SIO_CALLS = (
     (_DATA_IN, "uart_driver_install", 1), (_DATA_IN, "uart_param_config", 1), (_DATA_IN, "uart_set_pin", 3),
@@ -451,6 +457,22 @@ def scan_calls(src: Path, skip: tuple = ()):
                 for match in FORBIDDEN_CALLS.finditer(line):
                     hits.append((path.relative_to(src).as_posix(), number, match.group(1)))
     return hits
+
+
+def check_nvs(src: Path):
+    """Returns (ok, detail): ok when no source outside tests in main/ or components/ names nvs_*."""
+    wrong = []
+    for base in ("main", "components"):
+        root = src / base
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            rel = path.relative_to(src)
+            if path.suffix not in SOURCE_SUFFIXES or "test" in rel.parts:
+                continue
+            names = sorted(set(NVS_IDENTIFIER.findall(strip_code(path.read_text(encoding="utf-8", errors="replace")))))
+            wrong += [f"{rel.as_posix()}: {name}" for name in names]
+    return not wrong, ", ".join(wrong) or "ninguna"
 
 
 def elf_function_frames(elf: bytes) -> dict:
@@ -899,6 +921,8 @@ def check_build(src: Path, build: Path, source: SourceState, baseline: str, vari
         if earlier_ok:
             calls_ok, calls_detail = True, earlier_detail + " (anterior a H4-C C8)"
     log.require(variant.code_check, calls_ok, calls_detail)
+    nvs_ok, nvs_detail = check_nvs(src)
+    log.require(NVS_CHECK, nvs_ok, nvs_detail)
     grant_ok, grant_detail = check_bench_grant(src)
     log.require(BENCH_GRANT_CHECK, grant_ok, grant_detail)
     if variant.gates:

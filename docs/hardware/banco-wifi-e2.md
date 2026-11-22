@@ -35,6 +35,19 @@ La FujiNet **no** se conecta al 65XE. Se alimenta a 5 V por USB a través de un 
 de laboratorio con el amperímetro en serie. Anotar la media de cada fase (y el pico, si hay osciloscopio).
 Si alguna fase pasa de 50 mA: parar y llevar las cifras al responsable. T1b no se hace.
 
+Antes de grabar el banco, medir el reposo del firmware `menu-sio` actual (placa en el menú). Se anota en su propia
+fila, aparte de la fase 0 del banco: son firmwares distintos.
+
+| Fila | Firmware | Media (mA) | Pico (mA) |
+| --- | --- | --- | --- |
+| Reposo E1 | `menu-sio` actual | | |
+| Fase 0 radio apagada | `bench-wifi` | | |
+| Fase 1 búsqueda | `bench-wifi` | | |
+| Fase 2 conectado | `bench-wifi` | | |
+| Fase 3 TNFS | `bench-wifi` | | |
+
+Spec del banco: `02-DOCS/wiki/sdd/specs/banco-wifi-e2.md`.
+
 ## T1b: con el SIO del 65XE
 
 Solo si T1a cumple. USB desconectado; cable SIO de paso con el pin 10 abierto y el amperímetro en serie. Las fases

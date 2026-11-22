@@ -331,13 +331,16 @@ private:
 
     bool persistent_ = false;
     bool restoring_ = false;
+    // Within restoring_: false while waiting for the card to be read (nothing to apply yet),
+    // true once restore() has queued what was read.
+    bool restoreLoaded_ = false;
     uint32_t version_ = 0;    // applied changes
     uint32_t emitted_ = 0;    // the version snapshot() gave last
     uint32_t confirmed_ = 0;  // the version saved last
     bool saveFailed_ = false;
     std::array<char, kMenuLineWidth + 1> status_{};  // the status on the message row
     std::size_t statusAt_ = 0;
-    std::array<EntryIndex, kDrives> pendingRestore_{};
+    std::array<EntryIndex, kDrives> pendingRestore_{};  // read only once restoreLoaded_
     unsigned restoreDrive_ = 0;  // the drive whose restore mount is in flight
     unsigned restored_ = 0;
     unsigned problems_ = 0;

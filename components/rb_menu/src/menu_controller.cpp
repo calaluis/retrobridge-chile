@@ -1414,6 +1414,8 @@ void MenuController::beginRestore() noexcept
 {
     persistent_ = true;
     restoring_ = true;
+    restoreLoaded_ = false;  // waiting for the read: service() applies nothing yet
+    pendingRestore_.fill(kNoEntry);
     view_ = View::Main;
     message_[0] = '\0';
     event("menu_restore", "begin");
@@ -1454,6 +1456,7 @@ void MenuController::restore(const DriveMemory& memory)
             ++restored_;
         }
     }
+    restoreLoaded_ = true;
     restoreNext();
 }
 
@@ -1461,8 +1464,8 @@ void MenuController::restoreNext()
 {
     // A pending cold reset took the mailbox first in service(); if its menu mount was refused,
     // the restore goes on anyway rather than leave every key waiting.
-    if (!restoring_ || inFlight_ != InFlight::None || !mailbox_.idle()) {
-        return;
+    if (!restoring_ || !restoreLoaded_ || inFlight_ != InFlight::None || !mailbox_.idle()) {
+        return;  // not read yet, or busy
     }
     for (unsigned number = 2; number <= kDrives; ++number) {
         const EntryIndex entry = pendingRestore_[number - 1];
@@ -1490,6 +1493,7 @@ void MenuController::restoreProblem(unsigned number, const char* what, const cha
 void MenuController::finishRestore() noexcept
 {
     restoring_ = false;
+    restoreLoaded_ = false;
     emitted_ = version_;
     confirmed_ = version_;  // what was restored is what is saved
     saveFailed_ = false;
@@ -1514,6 +1518,7 @@ void MenuController::restoreFailed(const char* message) noexcept
     }
     pendingRestore_.fill(kNoEntry);
     restoring_ = false;
+    restoreLoaded_ = false;
     emitted_ = version_;
     confirmed_ = version_;
     say("%s", message != nullptr ? message : "");

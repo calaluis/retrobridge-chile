@@ -78,9 +78,12 @@ struct Rig {
     rb::app::ApplyDriveRequest apply{bay, mailbox};
     std::optional<rb::host::MenuController> controller;
 
-    explicit Rig(bool restoring = true)
+    // withCatalog=false: as on the FujiNet, D1 serves the menu before the microSD catalog is read.
+    explicit Rig(bool restoring = true, bool withCatalog = true)
     {
-        TEST_ASSERT_TRUE(rb::host::readCatalog(RB_TEST_MENU_DIR, catalog));
+        if (withCatalog) {
+            loadCatalog();
+        }
         repository.emplace(RB_TEST_MENU_DIR, menu);
         controller.emplace(catalog, sources, *repository, mailbox, nullptr);
         controller->onColdReset();
@@ -100,6 +103,8 @@ struct Rig {
         }
         TEST_ASSERT_FALSE(controller->restoring());
     }
+
+    void loadCatalog() { TEST_ASSERT_TRUE(rb::host::readCatalog(RB_TEST_MENU_DIR, catalog)); }
 
     void step()
     {
@@ -163,6 +168,42 @@ void test_a_cold_reset_while_restoring_keeps_the_restoring_screen()
     assert_line(rig.press(kNoKey), rb::host::kMainMessage, " RESTAURANDO UNIDADES");
     rig.restored();
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, rig.press(kNoKey).action());
+}
+
+// Waiting for the read is not applying it: service() before restore() mounts nothing, even
+// with an empty catalog (entry 0 is a valid index), and the restore is not finished early.
+void test_service_before_restore_waits_and_mounts_nothing()
+{
+    Rig rig(true, false);
+    for (int i = 0; i < 10; ++i) {
+        rig.step();
+        TEST_ASSERT_TRUE(rig.controller->restoring());
+    }
+    TEST_ASSERT_TRUE(rig.controller->menuOnD1());
+    TEST_ASSERT_EQUAL_STRING(rb::host::kMenuLocation, rig.mounted(1));
+    for (unsigned n = 2; n <= 8; ++n) {
+        TEST_ASSERT_EQUAL_STRING("", rig.mounted(n));
+    }
+    for (uint8_t code : {kNoKey, KA}) {
+        const MenuReply reply = rig.press(code);
+        TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionWait, reply.action());  // A stays disabled
+        assert_line(reply, rb::host::kMainMessage, " RESTAURANDO UNIDADES");
+    }
+    rig.step();
+    TEST_ASSERT_EQUAL_STRING("", rig.mounted(2));
+
+    rig.loadCatalog();
+    rig.restored(memoryOf({"demo-dos.atr", "demo-uno.atr", "", "demo-dos.atr"}));
+    const MenuReply main = rig.press(kNoKey);
+    assert_line(main, driveLine(1), "D1 DEMO-DOS.ATR");
+    assert_line(main, rb::host::kMainMessage, " UNIDADES RESTAURADAS");
+    TEST_ASSERT_EQUAL_STRING(rb::host::kMenuLocation, rig.mounted(1));
+    TEST_ASSERT_EQUAL_STRING("demo-uno.atr", rig.mounted(2));
+    TEST_ASSERT_EQUAL_STRING("", rig.mounted(3));
+    TEST_ASSERT_EQUAL_STRING("demo-dos.atr", rig.mounted(4));
+    for (unsigned n = 5; n <= 8; ++n) {
+        TEST_ASSERT_EQUAL_STRING("", rig.mounted(n));
+    }
 }
 
 // C1, C3: D1 comes back assigned (the menu keeps D1), D2 mounted; A boots D1 afterwards.
@@ -382,6 +423,7 @@ int main()
     UNITY_BEGIN();
     RUN_TEST(test_restoring_shows_its_screen_and_ignores_every_key_even_a);
     RUN_TEST(test_a_cold_reset_while_restoring_keeps_the_restoring_screen);
+    RUN_TEST(test_service_before_restore_waits_and_mounts_nothing);
     RUN_TEST(test_a_restored_d1_is_assigned_and_d2_is_mounted);
     RUN_TEST(test_nothing_remembered_gives_the_plain_main_screen);
     RUN_TEST(test_a_missing_image_is_reported_and_the_others_are_restored);

@@ -12,7 +12,8 @@ status: approved
 
 # Plan — Wi-Fi y fuentes TNFS en la FujiNet (menu-sio E2)
 
-> Spec: `02-DOCS/wiki/sdd/specs/menu-sio-wifi-tnfs.md` (aprobada, `50752bf`). Estado del plan: **aprobado** por el responsable el 2026-11-22, con T1 dividida en T1a y T1b.
+> Spec: `02-DOCS/wiki/sdd/specs/menu-sio-wifi-tnfs.md` (aprobada, `50752bf`). Estado del plan: **aprobado** por el responsable el 2026-11-22, con T1 dividida en T1a y T1b. Actualización del
+> 2026-11-22 (ATR y XEX desde TNFS, banco T8 con un `.XEX` real): **aprobada** por el responsable el 2026-11-22.
 
 ## §0. Restricciones globales (literal, para cada tarea)
 
@@ -38,6 +39,10 @@ status: approved
   **solo en `host/src/`**. El ESP32 no puede usar estos cuatro sin moverlos a un componente.
 - `UdpTnfsPort` ya tiene una rama POSIX (sockets BSD, `getaddrinfo`), que es la que ofrece lwIP en ESP-IDF.
   `TnfsLoader` usa `std::thread`; en ESP-IDF eso es un pthread sobre FreeRTOS.
+- El arranque de `.XEX` desde TNFS ya funciona en el PC (`menu-xex`, verificado el 2026-11-20):
+  `TnfsLoader::startXex` trae el archivo, `XexImage` y el cargador 6502 propio están en `rb_menu`, y el controlador
+  asigna el `.XEX` a D1 y lo arranca con `A`. E2 reutiliza ese flujo: se mueve con `TnfsLoader` (T3) y no se escribe
+  otro cargador.
 - `MenuStationParts` ya acepta `loader` y el controlador ya acepta `setSourcesFile`. Hoy `main/menu_sio.cpp` no pasa
   ninguno: por eso `E` dice `SIN ARCHIVO DE FUENTES`.
 - La placa tiene PSRAM (PR #77 quitó su test de memoria del arranque). Las imágenes TNFS viven en
@@ -132,7 +137,7 @@ ni a `nvs_flash_erase`.
 | C1 eléctrico | Banco (T1a, luego T1b) | T1a: demanda de la FujiNet **sin conexión eléctrica al Atari**, en reposo (E1 actual), búsqueda, conexión y transferencia, ≤ 50 mA. T1b, solo si T1a cumple: lo mismo alimentada por el SIO del 65XE. Método y cifras en `02-DOCS/raw/` | Nada |
 | C2 arranque | Banco | 10 encendidos solo SIO: menú, `listo_ms` < 1000, `brownout` = 0 | Nada |
 | C3 navegar | Host + banco | Listado de carpetas en el 65XE; en host, `test_menu_tnfs` y `test_menu_navegacion` siguen verdes tras mover el cargador | Servidor TNFS falso en host |
-| C4 arrancar | Banco | ATR del servidor en D1 arranca con `A` en el 65XE | Nada |
+| C4 arrancar | Host + Altirra + banco | a: la ATR de ensayo del servidor en D1 arranca con `A`. b: un `.XEX` real de `tnfs.calaluis.cl:16384`, elegido navegando una carpeta, asignado a D1 y arrancado con `A`, queda corriendo. En host, las pruebas de `menu-xex` con TNFS siguen verdes tras mover el cargador; en Altirra, el mismo `.XEX` corre antes del banco | Servidor TNFS falso en host; nada en el banco |
 | C5 D2–D8 | Host + Altirra | Sectores de una imagen TNFS en D2 | Servidor falso |
 | C6 editar | Host + banco | `E` reescribe `retrobridge-fuentes.txt`, lo crea si falta; tras apagar sigue | Carpeta temporal |
 | C7 sin red | Host | Sin archivo, red inexistente o clave mala → motivo; fuente 1 operativa | `NetworkGate` falso |
@@ -141,6 +146,7 @@ ni a `nvs_flash_erase`.
 | C10 NVS | Banco | Hash SHA-256 de la partición NVS antes del primer arranque del candidato = hash tras el ensayo; solo se registran los hashes | Nada |
 | C11 imagen grande | Host | Imagen mayor que el límite → aviso, ninguna unidad cambia | Servidor falso |
 | C12 regresión | Host + CI + Altirra | Todas las pruebas de host y la regresión NetSIO en verde | — |
+| C13 XEX rechazado | Host | Un `.XEX` inválido o no compatible del servidor da `XEX NO VALIDO` / `XEX NO COMPATIBLE` y ninguna unidad cambia, con el cargador ya movido | Servidor falso |
 
 **Lectura de la NVS (C10).** Un script lee la partición por COM3 con `esptool read_flash` a un archivo temporal fuera
 del repositorio, calcula su SHA-256, borra el archivo y escribe solo el hash. Desplazamiento y tamaño de la
@@ -189,14 +195,15 @@ publica.
 | T1a | **Demanda sin el Atari.** Firmware de banco (no publicado) que, por fases separadas y anunciadas en la consola, queda en reposo, busca red, conecta y descarga por TNFS la ATR de ensayo, con red y clave leídas de la microSD; medir la demanda de cada fase con alimentación externa, sin conexión eléctrica al 65XE. Incluye el reposo del firmware E1 actual | C1 | 2 | `02-DOCS/raw/<fecha>-consumo-e2-sin-atari.md` con método, foto, media (y pico si hay osciloscopio) por fase y veredicto ≤ 50 mA; si no, opciones presentadas y parada | Instrumentos confirmados | No |
 | T1b | **Demanda con el SIO del 65XE.** Las mismas fases con la FujiNet alimentada por el pin 10 y el USB desconectado | C1 | 2 | `02-DOCS/raw/<fecha>-consumo-pin10-e2.md` con las mismas cifras y veredicto ≤ 50 mA | T1a ≤ 50 mA | No |
 | T2 | `WifiConfig` + pruebas de host (formato, espacios, límites, archivo ausente, clave centinela nunca en motivos ni salidas) | C7, C9 | 1 | ctest verde con `test_wifi_config`; un mutante que imprime la clave es detectado | T1b ok | Sí |
-| T3 | Mover `TnfsLoader`, `TnfsLink`, `UdpTnfsPort`, `SystemNameResolver` a `rb_menu_tnfs`; `NetworkGate` opcional; el PC usa «siempre hay red» | C3, C5, C8, C11, C12 | 1 | ctest verde con todas las pruebas TNFS de host sin cambios de comportamiento; `rb_menu_tnfs` compila como componente ESP en CI | T1b ok | Sí |
+| T3 | Mover `TnfsLoader` (trabajos ATR y XEX), `TnfsLink`, `UdpTnfsPort`, `SystemNameResolver` a `rb_menu_tnfs`; `NetworkGate` opcional; el PC usa «siempre hay red» | C3, C4, C5, C8, C11, C12, C13 | 1 | ctest verde con todas las pruebas TNFS y `menu-xex` de host sin cambios de comportamiento; `rb_menu_tnfs` compila como componente ESP en CI | T1b ok | Sí |
 | T4 | `rb_esp_wifi::WifiStation`: estación en segundo plano, reintentos, estado, sin NVS; opciones de `sdkconfig.menu-sio` | C7, C9, C10 | 2 | CI verde con el paquete `menu-sio`; comprobación del empaquetador falla con `CONFIG_ESP_WIFI_NVS_ENABLED=y` (test rojo primero) | T1b ok | Sí |
 | T5 | Motivos de red en `MenuController` (`SIN WI-FI: …`) y `E` crea el archivo si falta | C6, C7, C8 | 1 | ctest verde con pruebas nuevas de motivos y de creación del archivo; pruebas de menú existentes verdes | T3 | No |
 | T6 | Pegamento en `main/menu_sio.cpp` (`finish()`), tabla de particiones propia, publicación atómica de fuentes y cargador | C2–C7, C11 | 2 | CI verde; tamaño de la aplicación dentro de su partición; NVS en el mismo desplazamiento y tamaño que hoy | T2, T4, T5 | No |
-| T7 | Regresión: host, CI, Altirra con servidor TNFS | C12 | 1 | CI verde; registro de Altirra con navegación y arranque | T6 | No |
-| T8 | **Banco 65XE** (aprobación de flash y COM3): hash NVS antes, flash, 10 encendidos solo SIO, navegar, `A`, captura de consola, hash NVS después | C2, C4, C9, C10 + criterio final | 2 | `02-DOCS/raw/<fecha>-banco-e2.md` con registros de arranque, fotos, hashes iguales y búsqueda de la centinela en la captura con 0 apariciones | T7 | No |
+| T7 | Regresión: host, CI, Altirra con servidor TNFS | C4, C12, C13 | 1 | CI verde; registro de Altirra con navegación, la ATR de ensayo arrancada y el `.XEX` del banco corriendo | T6 | No |
+| T8 | **Banco 65XE, USB desconectado** (aprobación de flash y COM3): hash NVS antes, flash, 10 encendidos solo SIO; abrir `tnfs.calaluis.cl:16384` desde RetroBridge, navegar una carpeta, elegir el `.XEX` real, asignarlo a D1 y pulsar `A` hasta ver el programa corriendo; lo mismo con la ATR de ensayo; captura de consola; hash NVS después | C2, C4a, C4b, C9, C10 + criterio final | 2 | `02-DOCS/raw/<fecha>-banco-e2.md` con registros de arranque, foto de la carpeta, foto del `.XEX` corriendo y de la ATR arrancada, hashes iguales y búsqueda de la centinela en la captura con 0 apariciones | T7 | No |
 
-**Orden:** T1a → T1b → (T2 ∥ T3 ∥ T4) → T5 → T6 → T7 → T8. Cada tarea pasa su revisión según `rsc risk` antes de la
+**Orden:** T1a → T1b → (T2 ∥ T3 ∥ T4) → T5 → T6 → T7 → T8. La medición eléctrica (T1) sigue siendo el paso previo a
+integrar el Wi-Fi por SIO. Cada tarea pasa su revisión según `rsc risk` antes de la
 siguiente. Ninguna tarea después de T1b empieza si T1a y T1b no dan ≤ 50 mA o si el responsable no ha decidido una opción.
 
 ## Ensayo de transferencia
@@ -206,7 +213,13 @@ siguiente. Ninguna tarea después de T1b empieza si T1a y T1b no dan ≤ 50 mA o
 - ATR de ensayo: `/Aportes_Eduardo_Antonio (Chalo)/Demoscene/NumenPAL.atr`, 196 496 bytes, cabecera ATR válida,
   sectores de 256 bytes, SHA-256 `7a47b8e0ecb6e53d…`. El firmware de banco compara el SHA-256 de lo descargado.
 
+- `.XEX` de ensayo: uno real de la biblioteca del responsable en `tnfs.calaluis.cl:16384`, que el flujo del PC ya
+  arranca en Altirra. Su ruta, tamaño y SHA-256 se fijan antes de T7; T7 y T8 usan el mismo archivo.
+
 ## Preguntas para el responsable
+
+- **¿Qué `.XEX` de tu biblioteca usamos en T7 y T8?** Ruta en `tnfs.calaluis.cl:16384`. Antes de T7 se comprueba en
+  el PC que el menú lo arranca en Altirra.
 
 - **¿Qué instrumentos hay en el banco?** Para T1a: fuente de 5 V o medidor USB en línea, y multímetro con escala de
   mA. Para T1b: cable SIO de paso que se pueda abrir en el pin 10. Con osciloscopio y una resistencia de 1 Ω se miden

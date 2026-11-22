@@ -38,8 +38,8 @@ lado y a manipular la tarjeta; el objetivo del producto es usar el Atari solo.
 
 ## Objetivos
 
-- Con la FujiNet alimentada solo por el Atari, navegar un servidor TNFS desde el menú, montar una ATR en D1 y
-  arrancarla con `A`.
+- Con la FujiNet alimentada solo por el Atari, navegar un servidor TNFS desde el menú, asignar a D1 una `.ATR` o
+  un `.XEX` y arrancarlo con `A`.
 - Configurar la red y los servidores sin recompilar el firmware y sin datos sensibles en el repositorio.
 - No perder nada de lo que ya funciona: el arranque en menos de 1 s y la microSD siguen igual aunque la red falle.
 
@@ -57,15 +57,19 @@ la microSD una vez en el PC con dos archivos de texto; después usa solo el Atar
 - **Editar servidores en el 65XE.** Con `E` en la pantalla principal, cambiar o añadir el servidor de las fuentes
   2–8. El cambio queda guardado en `retrobridge-fuentes.txt` y sigue ahí tras apagar.
 - **Navegar y montar.** Abrir una fuente 2–8, recorrer sus carpetas y montar una imagen en cualquier unidad D1–D8,
-  como en el PC. D1 se asigna y arranca con `A`; D2–D8 se montan al momento.
+  como en el PC. La lista muestra carpetas, `.ATR` y `.XEX`, como en el PC (`menu-xex`). D1 acepta una `.ATR` o un
+  `.XEX` y lo arranca con `A`; D2–D8 aceptan `.ATR` y se montan al momento.
 - *Quién:* cualquiera con el Atari delante; no hay cuentas ni permisos.
 
 ## Qué resultado obtiene
 
-- **Referencia aprobada:** el comportamiento del menú TNFS en el PC con Altirra (`menu-tnfs`, `menu-editar-servidor`):
-  mismas pantallas, teclas, mensajes de error y `CARGANDO nn%`. En el 65XE físico se ve igual.
+- **Referencia aprobada:** el comportamiento del menú TNFS en el PC con Altirra (`menu-tnfs`, `menu-editar-servidor`,
+  `menu-xex`): mismas pantallas, teclas, mensajes de error y `CARGANDO nn%`. En el 65XE físico se ve igual.
 - Al encender: el menú en D1 en menos de 1 s desde EN, como hoy. El Wi-Fi se conecta en segundo plano.
-- Con red y servidor: la fuente lista las carpetas del servidor; una ATR elegida para D1 arranca con `A`.
+- Con red y servidor: la fuente lista las carpetas del servidor; una `.ATR` o un `.XEX` elegido para D1 arranca con
+  `A` y el programa queda corriendo en el 65XE.
+- Un `.XEX` que el cargador no puede arrancar da el mismo aviso que en el PC (`XEX NO VALIDO`, `XEX NO COMPATIBLE`);
+  ninguna unidad cambia.
 - Sin red, sin archivo de Wi-Fi o con el servidor caído: el menú y la fuente 1 (SD) funcionan igual; abrir una
   fuente 2–8 dice el motivo en la línea de mensajes (por ejemplo `SIN WI-FI`, `SIN ARCHIVO WI-FI`,
   `SERVIDOR NO ENCONTRADO`). El texto exacto de cada motivo se fija en el plan.
@@ -81,8 +85,9 @@ la microSD una vez en el PC con dos archivos de texto; después usa solo el Atar
   responsable.
 - **NVS:** se conserva la existente. Ni se borra ni se escribe la red o la clave en ella.
 - **Procedencia:** sin código de FujiNet ni de terceros (ADR de procedencia del proyecto).
-- **Lo ya construido:** `rb_net_tnfs`, `MenuController` y `MenuSources` son los mismos del PC. Sus pruebas de host
-  y la regresión en Altirra siguen en verde.
+- **Lo ya construido:** `rb_net_tnfs`, `MenuController` y `MenuSources` son los mismos del PC. El arranque de `.XEX`
+  desde TNFS reutiliza el flujo del PC (`menu-xex`: el mismo cargador 6502 propio y la misma imagen de D1); no se
+  escribe un cargador nuevo para el ESP32. Sus pruebas de host y la regresión en Altirra siguen en verde.
 - **Unidades persistentes** (`menu-unidades-persistentes`, en curso en otra rama): las imágenes TNFS se recuerdan
   vacías; esta spec no cambia eso.
 - **Aprobaciones:** cada flash, escritura por COM3, commit y PR necesita la aprobación del responsable.
@@ -96,9 +101,13 @@ la microSD una vez en el PC con dos archivos de texto; después usa solo el Atar
 - **Host:** pruebas de lectura de `retrobridge-wifi.txt` y `retrobridge-fuentes.txt`, de los motivos sin red y de
   que la clave no sale por ningún registro (clave centinela buscada en toda la salida).
 - **Banco físico:** registro de arranque (`listo_ms`, `brownout`) de 10 encendidos solo con SIO; foto del 65XE con
-  la carpeta del servidor y con la ATR arrancada; captura completa de la consola sin la clave.
-- **Criterio final del responsable:** en el 65XE físico, menú al primer encendido solo con SIO, navegar un servidor
-  TNFS, montar una ATR en D1 y arrancarla con `A`.
+  la carpeta del servidor, con la ATR arrancada y con el `.XEX` corriendo; captura completa de la consola sin la
+  clave.
+- **Criterio final del responsable:** en el 65XE físico, con el USB desconectado: menú al primer encendido solo con
+  SIO; abrir `tnfs.calaluis.cl:16384` desde RetroBridge, navegar una carpeta, elegir un `.XEX` real de su biblioteca,
+  asignarlo a D1 y pulsar `A` hasta ver el programa corriendo. Lo mismo con una `.ATR`.
+- **Orden:** la medición eléctrica (criterio 1) sigue siendo el paso previo a integrar el Wi-Fi por SIO. Nada de
+  lo anterior se prueba en el 65XE antes de que el criterio 1 se cumpla.
 
 ## Comportamiento
 
@@ -122,8 +131,10 @@ la microSD una vez en el PC con dos archivos de texto; después usa solo el Atar
    entonces el menú aparece cada vez, `listo_ms` < 1000 y `brownout` = 0 en el registro de arranques.
 3. **Navegar.** Dado un servidor TNFS alcanzable en `retrobridge-fuentes.txt`, cuando se abre su fuente en el 65XE,
    entonces se listan sus carpetas y se puede entrar y salir de ellas.
-4. **Arrancar desde la red.** Dada una ATR del servidor elegida para D1, cuando se pulsa `A`, entonces la ATR
-   arranca en el 65XE físico.
+4. **Arrancar desde la red, ATR y XEX.** Con el USB desconectado y solo el SIO:
+   - a. Dada una `.ATR` del servidor elegida para D1, cuando se pulsa `A`, entonces la ATR arranca en el 65XE físico.
+   - b. Dado un `.XEX` real de la biblioteca del responsable en `tnfs.calaluis.cl:16384`, elegido en una carpeta del
+     servidor y asignado a D1, cuando se pulsa `A`, entonces el programa queda corriendo en el 65XE físico.
 5. **D2–D8.** Dada una imagen TNFS montada en D2, cuando un programa lee D2, entonces recibe los sectores de esa
    imagen durante la sesión (prueba de host y Altirra).
 6. **Editar en el 65XE.** Dada la tecla `E` sobre la fuente 3, cuando se escribe un servidor y se guarda, entonces
@@ -142,6 +153,8 @@ la microSD una vez en el PC con dos archivos de texto; después usa solo el Atar
 11. **Imagen demasiado grande.** Dada una imagen que no cabe en la memoria disponible, cuando se elige, entonces se
     rechaza con un aviso y ninguna unidad cambia.
 12. **Regresión.** Dadas las pruebas de host existentes y la regresión en Altirra, entonces siguen en verde.
+13. **XEX que no arranca.** Dado un `.XEX` del servidor que el cargador rechaza, cuando se elige para D1, entonces se
+    ve el mismo aviso que en el PC (`XEX NO VALIDO` o `XEX NO COMPATIBLE`) y ninguna unidad cambia (prueba de host).
 
 ## Fuera de alcance
 
@@ -165,6 +178,10 @@ la microSD una vez en el PC con dos archivos de texto; después usa solo el Atar
   cubre el exceso.
 - **suposición tomada** — la consulta de nombres (DNS) de los servidores funciona con la red que da el router.
   *Base:* el PC resuelve los mismos nombres. *Riesgo:* si no, el motivo lo dirá (criterio 8).
+- **suposición tomada** — el `.XEX` del banco es uno que el flujo del PC ya arranca en Altirra. *Base:* ningún
+  cargador arranca el 100 % de los `.xex` (`menu-xex`); el banco prueba el transporte por Wi-Fi y SIO, no la
+  compatibilidad del cargador. *Riesgo:* si ese `.XEX` corre en Altirra y no en el 65XE, es un hallazgo del banco,
+  no se cambia de archivo para ocultarlo.
 - **decisión diferida** — recordar montajes TNFS entre encendidos (`menu-unidades-persistentes`).
 - **área no formulable** — qué pasa con el consumo si el Wi-Fi queda activo mientras corre un juego; se verá con la
   medida del criterio 1.
@@ -178,6 +195,10 @@ la microSD una vez en el PC con dos archivos de texto; después usa solo el Atar
 - Alimentación solo por el Atari, USB desconectado; D1 en menos de 1 s; Wi-Fi en segundo plano; la microSD sigue
   si falla la red. Viabilidad eléctrica como primera comprobación del plan; pasar a USB requiere su decisión.
 - Rama `docs/spec-menu-sio-wifi-tnfs` desde `main`; aprobación por fase.
+- 2026-11-22: el arranque desde TNFS se valida con `.ATR` y `.XEX`. Banco T8 con el 65XE físico y el USB
+  desconectado: abrir `tnfs.calaluis.cl:16384`, navegar una carpeta, elegir un `.XEX` real, asignarlo a D1 y pulsar
+  `A` hasta ver el programa corriendo. Se reutiliza el flujo TNFS/XEX del PC. La medición eléctrica (T1) sigue
+  siendo el paso previo a integrar el Wi-Fi por SIO.
 
 ## Clarificaciones
 
@@ -187,6 +208,10 @@ la microSD una vez en el PC con dos archivos de texto; después usa solo el Atar
 - 2026-11-21 · ¿Cómo se demuestra C10 sin exponer la NVS? → igualdad entre la lectura previa al primer arranque del
   candidato y la posterior al ensayo, registrando solo hash o resultado → la NVS puede tener datos de la placa que
   no deben salir de ella. El método de lectura es del plan.
+
+- 2026-11-22 · ¿El arranque desde TNFS se valida solo con ATR? → no: con `.ATR` y con un `.XEX` real (criterio 4b),
+  reutilizando el flujo del PC; el rechazo de un `.XEX` se cubre en host (criterio 13) → el objetivo del producto
+  incluye `.XEX` y el servidor del responsable los mezcla con las ATR.
 
 ## Objeción registrada
 

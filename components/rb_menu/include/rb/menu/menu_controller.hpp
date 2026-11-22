@@ -43,12 +43,25 @@
 // a slot the menu stops using goes back with MenuLoader::recycle (M41-20).
 // $FF (redraw) and $FE (poll) are compared before the Shift/Control mask, so
 // they never read as a key. key() does not allocate (ADR-011).
+//
+// Persistent drives (menu-unidades-persistentes): beginRestore() turns them on. Until
+// restore() or restoreFailed(), the main screen says RESTAURANDO UNIDADES, every key
+// is answered "wait" (the Atari polls) and A does nothing. restore() assigns D1 (the
+// menu keeps D1) and mounts D2..D8 one at a time from service(); a name missing from
+// the catalog or a refused image leaves its drive empty and is named on the message
+// row. Afterwards every applied change of D1..D8 is a new version: memoryChanged()
+// says so, snapshot() copies it for the save task, and the message row says GUARDANDO
+// until saveResult() of the newest version turns it into GUARDADO or NO SE GUARDO.
+// While GUARDANDO is shown the reply is "wait" too, so the result reaches the screen.
+// Booting with A and a cold reset are not changes. TNFS images are remembered empty.
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 #include "rb/menu/create_atr.hpp"
+#include "rb/menu/drive_memory.hpp"
 #include "rb/menu/menu_catalog.hpp"
 #include "rb/menu/menu_image.hpp"
 #include "rb/menu/menu_loader.hpp"
@@ -127,6 +140,22 @@ public:
     // catalog name of a local image, the display name of a TNFS one.
     const char* driveName(unsigned drive) const noexcept;
 
+    void beginRestore() noexcept;
+    void restore(const DriveMemory& memory);
+    // The card or the slots could not be read: the menu works at once and says `message`.
+    void restoreFailed(const char* message) noexcept;
+    bool restoring() const noexcept { return restoring_; }
+    // False while a mount or unmount is in flight: shown_ holds what it would be if applied.
+    bool memoryChanged() const noexcept
+    {
+        return persistent_ && !restoring_ && version_ != emitted_ && inFlight_ != InFlight::Mount &&
+               inFlight_ != InFlight::Unmount;
+    }
+    // Copies what D1..D8 hold into `out` and returns its version.
+    uint32_t snapshot(DriveMemory& out) noexcept;
+    // `error`: errno when !ok. Only the newest version changes the screen.
+    void saveResult(uint32_t version, bool ok, int error) noexcept;
+
     // How long key() waits for a TNFS job before answering "wait" (plan §0:
     // every 'K' is answered within 250 ms).
     static constexpr uint32_t kLoadWaitMicros = 200000;
@@ -159,6 +188,7 @@ private:
     };
 
     void collect();
+    void requestMenu();
     void event(const char* name, const char* detail);
 #if defined(__GNUC__)
     __attribute__((format(printf, 2, 3)))
@@ -187,8 +217,9 @@ private:
     // An entry inserted at `from`: every saved position at or after it moves one down.
     void shiftEntries(EntryIndex from) noexcept;
     bool boot();
-    void assignD1(EntryIndex entry);
-    void mountOn(unsigned drive, EntryIndex entry);
+    // nullopt: assigned or requested; otherwise why it was refused.
+    std::optional<rb::core::ErrorCode> assignD1(EntryIndex entry);
+    std::optional<rb::core::ErrorCode> mountOn(unsigned drive, EntryIndex entry);
     void emptyDrive(unsigned drive);
 
     void onFolder(uint8_t code);
@@ -226,6 +257,16 @@ private:
     // cursor for RETURN and fire; 0 for none.
     int driveDigit(uint8_t key, int digit) const noexcept;
     void pushPosition() noexcept;
+
+    // Persistent drives.
+    void changed() noexcept;                 // a new version: GUARDANDO
+    void status(const char* text) noexcept;  // after the message, or in its place if it does not fit
+    bool statusShown() const noexcept;
+    bool saving() const noexcept { return persistent_ && !restoring_ && !saveFailed_ && version_ != confirmed_; }
+    EntryIndex findEntry(const char* name) const noexcept;
+    void restoreNext();
+    void restoreProblem(unsigned drive, const char* what, const char* detail) noexcept;
+    void finishRestore() noexcept;
     Cursor popPosition() noexcept;
 
     const MenuCatalog& catalog_;
@@ -287,6 +328,20 @@ private:
     std::array<char, kMenuLineWidth + 1> message_{};
     bool coldResetPending_ = false;
     bool menuOnD1_ = false;
+
+    bool persistent_ = false;
+    bool restoring_ = false;
+    uint32_t version_ = 0;    // applied changes
+    uint32_t emitted_ = 0;    // the version snapshot() gave last
+    uint32_t confirmed_ = 0;  // the version saved last
+    bool saveFailed_ = false;
+    std::array<char, kMenuLineWidth + 1> status_{};  // the status on the message row
+    std::size_t statusAt_ = 0;
+    std::array<EntryIndex, kDrives> pendingRestore_{};
+    unsigned restoreDrive_ = 0;  // the drive whose restore mount is in flight
+    unsigned restored_ = 0;
+    unsigned problems_ = 0;
+    std::array<char, kMenuLineWidth + 1> problem_{};  // the first one, for the message row
 };
 
 }  // namespace rb::host

@@ -189,6 +189,14 @@ target_link_libraries(test_menu_station PRIVATE rb_menu)
 target_compile_definitions(test_menu_station PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
 set_tests_properties(test_menu_station PROPERTIES FIXTURES_REQUIRED menu_images)
 set_tests_properties(test_host_menu PROPERTIES FIXTURES_REQUIRED menu_images)
+# Persistent drives in the controller (menu-unidades-persistentes T3).
+rb_add_host_test(test_menu_unidades menu/test_menu_unidades.cpp
+                 ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
+                 ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/menu_sources.cpp
+                 ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp)
+target_include_directories(test_menu_unidades PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
+target_compile_definitions(test_menu_unidades PRIVATE RB_TEST_MENU_DIR="${rb_menu_images}")
+set_tests_properties(test_menu_unidades PROPERTIES FIXTURES_REQUIRED menu_images)
 # Disk writes with --images (menu-escritura-disco, W005).
 rb_add_host_test(test_host_write menu/test_host_write.cpp
                  ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <vector>
 #include <string>
 #include <system_error>
 
@@ -154,8 +155,42 @@ static void test_a_complete_slot_wins_even_if_the_save_was_never_confirmed(void)
     TEST_ASSERT_TRUE(reload().memory == e1);
 }
 
-// C8: the write fails; the store says so, and what was saved before is untouched.
+std::vector<unsigned char> bytes_of(const char* slotName)
+{
+    std::vector<unsigned char> out;
+    if (std::FILE* file = std::fopen(path_of(slotName).c_str(), "rb")) {
+        for (int c = std::fgetc(file); c != EOF; c = std::fgetc(file)) {
+            out.push_back(static_cast<unsigned char>(c));
+        }
+        std::fclose(file);
+    }
+    return out;
+}
+
+// C8: the write to the target slot fails while E0 stays readable. save() reports the error,
+// E0's slot is byte for byte untouched, and a new power-up gets E0 back.
 static void test_a_failed_save_reports_an_error_and_keeps_the_previous_slot(void)
+{
+    SlotFileStore store{kDir};
+    (void)store.load();
+    const DriveMemory e0 = memory("DEMO-DOS.ATR");
+    TEST_ASSERT_TRUE(store.save(e0).ok);  // slot A; the next save goes to B
+    const std::vector<unsigned char> before = bytes_of(SlotFileStore::kSlotA);
+    TEST_ASSERT_EQUAL_UINT64(codec::kSlotSize, static_cast<uint64_t>(before.size()));
+    std::error_code error;
+    TEST_ASSERT_TRUE(std::filesystem::create_directory(path_of(SlotFileStore::kSlotB), error));  // B cannot be written
+    const SlotFileStore::SaveResult failed = store.save(memory("DEMO-DOS.ATR", "OTRO.ATR"));
+    TEST_ASSERT_FALSE(failed.ok);
+    TEST_ASSERT_NOT_EQUAL(0, failed.error);
+    TEST_ASSERT_TRUE(bytes_of(SlotFileStore::kSlotA) == before);  // E0 untouched
+    std::filesystem::remove(path_of(SlotFileStore::kSlotB), error);  // the fault goes away
+    const SlotFileStore::LoadResult r = reload();
+    TEST_ASSERT_EQUAL(Status::Loaded, r.status);
+    TEST_ASSERT_TRUE(r.memory == e0);
+}
+
+// The card is removed from under the store: save() reports it and nothing half-written appears.
+static void test_a_save_with_the_card_gone_reports_an_error(void)
 {
     SlotFileStore store{kDir};
     (void)store.load();
@@ -250,6 +285,7 @@ int main(void)
     RUN_TEST(test_a_cut_during_a_merged_save_brings_back_the_last_confirmed);
     RUN_TEST(test_a_complete_slot_wins_even_if_the_save_was_never_confirmed);
     RUN_TEST(test_a_failed_save_reports_an_error_and_keeps_the_previous_slot);
+    RUN_TEST(test_a_save_with_the_card_gone_reports_an_error);
     RUN_TEST(test_a_slot_file_with_garbage_is_ignored_and_repaired);
     RUN_TEST(test_a_missing_directory_loads_nothing);
     return UNITY_END();

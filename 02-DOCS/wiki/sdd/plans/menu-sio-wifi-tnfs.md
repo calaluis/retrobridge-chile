@@ -36,7 +36,8 @@ status: approved
 
 ## §1. Contexto que fija el diseño
 
-- Spec, criterios 1–12; el criterio 1 manda el orden: **medir antes de construir**.
+- Spec, criterios 1–13. Desde la reordenación del 2026-11-22 se construye sin esperar la medición: el criterio 1
+  (T1a y T1b) es requisito de T8, la prueba con el USB desconectado, no de la integración.
 - El menú TNFS ya existe y está probado en el PC: `rb_net_tnfs` (cliente y códec, ya es componente ESP),
   `MenuController` y `MenuSources` (en `rb_menu`), y `TnfsLoader`, `TnfsLink`, `UdpTnfsPort` y `SystemNameResolver`
   **solo en `host/src/`**. El ESP32 no puede usar estos cuatro sin moverlos a un componente.
@@ -241,8 +242,8 @@ ella.
 | T7b | **Demo en el 65XE con USB y el pin 10 aislado** (aprobación de flash y COM3): montaje comprobado según §6; SHA-256 de la NVS en memoria antes; flash del paquete `menu-sio` de T6/T7; abrir `tnfs.calaluis.cl:16384` desde RetroBridge, entrar en una carpeta, elegir un `.XEX` real, asignarlo a D1 y pulsar `A` hasta ver el programa corriendo; captura de consola USB; SHA-256 de la NVS después. No acepta la alimentación solo por SIO | C3, C4b, C9, C10 (con USB) | 2 | `02-DOCS/raw/<fecha>-demo-e2-usb.md` con el montaje medido, paquete y SHA-256 del ZIP, foto de la carpeta, foto del `.XEX` corriendo, SHA-256 de la NVS iguales y la centinela con 0 apariciones en la captura | T7 | No |
 | T8 | **Banco 65XE, USB desconectado** (aprobación de flash y COM3): SHA-256 de la NVS en memoria antes, flash, desfase EN–D1 con USB (3 arranques), 10 encendidos solo SIO; abrir `tnfs.calaluis.cl:16384` desde RetroBridge, navegar una carpeta, elegir el `.XEX` real, asignarlo a D1 y pulsar `A` hasta ver el programa corriendo; lo mismo con la ATR de ensayo; captura de consola del desfase; SHA-256 de la NVS en memoria después | C1, C2, C4a, C4b, C9, C10 + criterio final | 2 | `02-DOCS/raw/<fecha>-banco-e2.md` con `retrobridge-arranques.txt` copiado, desfase y `listo_ms` + desfase < 1000 ms en los 10, foto de la carpeta, foto del `.XEX` corriendo y de la ATR arrancada, SHA-256 de la NVS iguales y búsqueda de la centinela en la captura con 0 apariciones | T7b, T1a y T1b confirmados | No |
 
-**Orden:** T1a → T1b → (T2 ∥ T3 ∥ T4) → T5 → T6 → T7 → T8. La medición eléctrica (T1) sigue siendo el paso previo a
-integrar el Wi-Fi por SIO. Cada tarea pasa su revisión según `rsc risk` antes de la
+**Orden:** (T2 ∥ T3 ∥ T4) → T5 → T6 → T7 → T7b (demo con USB y el pin 10 aislado); T1a → T1b en paralelo; T8
+(USB desconectado, solo SIO) cuando T7b y T1a/T1b estén cumplidos. Cada tarea pasa su revisión según `rsc risk` antes de la
 siguiente. T8 no empieza si T1a y T1b no confirman media y pico ≤ 50 mA en cada fase o si el responsable no ha decidido una opción. T2–T7b no esperan a T1 (reordenación del 2026-11-22).
 
 ## Ensayo de transferencia

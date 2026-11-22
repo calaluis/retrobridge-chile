@@ -38,6 +38,12 @@
 #include "rb/menu/storage_reason.hpp"
 #include "rb/sio/sio_line_transport.hpp"
 
+#include "esp_pthread.h"
+#include "tnfs_link.hpp"
+#include "tnfs_loader.hpp"
+#include "udp_tnfs_port.hpp"
+#include "wifi_station.hpp"
+
 namespace rb::menusio {
 
 namespace {
@@ -58,6 +64,33 @@ constexpr BaseType_t kTaskCore = 1;
 rb::esp::EspClock g_clock;
 rb::host::MenuImage g_menuImage;
 rb::host::MenuSources g_sources;  // E2 (TNFS) fills them; E1 has none
+
+// E2 (menu-sio-wifi-tnfs): the TNFS loader of the PC (rb_menu_tnfs) over the FujiNet's Wi-Fi.
+constexpr const char* kSourcesPath = "/sd/retrobridge-fuentes.txt";
+constexpr const char* kWifiPath = "/sd/retrobridge-wifi.txt";
+constexpr uint32_t kNetTaskStack = 8192;
+constexpr std::size_t kLoaderStack = 12288;
+rb::host::TnfsLoader* g_loader = nullptr;   // created in start(); null: sources 2..8 say the client is missing
+rb::host::MenuSources g_loadedSources;      // written by the network task before g_sourcesPublished
+std::atomic<bool> g_sourcesPublished{false};
+bool g_sourcesApplied = false;              // SIO task only
+
+// Menu events on the console. Only the outcome of a TNFS job, a mount and a rejected server are shown;
+// every key and every TNFS request stays at DEBUG, so the SIO task never waits on the UART for a line.
+class FirmwareMenuEvents final : public rb::host::MenuEvents {
+public:
+    void menuEvent(const char* name, const char* detail) override
+    {
+        const char* text = detail != nullptr ? detail : "";
+        if (std::strcmp(name, "menu_tnfs") == 0 || std::strcmp(name, "menu_fetch") == 0 ||
+            std::strcmp(name, "menu_mount") == 0 || std::strcmp(name, "menu_source_rejected") == 0) {
+            ESP_LOGI("rb_menu_sio", "%s %s", name, text);
+        } else {
+            ESP_LOGD("rb_menu_sio", "%s %s", name, text);
+        }
+    }
+};
+FirmwareMenuEvents g_events;
 rb::host::HostImageRepository g_repository{rb::esp::SdCardStorage::kMountPoint, g_menuImage};
 rb::esp::EspSioUart* g_line = nullptr;
 rb::sio::SioLineTransport* g_transport = nullptr;
@@ -304,6 +337,18 @@ void sioTask(void*)
             g_catalogApplied = true;
             ESP_LOGI(kTag, "catalog: %u image(s) on the microSD root", static_cast<unsigned>(g_catalog->count()));
         }
+        if (!g_sourcesApplied && g_sourcesPublished.load(std::memory_order_acquire)) {
+            g_sources = g_loadedSources;  // between two frames: the controller is not using it
+            if (g_loader != nullptr) {
+                for (unsigned n = 2; n <= rb::host::TnfsLoader::kMaxSource; ++n) {
+                    const char* server = g_sources.name(n);
+                    g_loader->changeServer(n, server != nullptr ? server : "");
+                }
+            }
+            g_station->controller().setSourcesFile(kSourcesPath);  // E edits it (menu-editar-servidor)
+            g_sourcesApplied = true;
+            ESP_LOGI(kTag, "sources: %u TNFS server(s)", static_cast<unsigned>(g_sources.count()));
+        }
         serviceDriveMemory(g_station->controller(), planSeen, restoreLogged);
 
         const rb::sio::StepOutcome stepped = g_station->step();
@@ -368,6 +413,25 @@ void sioTask(void*)
             wasMenu = isMenu;
         }
     }
+}
+
+// Network task (E2), created by finish() after D1 is served: reads the TNFS sources, publishes them to
+// the SIO task, then keeps the Wi-Fi up. Never touches the SIO.
+void netTask(void*)
+{
+    std::FILE* file = std::fopen(kSourcesPath, "r");
+    if (file == nullptr) {
+        ESP_LOGW(kTag, "no %s: sources 2..8 empty", kSourcesPath);
+    } else {
+        char error[96] = {};
+        if (!g_loadedSources.read(file, error, sizeof error)) {
+            ESP_LOGW(kTag, "%s not read: %s", kSourcesPath, error);
+        }
+        std::fclose(file);
+    }
+    g_sourcesPublished.store(true, std::memory_order_release);  // also when empty: E may create the file
+    runWifiStation(kWifiPath);
+    vTaskDelete(nullptr);
 }
 
 int menuCommand(int, char**)
@@ -517,8 +581,36 @@ bool start(const rb::board::BoardProfile& board)
     }
     static rb::sio::SioLineTransport transport{line, g_clock};
     g_transport = &transport;
+    // E2: the TNFS loader of the PC. Its thread (core 0) waits until a source 2..8 is opened; the links
+    // get their servers once the network task has read the sources file. Without it the menu is E1.
+    static rb::host::SystemNameResolver resolver;
+    static rb::host::HostTnfsClock tnfsClock{g_clock};
+    static rb::host::HeapImageMemory imageMemory;
+    rb::host::TnfsLink* links[rb::host::TnfsLoader::kMaxSource + 1] = {};
+    bool linksReady = true;
+    for (unsigned n = 2; n <= rb::host::TnfsLoader::kMaxSource; ++n) {
+        links[n] = createOnce<rb::host::UdpTnfsLink>("", n, resolver, g_events);
+        linksReady = linksReady && links[n] != nullptr;
+    }
+    if (linksReady) {
+        esp_pthread_cfg_t loaderThread = esp_pthread_get_default_config();
+        loaderThread.stack_size = kLoaderStack;
+        loaderThread.prio = 5;
+        loaderThread.pin_to_core = 0;  // the SIO task owns core 1
+        loaderThread.thread_name = "rb_tnfs";
+        (void)esp_pthread_set_cfg(&loaderThread);
+        g_loader = createOnce<rb::host::TnfsLoader>(links, g_repository.memory(), tnfsClock, imageMemory, nullptr,
+                                                    rb::esp::SdCardStorage::kMountPoint);
+        const esp_pthread_cfg_t defaults = esp_pthread_get_default_config();
+        (void)esp_pthread_set_cfg(&defaults);
+    }
+    if (g_loader == nullptr || !g_loader->ready()) {
+        ESP_LOGE(kTag, "no memory for the TNFS loader: sources 2..8 off");
+        g_loader = nullptr;
+    }
+
     g_station = createOnce<rb::host::MenuStation>(
-        transport, g_clock, rb::host::MenuStationParts{*g_catalog, g_sources, g_repository});
+        transport, g_clock, rb::host::MenuStationParts{*g_catalog, g_sources, g_repository, &g_events, g_loader});
     if (g_station == nullptr || !g_station->controller().ready()) {
         ESP_LOGE(kTag, "no memory for the menu");
         line.end();
@@ -607,7 +699,11 @@ void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot)
     rb::host::planDriveMemory(failure, failureError, loaded, saverReady, g_plan);
     g_planPublished.store(true, std::memory_order_release);  // after g_plan, the queues and the task
 
-    if (!registerCommand("menu", "menu: D1 vuelve al menu (luego apaga y enciende el 65XE)", menuCommand) ||
+    if (sdMounted && xTaskCreatePinnedToCore(netTask, "rb_net", kNetTaskStack, nullptr, tskIDLE_PRIORITY + 2, nullptr,
+                                             0) != pdPASS) {
+        ESP_LOGW(kTag, "network task not created: sources 2..8 off");
+    }
+    if (!registerCommand("menu","menu: D1 vuelve al menu (luego apaga y enciende el 65XE)", menuCommand) ||
         !registerCommand("sio", "sio status | sio arranques: linea SIO, D1, +5V y tiempos de arranque",
                          sioCommand)) {
         ESP_LOGW(kTag, "console commands menu/sio not registered");

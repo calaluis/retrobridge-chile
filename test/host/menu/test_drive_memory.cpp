@@ -149,6 +149,20 @@ static void test_a_sealed_slot_with_a_wrong_header_or_name_field_is_rejected(voi
     TEST_ASSERT_TRUE(codec::decode(good.data(), good.size(), slot));
 }
 
+static void test_a_slot_rejected_at_the_last_drive_leaves_the_output_unchanged(void)
+{
+    codec::Block bad{};
+    codec::encode(sample(), 9, bad);
+    bad[codec::kNamesOffset + (DriveMemory::kDrives - 1) * codec::kNameField] = 0x07;  // D8 starts with BEL
+    reseal(bad);
+    DriveMemorySlot slot{DriveMemory{}, 3};
+    TEST_ASSERT_TRUE(slot.memory.set(1, "KEEP.ATR"));
+    TEST_ASSERT_FALSE(codec::decode(bad.data(), bad.size(), slot));
+    TEST_ASSERT_EQUAL_STRING("KEEP.ATR", slot.memory.name(1));  // D1..D7 of `bad` were valid: none copied
+    TEST_ASSERT_EQUAL_STRING("", slot.memory.name(2));
+    TEST_ASSERT_EQUAL_UINT32(3, slot.seq);
+}
+
 static void test_newest_picks_the_valid_slot_with_the_highest_sequence(void)
 {
     const DriveMemorySlot a{sample(), 5};
@@ -171,6 +185,7 @@ int main(void)
     RUN_TEST(test_a_slot_with_a_changed_byte_is_rejected);
     RUN_TEST(test_a_truncated_slot_is_rejected);
     RUN_TEST(test_a_sealed_slot_with_a_wrong_header_or_name_field_is_rejected);
+    RUN_TEST(test_a_slot_rejected_at_the_last_drive_leaves_the_output_unchanged);
     RUN_TEST(test_newest_picks_the_valid_slot_with_the_highest_sequence);
     return UNITY_END();
 }

@@ -49,4 +49,14 @@ menu "RetroBridge Chile"
             started. H4 and M3a stay unsigned: use it only with the owner's
             written risk acceptance and the SIO adapter without pin 8.
 
+    config RB_DRIVE_SAVE_STACK
+        int "menu-sio: stack of the rb_drive_save task (bytes)"
+        depends on RB_MENU_SIO
+        range 4096 16384
+        default 6144
+        help
+            The task that writes the remembered drives to the microSD
+            (menu-unidades-persistentes). The package checks that save()
+            and load(), plus a reserve for stdio and FatFs, fit in it.
+
 endmenu

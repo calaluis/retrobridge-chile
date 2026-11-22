@@ -196,15 +196,23 @@ propio (`logSio5v`) solo aporta la caída del +5 V como indicio. Procedimiento y
 ## §6. Secuencia
 
 ```text
-T1a (sin Atari, gate) ──▶ STOP si > 50 mA o preliminar ──▶ T1b (SIO del 65XE, gate) ──▶ STOP si > 50 mA: opciones
-   │ ok
-   ├─▶ T2 WifiConfig ─┐
-   ├─▶ T3 mover cargador ─┼─▶ T5 motivos en el menú ─▶ T6 pegamento ESP ─▶ T7 CI y Altirra ─▶ T8 banco 65XE
-   └─▶ T4 WifiStation ─┘
+├─▶ T2 WifiConfig ─┐
+├─▶ T3 mover cargador ─┼─▶ T5 motivos en el menú ─▶ T6 pegamento ESP ─▶ T7 CI y Altirra ─▶ T7b demo USB ─┐
+└─▶ T4 WifiStation ─┘                                                                                    ├─▶ T8 banco solo SIO
+T1a (sin Atari, gate) ──▶ STOP si > 50 mA o preliminar ──▶ T1b (SIO del 65XE, gate) ──▶ STOP si > 50 mA ──┘
 ```
 
-T2, T3 y T4 son independientes entre sí y pueden ir en paralelo. T1 usa un firmware de banco mínimo que no se
-publica.
+Reordenado el 2026-11-22 por el responsable: T2–T7b no esperan a T1. T1a y T1b siguen siendo la condición de T8, el
+único paso que prueba y acepta la alimentación solo por SIO. T2, T3 y T4 son independientes entre sí. T1 usa un
+firmware de banco mínimo que no se publica.
+
+**Montaje de la demo T7b (USB, pin 10 aislado).** La FujiNet se alimenta solo por USB. El +5 V del pin 10 del SIO
+queda abierto entre el 65XE y la FujiNet (cable de paso con el pin 10 cortado, o el contacto del pin 10 aislado con
+cinta Kapton); el resto de las líneas, GND incluida, siguen conectadas. Antes de encender, con todo apagado: el
+multímetro da circuito abierto entre el pin 10 del lado del 65XE y J1 pin 10 de la FujiNet, y continuidad en GND
+(pin 4 o 6). Con el 65XE encendido y el USB desconectado, la FujiNet queda apagada. Con el pin 10 aislado, el ADC del
++5 V del SIO lee ~0 mV: el aviso de apagado del 65XE (`sio_power_watch`) no actúa en la demo y no forma parte de
+ella.
 
 ## §7. Riesgos
 
@@ -224,17 +232,18 @@ publica.
 | --- | --- | --- | --- | --- | --- | --- |
 | T1a | **Demanda sin el Atari.** Firmware de banco (no publicado) que, por fases separadas y anunciadas en la consola, queda en reposo, busca red, conecta y descarga por TNFS la ATR de ensayo, con red y clave leídas de la microSD; medir la demanda de cada fase con alimentación externa, sin conexión eléctrica al 65XE. Incluye el reposo del firmware E1 actual | C1 | 2 | `02-DOCS/raw/<fecha>-consumo-e2-sin-atari.md` con método, foto, media y pico por fase registrados por separado y veredicto: confirmado (todo ≤ 50 mA), preliminar (picos sin medir) o superado; si no, opciones presentadas y parada | Instrumentos confirmados | No |
 | T1b | **Demanda con el SIO del 65XE.** Las mismas fases con la FujiNet alimentada por el pin 10 y el USB desconectado | C1 | 2 | `02-DOCS/raw/<fecha>-consumo-pin10-e2.md` con las mismas cifras y veredicto con media y pico ≤ 50 mA | T1a confirmado con medias y picos | No |
-| T2 | `WifiConfig` + pruebas de host (formato, espacios, límites, archivo ausente, clave centinela nunca en motivos ni salidas) | C7, C9 | 1 | ctest verde con `test_wifi_config`; un mutante que imprime la clave es detectado | T1b ok | Sí |
-| T3 | Mover `TnfsLoader` (trabajos ATR y XEX), `TnfsLink`, `UdpTnfsPort`, `SystemNameResolver` a `rb_menu_tnfs`; `NetworkGate` opcional; el PC usa «siempre hay red» | C3, C4, C5, C8, C11, C12, C13 | 1 | ctest verde con todas las pruebas TNFS y `menu-xex` de host sin cambios de comportamiento; `rb_menu_tnfs` compila como componente ESP en CI | T1b ok | Sí |
-| T4 | `rb_esp_wifi::WifiStation`: estación en segundo plano, reintentos, estado, sin NVS; opciones de `sdkconfig.menu-sio` | C7, C9, C10 | 2 | CI verde con el paquete `menu-sio`; comprobación del empaquetador falla con `CONFIG_ESP_WIFI_NVS_ENABLED=y` (test rojo primero) | T1b ok | Sí |
+| T2 | `WifiConfig` + pruebas de host (formato, espacios, límites, archivo ausente, clave centinela nunca en motivos ni salidas) | C7, C9 | 1 | ctest verde con `test_wifi_config`; un mutante que imprime la clave es detectado | — | Sí |
+| T3 | Mover `TnfsLoader` (trabajos ATR y XEX), `TnfsLink`, `UdpTnfsPort`, `SystemNameResolver` a `rb_menu_tnfs`; `NetworkGate` opcional; el PC usa «siempre hay red» | C3, C4, C5, C8, C11, C12, C13 | 1 | ctest verde con todas las pruebas TNFS y `menu-xex` de host sin cambios de comportamiento; `rb_menu_tnfs` compila como componente ESP en CI | — | Sí |
+| T4 | `rb_esp_wifi::WifiStation`: estación en segundo plano, reintentos, estado, sin NVS; opciones de `sdkconfig.menu-sio` | C7, C9, C10 | 2 | CI verde con el paquete `menu-sio`; comprobación del empaquetador falla con `CONFIG_ESP_WIFI_NVS_ENABLED=y` (test rojo primero) | — | Sí |
 | T5 | Motivos de red en `MenuController` (`SIN WI-FI: …`) y `E` crea el archivo si falta | C6, C7, C8 | 1 | ctest verde con pruebas nuevas de motivos y de creación del archivo; pruebas de menú existentes verdes | T3 | No |
 | T6 | Pegamento en `main/menu_sio.cpp` (`finish()`), tabla de particiones propia, publicación atómica de fuentes y cargador | C2–C7, C11 | 2 | CI verde; tamaño de la aplicación dentro de su partición; NVS en el mismo desplazamiento y tamaño que hoy | T2, T4, T5 | No |
 | T7 | Regresión: host, CI, Altirra con servidor TNFS | C4, C12, C13 | 1 | CI verde; registro de Altirra con navegación, la ATR de ensayo arrancada y el `.XEX` del banco corriendo | T6 | No |
-| T8 | **Banco 65XE, USB desconectado** (aprobación de flash y COM3): SHA-256 de la NVS en memoria antes, flash, desfase EN–D1 con USB (3 arranques), 10 encendidos solo SIO; abrir `tnfs.calaluis.cl:16384` desde RetroBridge, navegar una carpeta, elegir el `.XEX` real, asignarlo a D1 y pulsar `A` hasta ver el programa corriendo; lo mismo con la ATR de ensayo; captura de consola del desfase; SHA-256 de la NVS en memoria después | C2, C4a, C4b, C9, C10 + criterio final | 2 | `02-DOCS/raw/<fecha>-banco-e2.md` con `retrobridge-arranques.txt` copiado, desfase y `listo_ms` + desfase < 1000 ms en los 10, foto de la carpeta, foto del `.XEX` corriendo y de la ATR arrancada, SHA-256 de la NVS iguales y búsqueda de la centinela en la captura con 0 apariciones | T7 | No |
+| T7b | **Demo en el 65XE con USB y el pin 10 aislado** (aprobación de flash y COM3): montaje comprobado según §6; SHA-256 de la NVS en memoria antes; flash del paquete `menu-sio` de T6/T7; abrir `tnfs.calaluis.cl:16384` desde RetroBridge, entrar en una carpeta, elegir un `.XEX` real, asignarlo a D1 y pulsar `A` hasta ver el programa corriendo; captura de consola USB; SHA-256 de la NVS después. No acepta la alimentación solo por SIO | C3, C4b, C9, C10 (con USB) | 2 | `02-DOCS/raw/<fecha>-demo-e2-usb.md` con el montaje medido, paquete y SHA-256 del ZIP, foto de la carpeta, foto del `.XEX` corriendo, SHA-256 de la NVS iguales y la centinela con 0 apariciones en la captura | T7 | No |
+| T8 | **Banco 65XE, USB desconectado** (aprobación de flash y COM3): SHA-256 de la NVS en memoria antes, flash, desfase EN–D1 con USB (3 arranques), 10 encendidos solo SIO; abrir `tnfs.calaluis.cl:16384` desde RetroBridge, navegar una carpeta, elegir el `.XEX` real, asignarlo a D1 y pulsar `A` hasta ver el programa corriendo; lo mismo con la ATR de ensayo; captura de consola del desfase; SHA-256 de la NVS en memoria después | C1, C2, C4a, C4b, C9, C10 + criterio final | 2 | `02-DOCS/raw/<fecha>-banco-e2.md` con `retrobridge-arranques.txt` copiado, desfase y `listo_ms` + desfase < 1000 ms en los 10, foto de la carpeta, foto del `.XEX` corriendo y de la ATR arrancada, SHA-256 de la NVS iguales y búsqueda de la centinela en la captura con 0 apariciones | T7b, T1a y T1b confirmados | No |
 
 **Orden:** T1a → T1b → (T2 ∥ T3 ∥ T4) → T5 → T6 → T7 → T8. La medición eléctrica (T1) sigue siendo el paso previo a
 integrar el Wi-Fi por SIO. Cada tarea pasa su revisión según `rsc risk` antes de la
-siguiente. Ninguna tarea después de T1b empieza si T1a y T1b no confirman media y pico ≤ 50 mA en cada fase o si el responsable no ha decidido una opción.
+siguiente. T8 no empieza si T1a y T1b no confirman media y pico ≤ 50 mA en cada fase o si el responsable no ha decidido una opción. T2–T7b no esperan a T1 (reordenación del 2026-11-22).
 
 ## Ensayo de transferencia
 

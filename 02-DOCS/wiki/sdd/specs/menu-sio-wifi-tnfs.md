@@ -107,8 +107,10 @@ la microSD una vez en el PC con dos archivos de texto; después usa solo el Atar
 - **Criterio final del responsable:** en el 65XE físico, con el USB desconectado: menú al primer encendido solo con
   SIO; abrir `tnfs.calaluis.cl:16384` desde RetroBridge, navegar una carpeta, elegir un `.XEX` real de su biblioteca,
   asignarlo a D1 y pulsar `A` hasta ver el programa corriendo. Lo mismo con una `.ATR`.
-- **Orden:** la medición eléctrica (criterio 1) sigue siendo el paso previo a integrar el Wi-Fi por SIO. Nada de
-  lo anterior se prueba en el 65XE antes de que el criterio 1 se cumpla.
+- **Orden (2026-11-22):** la integración del Wi-Fi y TNFS empieza sin esperar la medición. La primera demo en el
+  65XE físico se hace con la FujiNet alimentada por USB y el +5 V del pin 10 del SIO aislado (el resto de las líneas del SIO conectadas), comprobado con el multímetro antes de encender: abrir `tnfs.calaluis.cl:16384`, entrar en una carpeta y arrancar con `A` un
+  `.XEX` real. Esa demo **no** acepta la alimentación solo por SIO. Probar y aceptar la alimentación solo por SIO
+  (criterios 1, 2 y el criterio final con el USB desconectado) sigue exigiendo T1a y T1b.
 
 ## Comportamiento
 
@@ -204,6 +206,10 @@ la microSD una vez en el PC con dos archivos de texto; después usa solo el Atar
   desconectado: abrir `tnfs.calaluis.cl:16384`, navegar una carpeta, elegir un `.XEX` real, asignarlo a D1 y pulsar
   `A` hasta ver el programa corriendo. Se reutiliza el flujo TNFS/XEX del PC. La medición eléctrica (T1) sigue
   siendo el paso previo a integrar el Wi-Fi por SIO.
+- 2026-11-22 (reordenación): construir E2 ya. La integración empieza mientras T1 está pendiente. Primer entregable:
+  un paquete `menu-sio` flasheable para abrir `tnfs.calaluis.cl:16384` en el 65XE, entrar en una carpeta y arrancar
+  con `A` un `.XEX` real, con la FujiNet alimentada por USB y el +5 V del pin 10 del SIO aislado (el resto de las líneas del SIO conectadas), comprobado con el multímetro antes de encender. T1a y T1b siguen siendo la condición para probar y aceptar la
+  alimentación solo por SIO. El código va en la misma rama que esta spec.
 
 ## Clarificaciones
 

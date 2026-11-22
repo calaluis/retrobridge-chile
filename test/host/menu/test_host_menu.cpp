@@ -565,6 +565,41 @@ void test_a_key_repeated_by_siov_is_answered_again_but_applied_once()
     TEST_ASSERT_EQUAL_UINT(1, rig.transport.stats().menuRetries);
 }
 
+// C11 (menu-unidades-persistentes T5): Break during a mount. The host applied it but the
+// reply was lost; the 6502 sends the same AUX1 and AUX2 again (resend), so the mount is
+// applied once and the same reply comes back. Then Break goes with a new sequence number and
+// the main screen shows, with D2 as the mount left it.
+void test_a_mount_whose_reply_was_lost_to_break_is_applied_once_then_break_shows_main()
+{
+    DecoratorRig rig;
+    rig.menu.keys({K1, KB});  // list, image B chosen: the next digit is the drive
+    rig.inner.push_frame(frame(0x5A, 0x4B, K2, 5 << 5 | rb::host::kMenuNoRow));
+    TEST_ASSERT_FALSE(rig.transport.waitCommandFrame(20000).ok());
+    rig.menu.step();
+    TEST_ASSERT_EQUAL_STRING("demo-uno.atr", rig.menu.mounted(2));
+    const auto first = replyStream(rig.inner, 1);
+    const unsigned commands = rig.transport.stats().menuCommands;
+    // Break aborted SIOV before the reply arrived: resend, identical.
+    rig.inner.push_frame(frame(0x5A, 0x4B, K2, 5 << 5 | rb::host::kMenuNoRow));
+    TEST_ASSERT_FALSE(rig.transport.waitCommandFrame(20000).ok());
+    rig.menu.step();
+    const auto again = replyStream(rig.inner, 6);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(first.data(), again.data(), first.size());
+    TEST_ASSERT_EQUAL_UINT(1, rig.transport.stats().menuRetries);
+    TEST_ASSERT_EQUAL_UINT(commands + 1, rig.transport.stats().menuCommands);
+    TEST_ASSERT_EQUAL_STRING("demo-uno.atr", rig.menu.mounted(2));
+    TEST_ASSERT_TRUE(rig.menu.mailbox.idle());  // no second request was queued
+    // The pending Break, as a new key.
+    rig.inner.push_frame(frame(0x5A, 0x4B, rb::host::kMenuBreakKey, 6 << 5 | rb::host::kMenuNoRow));
+    TEST_ASSERT_FALSE(rig.transport.waitCommandFrame(20000).ok());
+    const auto main = replyStream(rig.inner, 11);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, main[1]);  // after COMPLETE: action, layout
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutMain, main[2]);
+    TEST_ASSERT_EQUAL_UINT(1, rig.transport.stats().menuRetries);
+    assert_line(rig.menu.press(rb::host::kMenuNoKey), rb::host::kMainMessage, line(" D2: DEMO-UNO.ATR"));
+    TEST_ASSERT_EQUAL_STRING("demo-uno.atr", rig.menu.mounted(2));
+}
+
 void test_a_redraw_forgets_the_last_key()
 {
     DecoratorRig rig;
@@ -692,6 +727,7 @@ int main()
     RUN_TEST(test_shift_and_control_do_not_change_a_key);
     RUN_TEST(test_key_command_gets_ack_then_the_screen_in_blocks_with_checksum);
     RUN_TEST(test_a_key_repeated_by_siov_is_answered_again_but_applied_once);
+    RUN_TEST(test_a_mount_whose_reply_was_lost_to_break_is_applied_once_then_break_shows_main);
     RUN_TEST(test_a_redraw_forgets_the_last_key);
     RUN_TEST(test_the_row_in_aux2_reaches_the_controller);
     RUN_TEST(test_no_row_keeps_the_row_of_the_host);

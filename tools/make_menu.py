@@ -25,7 +25,15 @@ The program is a thin terminal (ADR-017, amended for Issue #40):
      the Shift ($40) and Control ($80) bits, so a key is $00-$3F and can never
      be POLL ($FE) or NO_KEY ($FF) (menu-tnfs, M41-3);
   5. if SIOV fails, writes NO_HOST_TEXT into the message line of the main
-     screen, shows it and waits for a key.
+     screen, shows it and waits for a key;
+  6. Break (menu-unidades-persistentes T5, C7 and C11): pressed while the program
+     waits for a key, it is sent as BREAK_KEY with a new sequence number. Pressed
+     during a command, SIOV returns BREAK_STATUS: the program puts BRKKEY back,
+     notes a pending Break and calls SIOV again from `resend`, after the sequence
+     number and AUX2 were set, so AUX1 and the whole AUX2 are the same and the host
+     answers the retry without acting twice. Only when that command has its reply
+     is the pending Break sent as a new key. A Break status never shows
+     NO_HOST_TEXT.
 
 The main screen follows the reference approved for Issue #40 (Display List Lab
 mock-up): mode 7 title, 8 source lines, mode 6 subtitle, 11 status lines and a
@@ -82,6 +90,10 @@ NO_ROW = 0x1F                # in those bits: no local cursor on the screen show
 # Esc. Writing a position twice gives the same text, so a retry of SIOV changes nothing.
 TEXT_COMMAND = 0x54          # 'T'
 EDIT_SAVE = 0xE0             # 'K' code after the text: away from CONFIRM_ROW + 20, POLL and NO_KEY
+# Break (menu-unidades-persistentes T5): a reserved AUX1 that no key of CH gives (keys are sent
+# AND KEY_MASK), away from the navigation, confirm and edit codes, POLL and NO_KEY.
+BREAK_KEY = 0xF0
+BREAK_STATUS = 0x80          # SIOV status when Break aborts a command (BRKABT)
 EDIT_AT, EDIT_SIZE = CURSOR_AT - 3, 3
 EDIT_WIDTH = 32
 KEY_ESC, KEY_DELETE = 0x1C, 0x34
@@ -130,6 +142,7 @@ KEY_LEFT, KEY_RIGHT = 0x42, 0x56
 
 # OS addresses (Atari 400/800/XL OS, documented entry points).
 CH = 0x02FC                  # last key code, 0xFF when none
+BRKKEY = 0x0011              # 0 once Break is pressed; SIOV aborts while it stays 0
 STICK0 = 0x0278              # joystick 0 (VBI shadow): 14 up, 13 down, 11 left, 7 right, 15 none
 STRIG0 = 0x0284              # trigger of joystick 0 (VBI shadow): 0 pressed
 DDEVIC, DUNIT, DCOMND, DSTATS = 0x0300, 0x0301, 0x0302, 0x0303
@@ -249,6 +262,7 @@ def menu_program():
         b"\xA9", ("hi", "dl_main"), abs_op(0x8D, SDLSTL + 1),
         b"\xA9\x01", b"\x8D", ("abs", "fire_down"),  # a trigger already held at start is not a press
         b"\xA9", bytes([STICK_CENTRED]), b"\x8D", ("abs", "stick_prev"),
+        *store(NO_KEY, BRKKEY),                       # forget a Break pressed during boot
         *store(NO_KEY, CH),                           # forget any key pressed during boot; A = NO_KEY
         ("label", "send"),                            # A = key code (NO_KEY: just draw)
         abs_op(0x8D, DAUX1),                          # STA DAUX1
@@ -259,10 +273,8 @@ def menu_program():
         *store(MENU_DEVICE, DDEVIC),
         *store(0x01, DUNIT),
         *store(MENU_COMMAND, DCOMND),
-        *store(0x40, DSTATS),                         # data from the device to the Atari
         b"\xA9", ("lo", "hidden"), abs_op(0x8D, DBUFLO),  # out of sight: no sweep (menu-presentacion)
         b"\xA9", ("hi", "hidden"), abs_op(0x8D, DBUFHI),
-        *store(MENU_TIMEOUT_S, DTIMLO),
         *store(REPLY_SIZE & 0xFF, DBYTLO),
         *store(REPLY_SIZE >> 8, DBYTHI),
         b"\xEE", ("abs", "seq"),                      # INC seq (one number per key; SIOV's retries keep it)
@@ -276,9 +288,20 @@ def menu_program():
         b"\x0D", ("abs", "cur_row"),                  # ORA cur_row (the row the bar shows)
         ("label", "aux2"),
         abs_op(0x8D, DAUX2),                          # STA DAUX2
+        # resend (T5, C11): after a Break status the same command goes again from here, so
+        # DAUX1 and the whole DAUX2 (sequence and row) stay as they were. Only DSTATS, which
+        # SIOV overwrites with the status, and DTIMLO are set again.
+        ("label", "resend"),
+        *store(0x40, DSTATS),                         # data from the device to the Atari
+        *store(MENU_TIMEOUT_S, DTIMLO),
         abs_op(0x20, SIOV),                           # JSR SIOV
         b"\x98",                                      # TYA (SIO status)
         b"\x10", ("rel", "answered"),                 # BPL answered
+        bytes([0xC9, BREAK_STATUS]),                  # CMP #BREAK_STATUS
+        b"\xD0", ("rel", "gone"),                     # BNE gone (any other error: no host)
+        b"\x20", ("abs", "brk_hold"),                 # JSR brk_hold (BRKKEY back, Break pending)
+        b"\x4C", ("abs", "resend"),                   # JMP resend (the same command, unchanged)
+        ("label", "gone"),
         b"\x4C", ("abs", "nohost"),                   # JMP nohost (negative status: error)
         ("label", "answered"),
         bytes([0xA5, RTCLOK_LOW]),                    # LDA RTCLOK
@@ -303,6 +326,9 @@ def menu_program():
         abs_op(0xAC, CH),                             # LDY CH
         b"\xC0\xFF",                                  # CPY #$FF
         b"\xD0", ("rel", "waitkey"),                  # BNE waitkey (a key: send it now)
+        b"\x20", ("abs", "brk"),                      # JSR brk (keeps X)
+        b"\xC9\xFF",                                  # CMP #$FF
+        b"\xD0", ("rel", "brk_send"),                 # BNE brk_send (Break: send it now)
         b"\x20", ("abs", "joy"),                      # JSR joy (keeps X)
         b"\xC9\xFF",                                  # CMP #$FF
         b"\xD0", ("rel", "send_nav"),                 # BNE send_nav (joystick: send it now)
@@ -312,6 +338,7 @@ def menu_program():
         b"\xCA",                                      # DEX
         b"\xD0", ("rel", "tick"),                     # BNE tick
         bytes([0xA9, POLL]),                          # LDA #POLL
+        ("label", "brk_send"),                        # A = POLL or BREAK_KEY
         b"\x4C", ("abs", "send"),                     # JMP send (too far for a branch)
         ("label", "waitkey"),
         b"\x98",                                      # TYA (the key)
@@ -338,6 +365,9 @@ def menu_program():
         abs_op(0xAD, CH),                             # LDA CH
         b"\xC9\xFF",                                  # CMP #$FF
         b"\xD0", ("rel", "got"),                      # BNE got (a key)
+        b"\x20", ("abs", "brk"),                      # JSR brk
+        b"\xC9\xFF",                                  # CMP #$FF
+        b"\xD0", ("rel", "brk_send"),                 # BNE brk_send (Break, or one pending)
         b"\x20", ("abs", "joy"),                      # JSR joy
         b"\xC9\xFF",                                  # CMP #$FF
         b"\xF0", ("rel", "key"),                      # BEQ key (nothing from the joystick)
@@ -348,6 +378,7 @@ def menu_program():
         ("label", "nohost"),
         b"\xA9\x00", b"\x8D", ("abs", "cur_count"),   # no local bar on the stale screen (N007)
         b"\x8D", ("abs", "layout"),                   # STA layout: the main list shows it (menu-presentacion)
+        b"\x8D", ("abs", "brk_pending"),              # STA brk_pending: no command ended, no Break to send (T5)
         # The buffer may hold a list, or a reply cut or mixed (two hosts on the hub, seen in the
         # demo of menu-editar-servidor): clear everything below the title, which both layouts
         # share, so the main display list shows only the title and the message.
@@ -583,6 +614,12 @@ def menu_program():
         abs_op(0x20, SIOV),                           # JSR SIOV
         b"\x98",                                      # TYA (SIO status)
         b"\x10", ("rel", "ed_next"),                  # BPL ed_next
+        bytes([0xC9, BREAK_STATUS]),                  # CMP #BREAK_STATUS
+        b"\xD0", ("rel", "ed_gone"),                  # BNE ed_gone
+        b"\x20", ("abs", "brk_hold"),                 # JSR brk_hold (the Break waits for the save)
+        b"\xAE", ("abs", "ed_x"),                     # LDX ed_x
+        b"\x4C", ("abs", "ed_tx"),                    # JMP ed_tx (the same position: same text)
+        ("label", "ed_gone"),
         b"\x4C", ("abs", "nohost"),                   # JMP nohost
         ("label", "ed_next"),
         b"\xAE", ("abs", "ed_x"),                     # LDX ed_x
@@ -608,6 +645,25 @@ def menu_program():
         ("label", "ed_put"),
         b"\x99", ("label", "ep_lo"), b"\x00", ("label", "ep_hi"), b"\x00",  # STA field,Y
         b"\x60",                                      # RTS
+        # brk_hold (T5): a command was aborted by Break. BRKKEY back to $FF (else the next SIOV
+        # aborts at once) and the Break is kept for when the command has its reply.
+        ("label", "brk_hold"),
+        b"\xA9\x01", b"\x8D", ("abs", "brk_pending"),  # LDA #1 / STA brk_pending
+        bytes([0xA9, NO_KEY]), abs_op(0x8D, BRKKEY),  # LDA #$FF / STA BRKKEY
+        b"\x60",                                      # RTS
+        # brk (T5): A = BREAK_KEY if Break was pressed or is pending (both are then cleared),
+        # else $FF. Keeps X and Y.
+        ("label", "brk"),
+        b"\xAD", ("abs", "brk_pending"),              # LDA brk_pending
+        b"\xD0", ("rel", "brk_yes"),                  # BNE brk_yes
+        abs_op(0xAD, BRKKEY),                         # LDA BRKKEY
+        b"\xD0", ("rel", "brk_none"),                 # BNE brk_none (not pressed)
+        ("label", "brk_yes"),
+        b"\xA9\x00", b"\x8D", ("abs", "brk_pending"),  # LDA #0 / STA brk_pending
+        bytes([0xA9, NO_KEY]), abs_op(0x8D, BRKKEY),  # LDA #$FF / STA BRKKEY
+        bytes([0xA9, BREAK_KEY]), b"\x60",            # LDA #BREAK_KEY / RTS
+        ("label", "brk_none"),
+        b"\xA9\xFF", b"\x60",                         # LDA #$FF / RTS
         # notice (menu-presentacion): LOADING_TEXT in the message row of the layout in view.
         ("label", "notice"),
         b"\xAD", ("abs", "layout"),                   # LDA layout
@@ -656,6 +712,7 @@ def menu_program():
         ("label", "joy_frame"), b"\x00",
         ("label", "frame"), b"\x00",
         ("label", "ln_code"), b"\x00",                # the move code while its page is checked (N007)
+        ("label", "brk_pending"), b"\x00",            # 1: a Break aborted a command (T5)
         ("label", "dltab"), ("lo", "dl_main"), ("lo", "dl_list"),
         ("pad", "dl_main"),                           # padding so both display lists share a page
         # Main display list, as the reference: 8 blank, title (mode 7), 8 blank, 8 sources,
@@ -768,7 +825,7 @@ def render_include(block: bytes, labels: dict) -> str:
         "kMenuPageBefore": PAGE_BEFORE, "kMenuPageAfter": PAGE_AFTER,
         "kMenuRowMask": ROW_MASK, "kMenuNoRow": NO_ROW,
         "kMenuActionEdit": ACTION_EDIT, "kMenuEditSave": EDIT_SAVE, "kMenuEdit": EDIT_AT,
-        "kMenuEditWidth": EDIT_WIDTH,
+        "kMenuEditWidth": EDIT_WIDTH, "kMenuBreakKey": BREAK_KEY,
     }
     lines = [
         "// Generated by tools/make_menu.py (Issues #38 and #40, menu-tnfs). Do not edit: regenerate with",

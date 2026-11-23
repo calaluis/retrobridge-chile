@@ -51,6 +51,13 @@ bool hasXexExtension(const char* fileName) noexcept;
 // The names the menu lists: ".atr" or ".xex" (menu-xex X003, M48).
 bool hasImageExtension(const char* fileName) noexcept;
 
+// menu-cinta: a .cas tape, any case. Not an image: TNFS folders list no tapes (out of scope).
+bool hasCasExtension(const char* fileName) noexcept;
+
+// What a catalog entry is, from its extension (menu-cinta).
+enum class EntryKind { Disk, Xex, Tape };
+EntryKind entryKind(const char* fileName) noexcept;
+
 // True if the name ends in ".atr" or ".xex" (any case) and is a valid ImageLocation.
 bool isCatalogName(const char* fileName) noexcept;
 

@@ -625,6 +625,14 @@ void MenuController::onPick(int digit)
     chosen_ = kNoEntry;
     view_ = View::Main;
     const char* name = catalog_.name(entry);
+    if (hasCasExtension(name)) {
+        // menu-cinta (AC3): a tape never goes on a disk drive; C: takes it (T2).
+        say(" UNA CINTA VA EN C:");
+        char detail[MenuCatalog::kMaxName + 48];
+        std::snprintf(detail, sizeof detail, "D%d name=%s refused: a tape only goes on C:", digit, name);
+        event("menu_select", detail);
+        return;
+    }
     if (hasXexExtension(name)) {
         chooseXex(digit, 1, name, std::strlen(name), name);
         return;

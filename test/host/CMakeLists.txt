@@ -338,6 +338,14 @@ rb_add_host_test(test_menu_xex menu/test_menu_xex.cpp ${rb_root}/components/rb_m
 target_include_directories(test_menu_xex PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_menu_xex PRIVATE RB_TEST_MENU_DIR="${CMAKE_CURRENT_BINARY_DIR}/xex-images")
 target_link_libraries(test_menu_xex PRIVATE rb_net_tnfs Threads::Threads)
+# menu-cinta T1: .cas files are listed and refused on D1-D8
+rb_add_host_test(test_menu_cinta menu/test_menu_cinta.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp
+                 ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
+                 ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/host/src/tnfs_loader.cpp ${rb_root}/components/rb_menu/src/xex_image.cpp
+                 ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/sha256.cpp)
+target_include_directories(test_menu_cinta PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu/include)
+target_compile_definitions(test_menu_cinta PRIVATE RB_TEST_MENU_DIR="${CMAKE_CURRENT_BINARY_DIR}/cinta-images")
+target_link_libraries(test_menu_cinta PRIVATE rb_net_tnfs Threads::Threads)
 
 # Cursor and pages in the lists (menu-navegacion N003), on the rig of test_menu_tnfs.
 rb_add_host_test(test_menu_navegacion menu/test_menu_navegacion.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp

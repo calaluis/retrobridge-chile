@@ -36,6 +36,7 @@
 #include "rb/menu/menu_station.hpp"
 #include "rb/menu/network_gate.hpp"
 #include "rb/menu/sio_power_watch.hpp"
+#include "rb/menu/startup_flags.hpp"
 #include "rb/menu/storage_reason.hpp"
 #include "rb/sio/sio_line_transport.hpp"
 
@@ -152,19 +153,19 @@ SemaphoreHandle_t g_adcLock = nullptr;  // the SIO task, the console and the boo
 constexpr int64_t kPowerSampleUs = 50000;  // plan §4: the SIO task samples the +5 V every 50 ms, between frames
 
 // Persistent drives (menu-unidades-persistentes). finish() reads the slots once, writes g_plan, creates the
-// queues and rb_drive_save, and only then publishes g_planPublished (release). The SIO task touches g_plan
+// queues and rb_drive_save, and only then publishes the plan (g_startup). The SIO task touches g_plan
 // and the queues only after it has seen that flag (acquire), and the queues only when g_plan allows saving.
 // The SIO task never writes to the microSD.
 // The tape deck (menu-cinta T6): finish() starts the cassette and creates the deck, then publishes it
-// (release) BEFORE g_planPublished; the SIO task gives it to the controller between two frames, so the
-// restore that follows the plan already has it (C: comes back with D1-D8), and pumps it every step.
+// BEFORE the plan (g_startup). The SIO task reads both with one g_startup.read() per step, plan first
+// (review of PR #85): with the plan seen the deck is seen too, gives the deck to the controller between
+// two frames and only then applies the plan, so the restore of C: always has it; and pumps it every step.
 const rb::board::BoardProfile* g_board = nullptr;  // start(): the gates come from it
 EspTapeDeck* g_tape = nullptr;                     // finish() creates it; then the SIO task only
-std::atomic<bool> g_tapePublished{false};
 bool g_tapeApplied = false;                        // SIO task only
+rb::host::StartupFlags g_startup;                  // finish(): publishTape(), then publishPlan()
 
-rb::host::DriveMemoryPlan g_plan;            // written by finish() before g_planPublished
-std::atomic<bool> g_planPublished{false};
+rb::host::DriveMemoryPlan g_plan;            // written by finish() before g_startup.publishPlan()
 rb::host::DriveMemoryLink g_link;            // SIO task only (~1 KB: not on its stack)
 rb::host::SlotFileStore* g_store = nullptr;  // finish() reads it once; then rb_drive_save only
 
@@ -319,10 +320,12 @@ private:
 QueueSaver g_saver;  // SIO task only (~1 KB: not on its stack)
 
 // Between two frames: once the plan is published, restores (after the catalog) and handles saves.
-void serviceDriveMemory(rb::host::MenuController& controller, bool& planSeen, bool& restoreLogged)
+// `planPublished`: this step's g_startup.read(), the same read that applied the deck (review of PR #85).
+void serviceDriveMemory(rb::host::MenuController& controller, bool planPublished, bool& planSeen,
+                        bool& restoreLogged)
 {
     if (!planSeen) {
-        planSeen = g_planPublished.load(std::memory_order_acquire);
+        planSeen = planPublished;
         if (!planSeen) {
             return;  // g_plan and the queues are not ready yet
         }
@@ -388,13 +391,14 @@ void sioTask(void*)
             g_sourcesApplied = true;
             ESP_LOGI(kTag, "sources: %u TNFS server(s)", static_cast<unsigned>(g_sources.count()));
         }
-        // Before the drive memory: published before the plan, so the restore of C: finds the deck.
-        if (!g_tapeApplied && g_tapePublished.load(std::memory_order_acquire)) {
+        // One read per step, plan first: if the plan is seen, the deck published before it is seen too.
+        const rb::host::StartupFlags::Seen published = g_startup.read();
+        if (!g_tapeApplied && published.tape) {  // before the drive memory: the restore of C: finds the deck
             g_station->controller().setTapeDeck(&g_tape->deck());
             g_tapeApplied = true;
             ESP_LOGI(kTag, "cas: deck en el menu (puertas %s)", g_tape->deck().gatesOpen() ? "abiertas" : "cerradas");
         }
-        serviceDriveMemory(g_station->controller(), planSeen, restoreLogged);
+        serviceDriveMemory(g_station->controller(), published.plan, planSeen, restoreLogged);
 
         const rb::sio::StepOutcome stepped = g_station->step();
         if (g_tapeApplied) {
@@ -726,7 +730,7 @@ static void startCassette(bool sdMounted, rb::esp::CassetteService& cassette)
     } else {
         ESP_LOGI(kTag, "cas: listo (puertas %s)", g_tape->deck().gatesOpen() ? "abiertas" : "cerradas");
     }
-    g_tapePublished.store(true, std::memory_order_release);  // the SIO task applies it, before the plan
+    g_startup.publishTape();  // before the plan: the SIO task applies it before the restore
 }
 
 void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot, rb::esp::CassetteService& cassette)
@@ -794,9 +798,9 @@ void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot, rb::esp::Cassett
     // menu-cinta T6: the deck is published before the plan, so the restore of C: finds it.
     startCassette(sdMounted, cassette);
 
-    // rb_drive_save touches the store only after g_planPublished, so *loaded is still this read.
+    // rb_drive_save touches the store only after the plan is published, so *loaded is still this read.
     rb::host::planDriveMemory(failure, failureError, loaded, saverReady, g_plan);
-    g_planPublished.store(true, std::memory_order_release);  // after g_plan, the queues and the task
+    g_startup.publishPlan();  // after the deck, g_plan, the queues and the task
 
     if (sdMounted && xTaskCreatePinnedToCore(netTask, "rb_net", kNetTaskStack, nullptr, tskIDLE_PRIORITY + 2, nullptr,
                                              0) != pdPASS) {

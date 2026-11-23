@@ -215,6 +215,15 @@ instalados a la vez es el fallo que más cuesta en el equipo).
 | T8 | Banco AC1–AC8 en el 65XE; registro en `02-DOCS/raw/` | AC1–AC8 | — | T1–T7 | no | registro con SHA, ZIP, NVS sin cambios y cada AC visto en pantalla |
 | T9 | *(tras M3a y H4, PR aparte del responsable)* banco AC9–AC12 | AC9–AC12 | 2 | T8 + puertas | no | registro con las tres cintas de `cassette-cas` cargadas desde el menú |
 
+Requisitos de código de T9 antes de poner `kTapeOutput = true` (revisión de T7 en el PR #85, 2026-11-23):
+
+1. **Salidas de la casetera en marcha.** `CassetteService` elige en `start()` si reproduce por `EspDataIn` o
+   descarta; tiene que poder pasar a `EspDataIn` cuando el árbitro llama a `TapeLine.take()` y volver a descartar
+   con `release()`, sin reiniciar el servicio. Hasta entonces `PendingTapeLine::take()` devuelve `false`.
+2. **`tapeEnded` real.** `DataInReadings.tapeEnded` vale siempre `false` en `menu_sio.cpp`; tiene que llegar del
+   reproductor (fin de la última parte de la cinta) sin bloquear el bucle SIO, para que la regla 3 («fin de cinta y
+   MOTOR apagado → disco») funcione.
+
 Orden: T1, T3 y T4 pueden ir en paralelo; T2 tras T1; T5 tras T2; T6 tras T3 y T5; T7 al final del código.
 Cada tarea de riesgo 2 pide flasheo y banco con aprobación.
 

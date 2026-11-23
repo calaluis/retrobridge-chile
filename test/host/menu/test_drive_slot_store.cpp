@@ -48,6 +48,61 @@ SlotFileStore::LoadResult reload()
     return fresh.load();
 }
 
+// --- menu-tnfs-persistente T1 (AC7, plan §5 and R5): version 2 cards and going back ----------
+
+// A slot file as the firmware of menu-cinta writes it: version 2, 9 name fields.
+void writeVersionTwo(const char* slotName, const DriveMemory& memory, uint32_t seq)
+{
+    std::vector<uint8_t> old(codec::kSlotSizeV2, 0);
+    const uint32_t magic = codec::kMagic;
+    for (int i = 0; i < 4; ++i) {
+        old[i] = static_cast<uint8_t>(magic >> (8 * i));
+        old[8 + i] = static_cast<uint8_t>(seq >> (8 * i));
+    }
+    old[4] = 2;
+    for (unsigned drive = 1; drive <= DriveMemory::kDrives + 1; ++drive) {
+        const char* name = drive <= DriveMemory::kDrives ? memory.name(drive) : memory.tape();
+        std::copy(name, name + std::char_traits<char>::length(name),
+                  old.begin() + static_cast<long>(codec::kNamesOffset + (drive - 1) * codec::kNameField));
+    }
+    const uint32_t crc = rb::host::crc32(old.data(), codec::kSlotSizeV2 - 4);
+    for (int i = 0; i < 4; ++i) {
+        old[codec::kSlotSizeV2 - 4 + i] = static_cast<uint8_t>(crc >> (8 * i));
+    }
+    std::FILE* file = std::fopen(path_of(slotName).c_str(), "wb");
+    TEST_ASSERT_NOT_NULL(file);
+    TEST_ASSERT_EQUAL_size_t(old.size(), std::fwrite(old.data(), 1, old.size(), file));
+    std::fclose(file);
+}
+
+// What the firmware of menu-cinta reads: only version 1 and 2 sizes; a version 3 file is not a slot.
+bool readAsVersionTwo(const char* slotName, rb::host::DriveMemorySlot& out)
+{
+    std::vector<uint8_t> data(codec::kSlotSize + 1, 0);
+    std::FILE* file = std::fopen(path_of(slotName).c_str(), "rb");
+    if (file == nullptr) {
+        return false;
+    }
+    const std::size_t size = std::fread(data.data(), 1, data.size(), file);
+    std::fclose(file);
+    return (size == codec::kSlotSizeV2 || size == codec::kSlotSizeV1) && codec::decode(data.data(), size, out);
+}
+
+DriveMemory versionTwoMemory()
+{
+    DriveMemory m = memory("DOS.ATR", "DATOS.ATR", "JUEGO.XEX");
+    TEST_ASSERT_TRUE(m.set(8, "UTIL.ATR"));
+    TEST_ASSERT_TRUE(m.setTape("KARATE.CAS"));
+    return m;
+}
+
+DriveMemory withNetworkDrive()
+{
+    DriveMemory m = versionTwoMemory();
+    TEST_ASSERT_TRUE(m.setNet(2, DriveMemory::Origin::NetAtr, "tnfs.example.org", "/juegos/ARCADE.ATR", "ARCADE.ATR"));
+    return m;
+}
+
 }  // namespace
 
 void setUp(void)
@@ -274,7 +329,7 @@ static void test_a_save_after_the_last_sequence_is_refused(void)
 
 // menu-cinta T3 (AC5): a card written by the firmware before menu-cinta (version 1 slots) keeps
 // its drives; the next saves write version 2, with the tape, at the new size.
-static void test_a_version_1_card_is_read_and_the_next_saves_write_version_2(void)
+static void test_a_version_1_card_is_read_and_the_next_saves_write_version_2(void)  // now version 3
 {
     std::vector<uint8_t> old(codec::kSlotSizeV1, 0);
     const uint32_t magic = codec::kMagic;
@@ -313,10 +368,96 @@ static void test_a_version_1_card_is_read_and_the_next_saves_write_version_2(voi
     TEST_ASSERT_EQUAL_UINT64(codec::kSlotSize, std::filesystem::file_size(path_of(SlotFileStore::kSlotB)));
 }
 
+static void test_a_version_2_card_moves_to_version_3_and_keeps_its_slot(void)
+{
+    writeVersionTwo(SlotFileStore::kSlotA, versionTwoMemory(), 4);
+    SlotFileStore store{kDir};
+    const SlotFileStore::LoadResult& loaded = store.load();
+    TEST_ASSERT_EQUAL(Status::Loaded, loaded.status);
+    TEST_ASSERT_TRUE(loaded.memory == versionTwoMemory());  // D1..D8 and C: as written
+    TEST_ASSERT_EQUAL_UINT32(4, loaded.seq);
+
+    TEST_ASSERT_TRUE(store.save(withNetworkDrive()).ok);  // slot B, version 3, seq 5
+    TEST_ASSERT_EQUAL_UINT64(codec::kSlotSizeV2, std::filesystem::file_size(path_of(SlotFileStore::kSlotA)));
+    TEST_ASSERT_EQUAL_UINT64(codec::kSlotSize, std::filesystem::file_size(path_of(SlotFileStore::kSlotB)));
+    const SlotFileStore::LoadResult newest = reload();  // slots of two sizes: the higher sequence wins
+    TEST_ASSERT_EQUAL(Status::Loaded, newest.status);
+    TEST_ASSERT_EQUAL_UINT32(5, newest.seq);
+    TEST_ASSERT_TRUE(newest.memory == withNetworkDrive());
+    rb::host::DriveMemorySlot stillThere{};
+    TEST_ASSERT_TRUE(readAsVersionTwo(SlotFileStore::kSlotA, stillThere));  // the version 2 slot is still valid
+}
+
+static void test_a_damaged_version_3_slot_falls_back_to_the_version_2_one(void)
+{
+    writeVersionTwo(SlotFileStore::kSlotA, versionTwoMemory(), 4);
+    {
+        SlotFileStore store{kDir};
+        (void)store.load();
+        TEST_ASSERT_TRUE(store.save(withNetworkDrive()).ok);  // slot B, seq 5
+    }
+    // A bad CRC: one byte of a network field changed.
+    std::vector<uint8_t> b(codec::kSlotSize);
+    std::FILE* file = std::fopen(path_of(SlotFileStore::kSlotB).c_str(), "r+b");
+    TEST_ASSERT_NOT_NULL(file);
+    TEST_ASSERT_EQUAL_size_t(b.size(), std::fread(b.data(), 1, b.size(), file));
+    b[codec::kNetOffset + codec::kNetField + 3] ^= 0x01;
+    TEST_ASSERT_EQUAL_INT(0, std::fseek(file, 0, SEEK_SET));
+    TEST_ASSERT_EQUAL_size_t(b.size(), std::fwrite(b.data(), 1, b.size(), file));
+    std::fclose(file);
+    SlotFileStore::LoadResult back = reload();
+    TEST_ASSERT_EQUAL(Status::Loaded, back.status);
+    TEST_ASSERT_EQUAL_UINT32(4, back.seq);
+    TEST_ASSERT_TRUE(back.memory == versionTwoMemory());
+
+    cut(SlotFileStore::kSlotB, codec::kSlotSizeV2);  // a cut write the size of a version 2 slot
+    back = reload();
+    TEST_ASSERT_EQUAL_UINT32(4, back.seq);
+    TEST_ASSERT_TRUE(back.memory == versionTwoMemory());
+}
+
+// R5: going back to the firmware of menu-cinta after the first version 3 save.
+static void test_going_back_to_a_version_2_firmware_and_forward_again(void)
+{
+    writeVersionTwo(SlotFileStore::kSlotA, versionTwoMemory(), 4);
+    {
+        SlotFileStore store{kDir};
+        (void)store.load();
+        TEST_ASSERT_TRUE(store.save(withNetworkDrive()).ok);  // slot B, version 3, seq 5
+    }
+    // The old firmware: slot B is no slot for it, so slot A (seq 4) is its newest; it restores the
+    // older assignments, without the network drive.
+    rb::host::DriveMemorySlot a{};
+    rb::host::DriveMemorySlot b{};
+    TEST_ASSERT_TRUE(readAsVersionTwo(SlotFileStore::kSlotA, a));
+    TEST_ASSERT_FALSE(readAsVersionTwo(SlotFileStore::kSlotB, b));
+    TEST_ASSERT_TRUE(a.memory == versionTwoMemory());
+    TEST_ASSERT_EQUAL_STRING("DATOS.ATR", a.memory.name(2));
+    // It saves a change the way it always did: over the slot that is not its newest (B), seq 5.
+    DriveMemory oldSaved = versionTwoMemory();
+    TEST_ASSERT_TRUE(oldSaved.set(3, "OTRO.ATR"));
+    writeVersionTwo(SlotFileStore::kSlotB, oldSaved, 5);
+    TEST_ASSERT_TRUE(readAsVersionTwo(SlotFileStore::kSlotA, a));  // A is still valid for it
+
+    // Forward again: the valid slot with the higher sequence wins, and it is what was saved last.
+    SlotFileStore store{kDir};
+    const SlotFileStore::LoadResult& loaded = store.load();
+    TEST_ASSERT_EQUAL(Status::Loaded, loaded.status);
+    TEST_ASSERT_EQUAL_UINT32(5, loaded.seq);
+    TEST_ASSERT_TRUE(loaded.memory == oldSaved);  // D1..D8 and C: as last saved
+    TEST_ASSERT_TRUE(store.save(withNetworkDrive()).ok);  // and A/B keep alternating: A, seq 6
+    const SlotFileStore::LoadResult after = reload();
+    TEST_ASSERT_EQUAL_UINT32(6, after.seq);
+    TEST_ASSERT_EQUAL_UINT64(codec::kSlotSize, std::filesystem::file_size(path_of(SlotFileStore::kSlotA)));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_a_version_1_card_is_read_and_the_next_saves_write_version_2);
+    RUN_TEST(test_a_version_2_card_moves_to_version_3_and_keeps_its_slot);
+    RUN_TEST(test_a_damaged_version_3_slot_falls_back_to_the_version_2_one);
+    RUN_TEST(test_going_back_to_a_version_2_firmware_and_forward_again);
     RUN_TEST(test_a_save_is_refused_while_a_slot_cannot_be_read);
     RUN_TEST(test_a_save_after_the_last_sequence_is_refused);
     RUN_TEST(test_a_valid_slot_with_an_extra_byte_is_ignored);

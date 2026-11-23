@@ -32,7 +32,7 @@ en la microSD no se borra nada (lo que sobre se renombra a `.off`); un solo `ret
 
 | Dato | Valor |
 |---|---|
-| Firmware | *(SHA de la cabeza del PR #85 en el momento del banco; hoy `cbd144c`)* |
+| Firmware | *(SHA del commit cuyo paquete se flashea; se anota al descargar el ZIP)* |
 | ZIP | `retrobridge-fw-menu-sio-fujinet-atari-v1x-<sha7>`, ejecución de CI *(número)* |
 | SHA-256 del ZIP | *(calcular tras descargar)* |
 | Comprobaciones del paquete | *(n OK; entre ellas «sin nvs_*» y la pila de `app_main` y `rb_drive_save`)* |
@@ -48,9 +48,13 @@ Antes de descargar: CI de esa cabeza en verde en los cuatro trabajos (host, laye
 3. [H] SHA-256 de la NVS después: igual al de antes.
 4. [H] microSD: `international_karate.cas` en la raíz (ya está desde `cassette-cas`); crear `mala.cas`
    (paso D, ver AC6). Las `.ATR` y `.XEX` de siempre siguen ahí.
-5. [H] Reconectar el SIO. Comprobar el aislamiento del pin 10 como en la demo E2: con el USB conectado y el
-   65XE encendido, la consola debe leer ~0 mV en «SIO +5V (pin 10)». Si lee ~4800 mV, el pin 10 no está aislado:
-   se anota como desviación, no se para el banco.
+5. [H] **Aislamiento del pin 10, sin alimentación** (montaje de la demo T7b, plan `menu-sio-wifi-tnfs` §6).
+   Con el 65XE apagado y el USB desconectado: el multímetro da **circuito abierto** entre el pin 10 del lado del
+   65XE y J1 pin 10 de la FujiNet, y **continuidad** en GND (pin 4 o 6). Si no da circuito abierto, **se para el
+   banco**: no se enciende nada con USB y SIO a la vez hasta resolverlo.
+6. [H] Reconectar el SIO con el cable aislado. Segunda comprobación, ya con tensión: con el USB conectado y el
+   65XE encendido, la consola debe leer ~0 mV en «SIO +5V (pin 10)». Si lee ~4800 mV, **se para**: desconectar
+   el USB, apagar el 65XE y revisar el montaje.
 
 **Primera vez con la ranura v2 (riesgo R4 del plan):** la memoria de unidades se guarda ahora en formato v2,
 con `C:`. Volver después a un firmware anterior deja D1–D8 vacías. No se pierde ningún archivo de la microSD.
@@ -90,7 +94,8 @@ lo que **no** debe aparecer.
 | **AC3a** | Lista abierta | letra de la cinta, luego `1` | `UNA CINTA VA EN C:`; ninguna unidad cambia | ningún `menu_mount` | |
 | **AC3b** | Lista abierta | letra de una `.ATR`, luego `C` | `UN DISCO NO VA EN C:`; `C:` sin cambio | ningún `menu_mount` | |
 | **AC4** | Cinta en `C:` | `U`, luego `C` | Tras `U`: `DESMONTAR: PULSA 1-8 O C, ESC CANCELA`; tras `C`: línea `C: SIN CINTA` | — | |
-| **AC5** | Volver a montar la cinta (AC2). **Desconectar el USB**: FujiNet solo por SIO | Apagar el 65XE, esperar 5 s, encenderlo | El menú arranca y sigue mostrando `C: INTERNATIONAL_KARATE.CAS`; D1–D8 iguales | — (sin USB no hay consola) | |
+| **AC5-USB** | Volver a montar la cinta (AC2). USB conectado, pin 10 aislado | Apagar el 65XE; pulsar el reset de la FujiNet; esperar `D1 ready`; encender el 65XE | El menú sigue mostrando `C: INTERNATIONAL_KARATE.CAS`; D1–D8 iguales | `unidades restauradas …`; `D1 ready at …` | |
+| **AC5** | *(bloqueado, ver abajo)* FujiNet solo por SIO, USB desconectado | Apagar el 65XE, esperar 5 s, encenderlo | Igual que AC5-USB | — (sin USB no hay consola) | |
 | **AC6** | `mala.cas` en la raíz (paso D) y la cinta buena en `C:` | letra de `MALA.CAS`, luego `C` | `CINTA NO VALIDA`; `C:` sigue mostrando la cinta anterior | — | |
 | **AC7** | Cinta en `C:`, sin START | Encender el 65XE con el USB conectado | El menú sale en D1 como siempre | `D1 ready at N ms` con **N ≤ 280 ms** (hoy ~230 + 50) | |
 | **AC7b** | Igual | Fuente 1: una `.ATR` a D1, `A` | El juego ATR corre | `menu_mount …` | |
@@ -102,8 +107,17 @@ lo que **no** debe aparecer.
 guardado como `mala.cas`. No empieza con un bloque `FUJI`, así que la casetera la rechaza. Al terminar el banco se
 renombra a `mala.cas.off`; no se borra.
 
-**AC5 sin USB:** el resultado es solo [P]. Un arranque posterior con USB no prueba AC5: repite la restauración
-con otra alimentación.
+**AC5 está bloqueado por T1a y T1b.** AC5 pide la FujiNet alimentada solo por el pin 10. El plan
+`menu-sio-wifi-tnfs` (§8, T8 y «Orden») no permite ese montaje hasta que T1a y T1b confirmen media y pico ≤ 50 mA
+en cada fase. Hoy no hay registro de T1a ni de T1b en `02-DOCS/raw/`. Por eso:
+- el banco hace **AC5-USB**, que prueba la restauración de `C:` tras un reinicio de la FujiNet, pero **no** cumple
+  AC5;
+- AC5 queda pendiente hasta que se cumpla una de estas dos condiciones:
+  1. T1a y T1b están confirmados, con su registro;
+  2. el responsable da una autorización escrita para un ensayo limitado solo por SIO, y esa autorización se copia
+     aquí con su fecha.
+- Un ensayo limitado **no aprueba** la alimentación solo por SIO. Su resultado es solo [P]; un arranque posterior
+  con USB no lo prueba, porque repite la restauración con otra alimentación.
 
 ## 5. Cierre del ensayo
 
@@ -120,4 +134,4 @@ con otra alimentación.
 ## 7. Veredicto
 
 *(rellenar: T8 cumplida solo si AC1–AC8 tienen ✅ con su fuente, la NVS no cambió y el registro dice
-`brownout=0`, `panic=0`)*
+`brownout=0`, `panic=0`. Con AC5 bloqueado, el veredicto es «T8 parcial: AC5 pendiente de T1a/T1b»)*

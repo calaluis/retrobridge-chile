@@ -161,7 +161,8 @@ en serie**; la base la controla el PIA (CA2) por R91 (2k7; legible en la copia d
 **Tensión prevista, no medida:**
 - Con el motor encendido: **≈ 4,7–4,9 V** en el pin 8 (5 V menos la saturación de Q7, con la carga de R2 o de la
   casetera) [T]. Es una **previsión a partir de un esquema de terceros, no una medición** [P].
-- Sin resistencia en serie, la corriente disponible depende de Q7 y no está limitada por el circuito [T][I].
+- No hay resistencia en serie ni limitador dedicado para IO36: la corriente disponible depende de Q7 y de la carga
+  conectada [T][I].
 - Con el motor apagado, Q7 queda abierto y el nivel lo fija la carga del periférico (R2 en la FujiNet) [I].
 - La carga del lado del casete no limita esa tensión. En la XC12, el pin 8 entra por R3 (27 k) a la base del
   transistor que conmuta el motor **y además alimenta la electrónica de la casetera** (ver «Ampliación del

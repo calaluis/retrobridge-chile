@@ -51,6 +51,30 @@ El archivo creado tiene fecha 1980-01-01: el ESP32 no tiene hora; no afecta al m
   pruebas de host; en el equipo harían falta una red apagada, una clave mala o un archivo mal formado.
 - Fallo de escritura de `E` (`NO SE PUDO GUARDAR EL ARCHIVO`): cubierto por las pruebas de host.
 
+## 4b. Revisión de código de T5 y segunda prueba (87e6b0c)
+
+Tres rondas de revisión externa sobre T5 encontraron y se corrigieron:
+
+| Commit | Hallazgo | Corrección |
+|---|---|---|
+| `e5e7122` | FAT de ESP-IDF (`f_rename`) no sobrescribe: el segundo guardado con `E` fallaba en la FujiNet | Reemplazo sin sobrescribir; `recoverSourcesFile()` al arrancar |
+| `e5e7122` | Tras perder el enlace, el menú daba la red por disponible 5 s | `Connecting` se publica al caer el enlace |
+| `e5e7122` | Se aceptaba una tercera línea en `retrobridge-wifi.txt` | `WifiConfig` en `rb_menu`, con `test_wifi_config` |
+| `a081114` | Un renombrado fallido podía borrar el archivo y su `.tmp`; un `.tmp` cortado podía darse por bueno | `.tmp` → archivo a `.bak` → `.tmp` a su nombre → borrar `.bak`; al arrancar nunca se confía en un `.tmp` |
+| `a081114` | Red de 32 bytes o clave de 63 con CRLF rechazadas | El CR se retiene hasta saber si es fin de línea |
+| `87e6b0c` | Reintentar `E` con solo el `.bak` presente perdía las demás fuentes | Antes de guardar se restaura el `.bak`; si no se puede, no se guarda |
+
+Paquete `retrobridge-fw-menu-sio-fujinet-atari-v1x-87e6b0c`, CI `45086140242` verde, SHA-256 del ZIP
+`da07a50881549258a127cc651f7b0fed0ab32c3c5fa494cba436cf47b6dd8333`, 36 comprobaciones OK.
+[H] 3 de 3 regiones verificadas; NVS `d8a04e88…` sin cambios.
+
+| Paso | Acción | Resultado |
+|---|---|---|
+| 1 | `E` en la fila vacía, `prueba.cl` | ✅ [P] `GUARDADA COMO FUENTE 3` |
+| 2 | `E` en la fuente 3, `prueba2.cl` (segundo guardado sobre un archivo existente) | ✅ [P] `FUENTE 3 GUARDADA` |
+| 3 | Apagar y encender | ✅ [P] fuente 2 `tnfs.calaluis.cl`, fuente 3 `prueba2.cl` |
+| 4 | `E` en la fuente 3 con el campo vacío | ✅ [P] `FUENTE 3 BORRADA` |
+
 ## 5. Pendiente
 
 - Corrección del tiempo de arranque de D1 (230 ms con el cargador TNFS).

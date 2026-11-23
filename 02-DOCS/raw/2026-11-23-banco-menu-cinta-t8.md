@@ -116,6 +116,15 @@ en cada fase. Hoy no hay registro de T1a ni de T1b en `02-DOCS/raw/`. Por eso:
   1. T1a y T1b están confirmados, con su registro;
   2. el responsable da una autorización escrita para un ensayo limitado solo por SIO, y esa autorización se copia
      aquí con su fecha.
+- **Cambio de montaje, solo con AC5 autorizado.** El cable de AC5-USB tiene el pin 10 aislado: sin USB, la FujiNet
+  queda sin alimentación, así que AC5 no puede hacerse con él. Pasos:
+  1. Apagar el 65XE y desconectar el USB. Los dos equipos quedan sin tensión.
+  2. Cambiar al cable SIO con el pin 10 conectado. [H] El multímetro da continuidad entre el pin 10 del lado del
+     65XE y J1 pin 10, y también en GND.
+  3. Con el USB desconectado, encender el 65XE y hacer AC5.
+  4. **Para volver a un ensayo con USB:** apagar todo, poner otra vez el cable aislado y repetir el paso 5 de §2
+     (circuito abierto en el pin 10, sin tensión) antes de conectar el USB. Nunca conectar el USB con el pin 10
+     conectado.
 - Un ensayo limitado **no aprueba** la alimentación solo por SIO. Su resultado es solo [P]; un arranque posterior
   con USB no lo prueba, porque repite la restauración con otra alimentación.
 

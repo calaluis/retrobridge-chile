@@ -1,0 +1,123 @@
+# Banco T8 de menu-cinta: AC1–AC8 en el 65XE (guion, 2026-11-23)
+
+> Estado: **guion listo, banco sin hacer.** Este archivo se rellena durante el ensayo: cada fila lleva ✅ o ❌
+> y su fuente. Nada aquí está comprobado todavía.
+> Alcance: AC1–AC8 de `02-DOCS/wiki/sdd/specs/menu-cinta.md`. AC9–AC12 son T9 (tras M3a y H4, PR aparte).
+
+**Convención:**
+- **[H]** hecho comprobado en el equipo;
+- **[C]** comprobado en la consola USB (COM3, MAC enmascarada; la clave nunca aparece);
+- **[P]** comprobado en la pantalla del Atari por el dueño del equipo.
+
+**Lo que este banco NO prueba:** que una cinta cargue. El paquete tiene `kTapeOutput = false`: la casetera nunca
+toma DATA IN. Cargar una cinta es AC9 (T9).
+
+## 0. Aprobaciones, una por paso
+
+Cada paso pide su propio «sí». Un «sí» no cubre el siguiente.
+
+| Paso | Qué se pide | Aviso |
+|---|---|---|
+| A | Descargar el ZIP `menu-sio` de la ejecución de CI de la cabeza del PR #85 | Se da nombre, ejecución y tamaño antes |
+| B | Leer la NVS (0x9000, 0x6000) en memoria, solo su SHA-256 | Abrir COM3 puede **reiniciar el ESP32** |
+| C | Flashear 0x1000, 0x8000 y 0x10000 con `verify_flash` | **SIO desconectado** del 65XE |
+| D | Crear `mala.cas` en la raíz de la microSD (AC6) | Archivo nuevo; no se borra nada |
+| E | Abrir COM3 para leer la consola durante el ensayo | Puede reiniciar el ESP32 |
+
+Reglas que siguen valiendo: no borrar la NVS ni mostrar su contenido; no abrir `retrobridge-wifi.txt`;
+en la microSD no se borra nada (lo que sobre se renombra a `.off`); un solo `retrobridge_host` por hub NetSIO
+(aquí no se usa el host).
+
+## 1. Paquete
+
+| Dato | Valor |
+|---|---|
+| Firmware | *(SHA de la cabeza del PR #85 en el momento del banco; hoy `cbd144c`)* |
+| ZIP | `retrobridge-fw-menu-sio-fujinet-atari-v1x-<sha7>`, ejecución de CI *(número)* |
+| SHA-256 del ZIP | *(calcular tras descargar)* |
+| Comprobaciones del paquete | *(n OK; entre ellas «sin nvs_*» y la pila de `app_main` y `rb_drive_save`)* |
+| Tamaño de la app | *(B de 4 MB)* |
+
+Antes de descargar: CI de esa cabeza en verde en los cuatro trabajos (host, layering, `menu-sio`, build ESP-IDF).
+
+## 2. Instalación
+
+1. [H] SHA-256 de la NVS antes del flasheo. Valor esperado, el de los bancos anteriores:
+   `d8a04e883160efe379c45f9b317884c043eedd81f710366f818bd2b1d7a55c1d`.
+2. [H] SIO desconectado. `write_flash` y `verify_flash` en las tres regiones: 3 de 3 «verify OK».
+3. [H] SHA-256 de la NVS después: igual al de antes.
+4. [H] microSD: `international_karate.cas` en la raíz (ya está desde `cassette-cas`); crear `mala.cas`
+   (paso D, ver AC6). Las `.ATR` y `.XEX` de siempre siguen ahí.
+5. [H] Reconectar el SIO. Comprobar el aislamiento del pin 10 como en la demo E2: con el USB conectado y el
+   65XE encendido, la consola debe leer ~0 mV en «SIO +5V (pin 10)». Si lee ~4800 mV, el pin 10 no está aislado:
+   se anota como desviación, no se para el banco.
+
+**Primera vez con la ranura v2 (riesgo R4 del plan):** la memoria de unidades se guarda ahora en formato v2,
+con `C:`. Volver después a un firmware anterior deja D1–D8 vacías. No se pierde ningún archivo de la microSD.
+
+## 3. Arranque: lo que la consola debe mostrar [C]
+
+En este orden, tras encender con el USB conectado:
+
+```text
+D1 ready at <N> ms (before the microSD and the catalog)
+catalog: <n> image(s) on the microSD root
+PSRAM libre antes de la casetera: <B> B (bloque mayor <B> B)
+PSRAM libre despues de la casetera: <B> B (bloque mayor <B> B); RAM interna libre <B> B
+cas: listo (puertas cerradas)
+cas: deck en el menu (puertas cerradas)
+cas: sin M3a/H4, la cinta no se reproduce; DATA IN queda para el disco
+unidades restauradas a <t> ms (...); guardado activo
+```
+
+Se anotan: `N` de «D1 ready», la PSRAM antes y después, y el bloque mayor.
+
+**Nunca debe aparecer:** `DATA IN: cambio`, `uart_driver_delete`, `cas: no arranca`, `cas: sin memoria`,
+`panic`, `Guru Meditation`.
+
+## 4. Casos
+
+Las teclas se pulsan en el 65XE con el menú en pantalla. La línea de mensajes es la última del menú.
+**Límite de la consola:** los eventos `menu_open`, `menu_select` y `menu_restore` (todas las líneas
+`C: name=…`) salen en nivel DEBUG y este paquete no los imprime. Solo salen `menu_mount`, `menu_tnfs`,
+`menu_fetch` y `menu_source_rejected`. Por eso AC1–AC6 se prueban en pantalla [P]; la columna de consola dice
+lo que **no** debe aparecer.
+
+| AC | Montaje | Teclas | Pantalla esperada [P] | Consola esperada [C] | Resultado |
+|---|---|---|---|---|---|
+| **AC1** | microSD con `international_karate.cas` | `1` (fuente 1, microSD) | La lista muestra `INTERNATIONAL_KARATE.CAS` con su letra, junto a las `.ATR` y `.XEX` | — | |
+| **AC2** | Lista de la fuente 1 abierta | letra de la cinta, luego `C` | Principal: `C: INTERNATIONAL_KARATE.CAS` (o recortado); mensaje `CINTA EN C:, AUN NO PUEDE CARGARSE`; D1–D8 sin cambio | ningún `menu_mount` (D1–D8 no cambian) | |
+| **AC3a** | Lista abierta | letra de la cinta, luego `1` | `UNA CINTA VA EN C:`; ninguna unidad cambia | ningún `menu_mount` | |
+| **AC3b** | Lista abierta | letra de una `.ATR`, luego `C` | `UN DISCO NO VA EN C:`; `C:` sin cambio | ningún `menu_mount` | |
+| **AC4** | Cinta en `C:` | `U`, luego `C` | Tras `U`: `DESMONTAR: PULSA 1-8 O C, ESC CANCELA`; tras `C`: línea `C: SIN CINTA` | — | |
+| **AC5** | Volver a montar la cinta (AC2). **Desconectar el USB**: FujiNet solo por SIO | Apagar el 65XE, esperar 5 s, encenderlo | El menú arranca y sigue mostrando `C: INTERNATIONAL_KARATE.CAS`; D1–D8 iguales | — (sin USB no hay consola) | |
+| **AC6** | `mala.cas` en la raíz (paso D) y la cinta buena en `C:` | letra de `MALA.CAS`, luego `C` | `CINTA NO VALIDA`; `C:` sigue mostrando la cinta anterior | — | |
+| **AC7** | Cinta en `C:`, sin START | Encender el 65XE con el USB conectado | El menú sale en D1 como siempre | `D1 ready at N ms` con **N ≤ 280 ms** (hoy ~230 + 50) | |
+| **AC7b** | Igual | Fuente 1: una `.ATR` a D1, `A` | El juego ATR corre | `menu_mount …` | |
+| **AC7c** | Igual | Fuente 1: una `.XEX` a D1, `A` | El programa corre | `menu_mount …` | |
+| **AC7d** | Igual, Wi-Fi ya conectado | Fuente 2 (TNFS): una `.ATR` a D1, `A` | El juego corre | `Wi-Fi connected in … ms`, `sources: 1 TNFS server(s)` | |
+| **AC8** | Todo el ensayo | — | AC2 dijo `AUN NO PUEDE CARGARSE` | `cas: sin M3a/H4 …` al arrancar; **ninguna** línea `DATA IN: cambio` en todo el ensayo; ningún `uart_driver_delete` | |
+
+**Cómo crear `mala.cas` (paso D):** un archivo de texto con una línea cualquiera, por ejemplo `NO ES UNA CINTA`,
+guardado como `mala.cas`. No empieza con un bloque `FUJI`, así que la casetera la rechaza. Al terminar el banco se
+renombra a `mala.cas.off`; no se borra.
+
+**AC5 sin USB:** el resultado es solo [P]. Un arranque posterior con USB no prueba AC5: repite la restauración
+con otra alimentación.
+
+## 5. Cierre del ensayo
+
+1. [C] Consola: `sio arranques`. Debe dar `brownout=0` y `panic=0`. Se copian las dos líneas del último registro
+   (`version=… listo_ms=… primera_trama_ms=…`).
+2. [C] El `listo_ms` del registro también ≤ 280 ms (AC7).
+3. [H] Renombrar `mala.cas` a `mala.cas.off` en la microSD.
+4. Rellenar las tablas de §1 y §4 y la sección siguiente.
+
+## 6. Desviaciones del montaje previsto
+
+*(rellenar: pin 10, cambios de orden, repeticiones)*
+
+## 7. Veredicto
+
+*(rellenar: T8 cumplida solo si AC1–AC8 tienen ✅ con su fuente, la NVS no cambió y el registro dice
+`brownout=0`, `panic=0`)*

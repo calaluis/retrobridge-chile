@@ -1,10 +1,7 @@
 #include "rb/menu/menu_sources.hpp"
 
+#include <cerrno>
 #include <cstring>
-
-#if defined(_WIN32)
-#include <windows.h>
-#endif
 
 namespace rb::host {
 
@@ -50,13 +47,52 @@ bool validIpv4(const char* text, std::size_t length) noexcept
     return parts == 4;
 }
 
-bool replaceFile(const char* from, const char* to) noexcept
+int defaultRename(const char* from, const char* to) { return std::rename(from, to); }
+
+bool exists(const char* path) noexcept
 {
-#if defined(_WIN32)
-    return MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-#else
-    return std::rename(from, to) == 0;
-#endif
+    std::FILE* file = std::fopen(path, "rb");
+    if (file == nullptr) {
+        return false;
+    }
+    std::fclose(file);
+    return true;
+}
+
+bool withSuffix(char (&out)[512], const char* path, const char* suffix) noexcept
+{
+    return std::snprintf(out, sizeof out, "%s%s", path, suffix) < static_cast<int>(sizeof out);
+}
+
+}  // namespace
+
+int (*sourcesFileRename)(const char* from, const char* to) = defaultRename;
+
+namespace {
+
+// `tmp` (complete) becomes `path`. FAT on ESP-IDF (f_rename) and std::rename on Windows refuse a
+// target that exists, so the old file is first renamed to `backup`: at every moment one whole
+// copy has a name. If the last rename fails, the old file goes back. The PC takes the same path,
+// so the host tests run what the FujiNet runs.
+bool replaceFile(const char* tmp, const char* path, const char* backup) noexcept
+{
+    const bool hadOld = exists(path);
+    if (hadOld) {
+        std::remove(backup);  // a stale one from an old cut
+        if (sourcesFileRename(path, backup) != 0) {
+            return false;  // nothing changed
+        }
+    }
+    if (sourcesFileRename(tmp, path) == 0) {
+        if (hadOld) {
+            std::remove(backup);
+        }
+        return true;
+    }
+    if (hadOld) {
+        (void)sourcesFileRename(backup, path);  // the old file keeps its name
+    }
+    return false;
 }
 
 }  // namespace
@@ -190,23 +226,60 @@ bool MenuSources::validServer(const char* text) noexcept
     return true;
 }
 
+SourcesRecovery recoverSourcesFile(const char* path) noexcept
+{
+    char temporary[512];
+    char backup[512];
+    if (!withSuffix(temporary, path, ".tmp") || !withSuffix(backup, path, ".bak")) {
+        return SourcesRecovery::Nothing;
+    }
+    const bool hasTmp = exists(temporary);
+    const bool hasBackup = exists(backup);
+    if (!hasTmp && !hasBackup) {
+        return SourcesRecovery::Nothing;
+    }
+    // A .tmp is never trusted: nothing tells a complete one from a cut one.
+    std::remove(temporary);
+    if (exists(path)) {
+        std::remove(backup);  // `path` is whole (the old text, or the new one before the .bak went)
+        return SourcesRecovery::Discarded;
+    }
+    if (hasBackup) {
+        // Cut between moving the old file aside and naming the new one: the old one comes back.
+        return sourcesFileRename(backup, path) == 0 ? SourcesRecovery::Restored : SourcesRecovery::Failed;
+    }
+    return SourcesRecovery::Discarded;  // a first save cut short: there was no file before
+}
+
 bool writeSourcesFile(const char* path, std::size_t index, const char* name, char* error,
                       std::size_t errorSize) noexcept
 {
     char temporary[512];
-    if (std::snprintf(temporary, sizeof temporary, "%s.tmp", path) >= static_cast<int>(sizeof temporary)) {
+    char backup[512];
+    if (!withSuffix(temporary, path, ".tmp") || !withSuffix(backup, path, ".bak")) {
         std::snprintf(error, errorSize, "path too long");
         return false;
     }
-    // "r+b" also proves the file can be written: a read-only file stops here.
+    // A .bak with no file is the last whole text, left by a save whose renames both failed:
+    // it comes back before anything is read, or nothing is saved (an empty read would drop
+    // the other sources).
+    if (!exists(path) && exists(backup) && sourcesFileRename(backup, path) != 0) {
+        std::snprintf(error, errorSize, "cannot restore %s", backup);
+        return false;
+    }
+    // "r+b" also proves the file can be written: a read-only file stops here. A file that
+    // does not exist reads as an empty one, so the first source saved creates it (T5, C6).
+    errno = 0;
     std::FILE* in = std::fopen(path, "r+b");
-    if (in == nullptr) {
+    if (in == nullptr && errno != ENOENT) {
         std::snprintf(error, errorSize, "cannot open %s for writing", path);
         return false;
     }
     std::FILE* out = std::fopen(temporary, "wb");
     if (out == nullptr) {
-        std::fclose(in);
+        if (in != nullptr) {
+            std::fclose(in);
+        }
         std::snprintf(error, errorSize, "cannot create %s", temporary);
         return false;
     }
@@ -217,7 +290,7 @@ bool writeSourcesFile(const char* path, std::size_t index, const char* name, cha
     bool skipping = false;  // the rest of the replaced line is dropped
     std::size_t sources = 0;
     char line[256];
-    while (ok && std::fgets(line, sizeof line, in) != nullptr) {
+    while (ok && in != nullptr && std::fgets(line, sizeof line, in) != nullptr) {
         const std::size_t length = std::strlen(line);
         const bool complete = length > 0 && line[length - 1] == '\n';
         if (lineStart) {
@@ -234,7 +307,7 @@ bool writeSourcesFile(const char* path, std::size_t index, const char* name, cha
         lineStart = complete;
         endsWithNewline = complete;
     }
-    ok = ok && std::ferror(in) == 0;
+    ok = ok && (in == nullptr || std::ferror(in) == 0);
     if (ok && !written) {
         if (sources != index || name == nullptr) {
             ok = false;
@@ -246,9 +319,11 @@ bool writeSourcesFile(const char* path, std::size_t index, const char* name, cha
     } else if (!ok) {
         std::snprintf(error, errorSize, "read or write error");
     }
-    std::fclose(in);
+    if (in != nullptr) {
+        std::fclose(in);
+    }
     ok = std::fclose(out) == 0 && ok;
-    if (ok && !replaceFile(temporary, path)) {
+    if (ok && !replaceFile(temporary, path, backup)) {
         std::snprintf(error, errorSize, "cannot replace %s", path);
         ok = false;
     }

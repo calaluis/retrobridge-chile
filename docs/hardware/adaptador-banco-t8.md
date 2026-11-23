@@ -1,5 +1,9 @@
 # Adaptador SIO reversible para el banco T8 de menu-cinta: pin 8 abierto y pin 10 con puente
 
+> **DESCARTADA por el responsable el 2026-11-23:** la FujiNet comercial se usa tal como viene, sin adaptador
+> («No hay nada que construir físicamente…»). Se conserva como referencia (por ejemplo, para T1b). Ver la aceptación
+> del montaje en `02-DOCS/raw/2026-11-23-banco-menu-cinta-t8.md` §2.
+>
 > **PROPUESTA NO APROBADA.** Especificación documental para revisión del responsable. **No autoriza** a fabricar,
 > modificar cables, conectar, energizar, flashear ni abrir COM3. Mientras no se apruebe:
 > - **M3a sigue pendiente** y la mitigación C (`mitigacion-c-motor-pin8.md`) **no está aprobada**;

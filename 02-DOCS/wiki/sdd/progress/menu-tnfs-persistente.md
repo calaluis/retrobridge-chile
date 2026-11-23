@@ -141,6 +141,42 @@ aprobar).
   error en la respuesta del montaje (`collect`), que el banco no puede provocar; usa la misma clasificación.
   `test_menu_tnfs_restaura` 12/12; host 94/94 tres veces.
 
+## T7 — cancelación por el usuario (AC6, 2026-11-23)
+
+- `dropRestore(n)`: cuando el usuario monta o asigna otra imagen en una unidad recordada, o la vacía, la unidad
+  sale de la cola. Si su trabajo corre, se cancela en el loader. Así su resultado tardío no se consulta más. Va en
+  `collect()` (montaje o desmontaje aplicado en D2..D8), `assignD1()` y `place()` (D1).
+- `emptyDrive()` sobre una unidad recordada (`CARGANDO` o con fallo): queda vacía al instante, dice
+  `Dn DESMONTADA` y guarda una versión nueva. No hay nada montado que desmontar.
+- `pauseRestore()`: un trabajo del usuario (`startJob`) toma el loader. La restauración en curso se cancela y vuelve
+  a `Pendiente`. Cuando el loader queda libre, se pide de nuevo al servidor recordado (plan §2.3).
+- Prueba nueva `test_menu_tnfs_cancela` (6), determinista: un `StepLoader` falso sin hilo, donde la prueba decide
+  cuándo hay resultado. El falso guarda el resultado aunque el trabajo esté cancelado, para que una consulta
+  tardía se vea. Casos:
+  - control: sin tocar, la imagen se monta;
+  - montar `DISCO.ATR` local en D2 `CARGANDO`;
+  - vaciar D2 `CARGANDO`;
+  - vaciar D3 `Pendiente` sin tocar el trabajo de D2;
+  - asignar D1 local mientras D1 carga, y `A` arranca la elección del usuario;
+  - un listado del usuario pausa la restauración y luego vuelve.
+
+  En cada caso se comprueba:
+  - la cancelación del trabajo;
+  - cero consultas tardías;
+  - ninguna ranura ocupada por la imagen tardía;
+  - ninguna versión nueva después de la respuesta tardía;
+  - `snapshot()` con la elección del usuario.
+- Mutaciones, todas detectadas:
+
+  | Mutación | Fallos |
+  | --- | --- |
+  | sin `dropRestore` en `collect` | 1 |
+  | sin él en `emptyDrive` | 1 |
+  | sin él en `assignD1` | 1 |
+  | sin `pauseRestore` | 1 |
+  | `dropRestore` sin cancelar en el loader | 3 |
+- Host: 95/95. `retrobridge_host.exe` compila.
+
 ## Siguiente
 
-T7 tras revisar T6 (cancelación al cambiar o desmontar una unidad en carga; respuesta tardía; AC6).
+T8 (banco físico) necesita autorización. T9 sigue bloqueado.

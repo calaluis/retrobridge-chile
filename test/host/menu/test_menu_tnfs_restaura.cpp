@@ -91,13 +91,33 @@ std::unique_ptr<DriveMemory> snapshotOf(Rig& rig)
     return out;
 }
 
-void assertRemembered(Rig& rig, unsigned drive, const char* path = kLogoPath)
+void assertRemembered(Rig& rig, unsigned drive, const char* path = kLogoPath, const char* name = kLogoName)
 {
     const auto memory = snapshotOf(rig);
     TEST_ASSERT_TRUE(memory->origin(drive) == Origin::NetAtr);
     TEST_ASSERT_EQUAL_STRING("pulgarcito", memory->server(drive));
     TEST_ASSERT_EQUAL_STRING(path, memory->path(drive));
+    TEST_ASSERT_EQUAL_STRING(name, memory->name(drive));
 }
+
+// The controller's repository, failing on purpose when it opens a TNFS slot (a restored image).
+struct FaultyRepository final : rb::app::ImageRepository {
+    explicit FaultyRepository(rb::app::ImageRepository& inner) : inner_(inner) {}
+    std::optional<ErrorCode> failTnfs;
+
+protected:
+    rb::core::Result<rb::domain::ImageByteSource*> doOpen(const rb::app::ImageLocation& location) override
+    {
+        if (failTnfs && std::strncmp(location.c_str(), "*tnfs*", 6) == 0) {
+            return rb::core::Failure{*failTnfs};
+        }
+        return inner_.open(location);
+    }
+    void doClose(rb::domain::ImageByteSource& source) override { inner_.close(&source); }
+
+private:
+    rb::app::ImageRepository& inner_;
+};
 
 bool failedWith(Rig& rig, const char* text) { return rig.events.has(text); }
 
@@ -308,6 +328,41 @@ void test_an_invalid_image_says_invalida_and_is_forgotten()
     TEST_ASSERT_EQUAL_STRING("", rig.mounted(3));
 }
 
+// Review of PR #94: an error while applying a restored image is classified, not taken as
+// INVALIDA. No free slot is NO CABE and an ambiguous error (I/O) NO SE PUDO ABRIR; both keep the
+// drive's server, path and name in snapshot(), with no new version. D2 (mounted) and D1 (assigned).
+void test_no_free_slot_or_an_ambiguous_error_applying_a_restored_image_keeps_the_drive()
+{
+    struct Case {
+        unsigned drive;
+        ErrorCode error;
+        const char* logged;
+        const char* line;
+    };
+    const Case cases[] = {
+        {2, ErrorCode::NoFreeSlot, "D2 net failed: no room", "D2: NO CABE"},
+        {2, ErrorCode::IoError, "D2 net failed: could not open", "D2: NO SE PUDO ABRIR"},
+        {1, ErrorCode::NoFreeSlot, "D1 net failed: no room", "D1: NO CABE"},
+        {1, ErrorCode::IoError, "D1 net failed: could not open", "D1: NO SE PUDO ABRIR"},
+    };
+    for (const Case& c : cases) {
+        Rig rig;
+        HandClock clock;
+        FaultyRepository faulty(*rig.repository);
+        faulty.failTnfs = c.error;
+        rig.controllerRepository = &faulty;
+        powerUp(rig, clock, *logoOn(c.drive));
+        until(rig, [&] { return failedWith(rig, c.logged); });
+        rig.step();
+        const MenuReply after = rig.press(kRedraw);
+        assert_line(after, driveLine(c.drive), c.line);
+        TEST_ASSERT_FALSE(rig.events.has("net failed: invalid"));
+        TEST_ASSERT_FALSE(rig.controller->memoryChanged());
+        assertRemembered(rig, c.drive);
+        awaitSlots(rig.store(), 0);  // the image's slot went back to the loader
+    }
+}
+
 // Plan §3: an ambiguous refusal and an image that does not fit keep the drive remembered.
 void test_an_ambiguous_refusal_and_no_room_keep_the_drive()
 {
@@ -357,6 +412,7 @@ int main(void)
     RUN_TEST(test_a_missing_image_says_falta_and_is_forgotten);
     RUN_TEST(test_an_invalid_image_says_invalida_and_is_forgotten);
     RUN_TEST(test_an_ambiguous_refusal_and_no_room_keep_the_drive);
+    RUN_TEST(test_no_free_slot_or_an_ambiguous_error_applying_a_restored_image_keeps_the_drive);
     RUN_TEST(test_the_restore_asks_the_remembered_server_whatever_source_2_says);
     return UNITY_END();
 }

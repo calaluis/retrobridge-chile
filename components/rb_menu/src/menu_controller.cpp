@@ -117,6 +117,9 @@ const char* reason(ErrorCode error) noexcept
 
 DriveNumber drive(unsigned number) { return DriveNumber::from(static_cast<uint8_t>(number)).value(); }
 
+// menu-tnfs-persistente T6: how a restored image's open or mount error ends (defined below).
+rb::host::NetRestoreQueue::Reason mountReasonOf(ErrorCode error) noexcept;
+
 const char* loaderText(LoaderError error) noexcept
 {
     switch (error) {
@@ -248,7 +251,9 @@ void MenuController::collect()
             recycle(incoming_);  // its source was closed with the reply (ADR-014)
             say(" ERROR: D%u NO CAMBIO", number);
             if (fromNet) {
-                netFailed(number, NetRestoreQueue::Reason::Invalida, reason(*outcome->error));
+                const NetRestoreQueue::Reason why = mountReasonOf(*outcome->error);
+                (void)netQueue_.failed(number, why);
+                netFailed(number, why, reason(*outcome->error));
             }
         } else if (inFlight_ == InFlight::Boot) {
             say(" ERROR: D1 NO SE PUDO MONTAR");
@@ -262,6 +267,7 @@ void MenuController::collect()
                 ++restored_;
             } else if (fromNet) {
                 // T6: what was remembered is what is mounted now: no new version.
+                (void)netQueue_.done(number);
             } else {
                 changed();  // a mount or an unmount the menu asked for: remember it
             }
@@ -1965,6 +1971,28 @@ NetRestoreQueue::Reason netReasonOf(LoaderError error) noexcept
     return NetRestoreQueue::Reason::NoSePudoAbrir;  // ambiguous: never forgets the drive
 }
 
+// An error opening or mounting a restored image (plan §3, review of PR #94): only a disk that
+// is really not valid is INVALIDA, which forgets the drive. No free slot is NO CABE, and every
+// other error (I/O, busy, not found, in use...) is ambiguous: the drive stays remembered.
+NetRestoreQueue::Reason mountReasonOf(ErrorCode error) noexcept
+{
+    switch (error) {
+    case ErrorCode::InvalidAtrHeader:
+    case ErrorCode::UnsupportedSectorSize:
+    case ErrorCode::UnsupportedAtrLayout:
+    case ErrorCode::ImageTooSmall:
+    case ErrorCode::ImageTooLarge:  // more sectors than an ATR can have
+    case ErrorCode::InvalidGeometry:
+    case ErrorCode::InvalidDiskImage:
+        return NetRestoreQueue::Reason::Invalida;
+    case ErrorCode::NoFreeSlot:
+        return NetRestoreQueue::Reason::NoCabe;
+    default:
+        break;
+    }
+    return NetRestoreQueue::Reason::NoSePudoAbrir;
+}
+
 }  // namespace
 
 uint64_t MenuController::nowMs() const noexcept
@@ -2024,8 +2052,7 @@ void MenuController::serviceNetRestore()
                 netQueue_.cancel(number);
                 return;
             }
-            (void)netQueue_.done(number);
-            netRestored(number, status);
+            netRestored(number, status);  // ends the drive in the queue (D2..D8: when applied)
             return;
         case LoaderStatus::Kind::Error: {
             netJob_ = 0;
@@ -2080,17 +2107,23 @@ void MenuController::netRestored(unsigned number, const LoaderStatus& status)
     if (number == 1) {
         if (const auto error = checkImage(location)) {
             recycle(image);
-            netFailed(1, NetRestoreQueue::Reason::Invalida, reason(*error));
+            const NetRestoreQueue::Reason why = mountReasonOf(*error);
+            (void)netQueue_.failed(1, why);
+            netFailed(1, why, reason(*error));
             return;
         }
         shown_[0] = image;  // assigned: A boots it
+        (void)netQueue_.done(1);
     } else {
         const rb::core::Result<rb::app::MountReport> mounted = mount_.execute(drive(number), location);
         if (!mounted.ok()) {
             recycle(image);
-            netFailed(number, NetRestoreQueue::Reason::Invalida, reason(mounted.error()));
+            const NetRestoreQueue::Reason why = mountReasonOf(mounted.error());
+            (void)netQueue_.failed(number, why);
+            netFailed(number, why, reason(mounted.error()));
             return;
         }
+        // Still Loading in the queue until collect() sees the mount applied (or refused).
         previous_ = shown_[number - 1];
         incoming_ = image;
         shown_[number - 1] = image;

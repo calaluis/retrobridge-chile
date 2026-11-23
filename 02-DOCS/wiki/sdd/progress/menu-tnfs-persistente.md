@@ -129,6 +129,17 @@ aprobar).
 - Prueba integrada añadida: un bloque cada 20 s durante 2 min no vence (el porcentaje apenas se mueve; cuentan
   los bytes); 29 s sin datos sigue cargando; 31 s → `SIN RED`, recordada. Mutación: sin `progressed` (1 fallo).
   `test_menu_tnfs_restaura` 11/11 cinco veces seguidas; host 94/94.
+- Revisión de 2e9b677 (bloqueante): los errores al abrir o montar la imagen restaurada se tomaban todos como
+  `INVALIDA`, que olvida la unidad. Ahora `mountReasonOf()` clasifica según el plan §3: ATR realmente inválida
+  (cabecera, tamaño de sector, disposición, muy pequeña, más sectores de los posibles, geometría, disco
+  inválido) → `INVALIDA`; `NoFreeSlot` → `NO CABE`; cualquier otro error (E/S, ocupado, no encontrado, en uso…)
+  → `NO SE PUDO ABRIR`. Solo `INVALIDA` y `FALTA` olvidan. Vale para D1 (`checkImage`), D2..D8 (`mount_.execute`)
+  y la respuesta del montaje (`collect`). La cola marca la unidad `Montada` solo cuando el montaje se aplicó.
+- Prueba nueva: un repositorio que falla a propósito al abrir la ranura restaurada, con `NoFreeSlot` e `IoError`,
+  en D2 y en D1: `NO CABE` / `NO SE PUDO ABRIR`, sin versión nueva, y `snapshot()` conserva servidor, ruta y
+  nombre; la ranura vuelve al loader. Mutación «todo error es INVALIDA»: 1 fallo. **Sin cubrir por prueba:** el
+  error en la respuesta del montaje (`collect`), que el banco no puede provocar; usa la misma clasificación.
+  `test_menu_tnfs_restaura` 12/12; host 94/94 tres veces.
 
 ## Siguiente
 

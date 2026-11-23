@@ -362,6 +362,14 @@ rb_add_host_test(test_menu_tnfs_restaura menu/test_menu_tnfs_restaura.cpp ${rb_r
 target_include_directories(test_menu_tnfs_restaura PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu_tnfs/include ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_menu_tnfs_restaura PRIVATE RB_TEST_MENU_DIR="${CMAKE_CURRENT_BINARY_DIR}/tnfs-restaura-images")
 target_link_libraries(test_menu_tnfs_restaura PRIVATE rb_net_tnfs Threads::Threads)
+# Cancelling a network restore when the user changes or empties the drive (menu-tnfs-persistente T7, AC6).
+rb_add_host_test(test_menu_tnfs_cancela menu/test_menu_tnfs_cancela.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/net_restore_queue.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp
+                 ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
+                 ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/components/rb_menu_tnfs/src/tnfs_loader.cpp ${rb_root}/components/rb_menu/src/xex_image.cpp
+                 ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/sha256.cpp)
+target_include_directories(test_menu_tnfs_cancela PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu_tnfs/include ${rb_root}/components/rb_menu/include)
+target_compile_definitions(test_menu_tnfs_cancela PRIVATE RB_TEST_MENU_DIR="${CMAKE_CURRENT_BINARY_DIR}/tnfs-cancela-images")
+target_link_libraries(test_menu_tnfs_cancela PRIVATE rb_net_tnfs Threads::Threads)
 # menu-cinta T1: .cas files are listed and refused on D1-D8
 rb_add_host_test(test_menu_cinta menu/test_menu_cinta.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/net_restore_queue.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp
                  ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp

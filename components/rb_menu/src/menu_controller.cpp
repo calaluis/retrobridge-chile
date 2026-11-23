@@ -269,6 +269,7 @@ void MenuController::collect()
                 // T6: what was remembered is what is mounted now: no new version.
                 (void)netQueue_.done(number);
             } else {
+                dropRestore(number);  // T7: the user's choice wins over the remembered image
                 changed();  // a mount or an unmount the menu asked for: remember it
             }
         }
@@ -885,6 +886,7 @@ std::optional<ErrorCode> MenuController::assignD1(EntryIndex entry)
         local.entry = entry;
         local.locked = locked;
         recycle(shown_[0]);  // D1 is assigned, not mounted: nothing holds its slot
+        dropRestore(1);      // T7
         shown_[0] = local;
         say(" D1: %s (A ARRANCA)", name);
         changed();
@@ -940,6 +942,16 @@ std::optional<ErrorCode> MenuController::mountOn(unsigned number, EntryIndex ent
 void MenuController::emptyDrive(unsigned number)
 {
     char detail[48];
+    if (remembered(shown_[number - 1])) {
+        // T7 (AC6): nothing is mounted yet; the restore stops and the empty drive is saved.
+        dropRestore(number);
+        shown_[number - 1] = Shown{};
+        say(" D%u DESMONTADA", number);
+        changed();
+        std::snprintf(detail, sizeof detail, "D%u restore dropped: unmounted", number);
+        event("menu_unmount", detail);
+        return;
+    }
     if (shown_[number - 1].kind == Shown::Kind::None) {
         say(" D%u YA ESTA VACIA", number);
         return;
@@ -1523,6 +1535,7 @@ void MenuController::startJob(Job job, unsigned source, const char* path, std::s
         event("menu_tnfs", detail);
         return;
     }
+    pauseRestore();  // T7: before the user's job replaces the restore's in the loader
     job_ = job;
     jobNumber_ = job == Job::Fetch ? loader_->startFetch(source, path, length)
                  : job == Job::Xex ? loader_->startXex(source, path, length)
@@ -2096,6 +2109,36 @@ void MenuController::serviceNetRestore()
     event("menu_restore", detail);
 }
 
+void MenuController::dropRestore(unsigned number) noexcept
+{
+    if (netQueue_.state(number) == NetRestoreQueue::State::None) {
+        return;  // not a remembered network drive, or already dropped
+    }
+    if (netJob_ != 0 && netQueue_.jobOf(number) == netJob_) {
+        loader_->cancel(netJob_);  // the loader drops its late result and frees the slot
+        netJob_ = 0;
+    }
+    netQueue_.cancel(number);
+    char detail[40];
+    std::snprintf(detail, sizeof detail, "D%c net dropped: user", static_cast<char>('0' + number));
+    event("menu_restore", detail);
+}
+
+void MenuController::pauseRestore() noexcept
+{
+    if (netJob_ == 0) {
+        return;
+    }
+    const unsigned number = netQueue_.driveOf(netJob_);
+    loader_->cancel(netJob_);
+    netJob_ = 0;
+    if (number != 0 && netQueue_.requeue(number)) {
+        char detail[40];
+        std::snprintf(detail, sizeof detail, "D%c net paused: user job", static_cast<char>('0' + number));
+        event("menu_restore", detail);
+    }
+}
+
 void MenuController::netRestored(unsigned number, const LoaderStatus& status)
 {
     Shown image = shown_[number - 1];  // keeps its server, path, name and kind of file
@@ -2173,6 +2216,7 @@ void MenuController::place(unsigned number, const Shown& image, const LoaderStat
         error = checkImage(location);
         if (!error) {
             recycle(shown_[0]);
+            dropRestore(1);  // T7
             shown_[0] = image;
             view_ = View::Main;
             say(" D1: %s (A ARRANCA)", image.name);

@@ -313,6 +313,11 @@ private:
     void netFailed(unsigned drive, NetRestoreQueue::Reason why, const char* detail);
     // The drive line of a remembered drive: "CARGANDO <name>", or why it failed.
     const char* netState(unsigned drive) const noexcept;
+    // T7 (AC6): the user put something else on the drive or emptied it. Its restore leaves the
+    // queue and its job, if running, is cancelled: a late result is no longer anyone's.
+    void dropRestore(unsigned drive) noexcept;
+    // T7: a user's job takes the loader; a running restore goes back to the queue (plan §2.3).
+    void pauseRestore() noexcept;
     // nullopt if the image at `location` opens as a disk (D1 is assigned, not mounted).
     std::optional<rb::core::ErrorCode> checkImage(const rb::app::ImageLocation& location);
     Cursor popPosition() noexcept;

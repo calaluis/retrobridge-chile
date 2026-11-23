@@ -166,6 +166,10 @@ microSD, junto a sus `.ATR` y `.XEX`.
 - **suposición tomada** — con M3a/H4 sin aprobar, el menú deja montar la cinta y avisa que no podrá cargarse (AC8);
   no lo impide. *Base:* el responsable aprobó la recomendación el 2026-11-23. *Riesgo:* ninguno sobre el hardware:
   la casetera no toca MOTOR ni DATA IN sin las puertas.
+- **suposición tomada** — `A` arranca D1 o `C:` según las teclas de consola, como el Atari al encenderlo: `A` con
+  OPTION arranca D1 sin BASIC; `A` sola, D1 con BASIC; `A` con START+OPTION, la cinta de `C:`. *Base:* el
+  responsable lo pidió tras el banco T8 (2026-11-23); `A` ya salta al arranque en frío del sistema operativo
+  (`COLDSV`), que lee START y OPTION. *Riesgo:* sin comprobar en el 65XE; se prueba en T9 (requisitos 3–5 del plan).
 - **decisión diferida** — cintas por TNFS.
 - **área no formulable** — cómo convive la línea DATA IN entre disco y cinta si el Atari usa ambos en la misma
   sesión (por ejemplo, un juego de cinta que luego lee disco). Se precisa en el plan con el diseño del traspaso.
@@ -184,3 +188,6 @@ leer archivos .cas».
 - 2026-11-23 — ¿Fuente de las cintas? → solo la microSD (fuente 1) → la casetera ya lee de `/sd/`; TNFS después.
 - 2026-11-23 — ¿Flujo en el Atari? → letra de la cinta, `C` como destino; cargar encendiendo con START (+OPTION en el
   XE) y una tecla → es el arranque de cinta del Atari.
+- 2026-11-23 (tras el banco T8) — ¿Cómo distingue `A` entre D1 y `C:`? → por las teclas de consola: OPTION, D1 sin
+  BASIC; nada, BASIC; START+OPTION, `C:` → el responsable: «son dos dispositivos distintos»; es la misma regla del
+  Atari al encenderlo, sin tecla nueva. Va a T9.

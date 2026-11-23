@@ -224,6 +224,17 @@ Requisitos de código de T9 antes de poner `kTapeOutput = true` (revisión de T7
    reproductor (fin de la última parte de la cinta) sin bloquear el bucle SIO, para que la regla 3 («fin de cinta y
    MOTOR apagado → disco») funcione.
 
+Requisitos de arranque de T9 (observación del responsable tras el banco T8, 2026-11-23). `A` ya salta a `COLDSV`,
+que lee las teclas de consola: con OPTION arranca D1 sin BASIC, sin nada D1 con BASIC, con START+OPTION la cinta.
+
+3. **`A` sin disco en D1.** Hoy `A` sin disco en D1 se niega con `D1 SIN DISCO: ABRE LA FUENTE 1`. Con una cinta en
+   `C:` tiene que dejar arrancar. El menú del Atari no ve START antes de saltar, así que no sabe qué se va a arrancar.
+4. **D1 durante un arranque de cinta.** Tras la cinta, el sistema operativo intenta también el arranque de disco.
+   Si D1 sigue sirviendo el menú, el menú puede cargarse sobre el programa de la cinta. Hay que decidir y probar
+   en el 65XE qué contesta D1 en ese arranque (por ejemplo, «sin disco» cuando D1 está vacía).
+5. **Línea de ayuda.** Nombrar las teclas: `A` y las de consola (OPTION sin BASIC, START+OPTION cinta) y `C`
+   como destino de una cinta, dentro de 40 columnas. Hoy la ayuda no nombra ni la cinta ni la `C`.
+
 Orden: T1, T3 y T4 pueden ir en paralelo; T2 tras T1; T5 tras T2; T6 tras T3 y T5; T7 al final del código.
 Cada tarea de riesgo 2 pide flasheo y banco con aprobación.
 

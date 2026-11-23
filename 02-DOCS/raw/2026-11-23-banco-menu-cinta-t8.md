@@ -1,6 +1,7 @@
 # Banco T8 de menu-cinta: AC1–AC8 en el 65XE (guion, 2026-11-23)
 
-> Estado: **primera sesión hecha el 2026-11-23, T8 parcial** (§7). Cada fila lleva ✅, ❓ o ⏸ y su fuente.
+> Estado: **primera sesión hecha el 2026-11-23, T8 parcial** (§7). Cada fila lleva ✅, 🟡 (parcial), ❓ o ⏸ y
+> su fuente.
 > Alcance: AC1–AC8 de `02-DOCS/wiki/sdd/specs/menu-cinta.md`. AC9–AC12 son T9 (tras M3a y H4, PR aparte).
 
 **Convención:**
@@ -97,19 +98,19 @@ lo que **no** debe aparecer.
 
 | AC | Montaje | Teclas | Pantalla esperada [P] | Consola esperada [C] | Resultado |
 |---|---|---|---|---|---|
-| **AC1** | microSD con `international_karate.cas` | `1` (fuente 1, microSD) | La lista muestra `INTERNATIONAL_KARATE.CAS` con su letra, junto a las `.ATR` y `.XEX` | — || ✅ [P] la cinta se eligió desde la lista de la fuente 1 (AC2 y AC6 lo suponen) |
-| **AC2** | Lista de la fuente 1 abierta | letra de la cinta, luego `C` | Principal: `C: INTERNATIONAL_KARATE.CAS` (o recortado); mensaje `CINTA EN C:, AUN NO PUEDE CARGARSE`; D1–D8 sin cambio | ningún `menu_mount` (D1–D8 no cambian) || ✅ [P] foto: `C: INTERNATIONAL_KARATE.CAS`, D1–D8 `SIN DISCO` sin cambio; [C] ningún `menu_mount`. El mensaje de montaje no quedó en la foto |
-| **AC3a** | Lista abierta | letra de la cinta, luego `1` | `UNA CINTA VA EN C:`; ninguna unidad cambia | ningún `menu_mount` || ✅ [P] el dueño vio `UNA CINTA VA EN C:` |
-| **AC3b** | Lista abierta | letra de una `.ATR`, luego `C` | `UN DISCO NO VA EN C:`; `C:` sin cambio | ningún `menu_mount` || ✅ [P] el dueño vio `UN DISCO NO VA EN C:` |
-| **AC4** | Cinta en `C:` | `U`, luego `C` | Tras `U`: `DESMONTAR: PULSA 1-8 O C, ESC CANCELA`; tras `C`: línea `C: SIN CINTA` | — || ✅ [P] el dueño vio `C: SIN CINTA` |
-| **AC5-USB** | Volver a montar la cinta (AC2). USB conectado, pin 10 aislado | Apagar el 65XE; pulsar el reset de la FujiNet; esperar `D1 ready`; encender el 65XE | El menú sigue mostrando `C: INTERNATIONAL_KARATE.CAS`; D1–D8 iguales | `unidades restauradas …`; `D1 ready at …` || ❓ sin rastro en la consola (un solo arranque); repetir |
-| **AC5** | *(bloqueado, ver abajo)* FujiNet solo por SIO, USB desconectado | Apagar el 65XE, esperar 5 s, encenderlo | Igual que AC5-USB | — (sin USB no hay consola) || ⏸ bloqueado por T1a/T1b |
-| **AC6** | `mala.cas` en la raíz (paso D) y la cinta buena en `C:` | letra de `MALA.CAS`, luego `C` | `CINTA NO VALIDA`; `C:` sigue mostrando la cinta anterior | — || ✅ [P] el dueño: «reconoce archivos .cas válidos e inválidos» |
-| **AC7** | Cinta en `C:`, sin START | Encender el 65XE con el USB conectado | El menú sale en D1 como siempre | `D1 ready at N ms` con **N ≤ 280 ms** (hoy ~230 + 50) || ✅ [C] `D1 ready at 232 ms`; registro `listo_ms=232` |
-| **AC7b** | Igual | Fuente 1: una `.ATR` a D1, `A` | El juego ATR corre | `menu_mount …` || ❓ ningún `menu_mount` en la consola; repetir |
-| **AC7c** | Igual | Fuente 1: una `.XEX` a D1, `A` | El programa corre | `menu_mount …` || ❓ ningún `menu_mount` en la consola; repetir |
-| **AC7d** | Igual, Wi-Fi ya conectado | Fuente 2 (TNFS): una `.ATR` a D1, `A` | El juego corre | `Wi-Fi connected in … ms`, `sources: 1 TNFS server(s)` || ❓ ningún `menu_mount` en la consola; repetir |
-| **AC8** | Todo el ensayo | — | AC2 dijo `AUN NO PUEDE CARGARSE` | `cas: sin M3a/H4 …` al arrancar; **ninguna** línea `DATA IN: cambio` en todo el ensayo; ningún `uart_driver_delete` || ✅ [C] `cas: sin M3a/H4 …` al arrancar; 0 líneas `DATA IN: cambio`, 0 `uart_driver_delete`, 0 `panic` en toda la captura |
+| **AC1** | microSD con `international_karate.cas` | `1` (fuente 1, microSD) | La lista muestra `INTERNATIONAL_KARATE.CAS` con su letra, junto a las `.ATR` y `.XEX` | — | 🟡 parcial, inferido: la cinta se eligió desde la lista de la fuente 1 (AC2 lo supone); no consta su letra junto a las `.ATR` y `.XEX` |
+| **AC2** | Lista de la fuente 1 abierta | letra de la cinta, luego `C` | Principal: `C: INTERNATIONAL_KARATE.CAS` (o recortado); mensaje `CINTA EN C:, AUN NO PUEDE CARGARSE`; D1–D8 sin cambio | ningún `menu_mount` (D1–D8 no cambian) | 🟡 parcial: [P] foto con `C: INTERNATIONAL_KARATE.CAS` y D1–D8 `SIN DISCO` sin cambio; [C] ningún `menu_mount`. Falta el mensaje de montaje |
+| **AC3a** | Lista abierta | letra de la cinta, luego `1` | `UNA CINTA VA EN C:`; ninguna unidad cambia | ningún `menu_mount` | ✅ [P] testimonio del dueño: vio `UNA CINTA VA EN C:` |
+| **AC3b** | Lista abierta | letra de una `.ATR`, luego `C` | `UN DISCO NO VA EN C:`; `C:` sin cambio | ningún `menu_mount` | ✅ [P] testimonio del dueño: vio `UN DISCO NO VA EN C:` |
+| **AC4** | Cinta en `C:` | `U`, luego `C` | Tras `U`: `DESMONTAR: PULSA 1-8 O C, ESC CANCELA`; tras `C`: línea `C: SIN CINTA` | — | ✅ [P] testimonio del dueño: vio `C: SIN CINTA` |
+| **AC5-USB** | Volver a montar la cinta (AC2). USB conectado, pin 10 aislado | Apagar el 65XE; pulsar el reset de la FujiNet; esperar `D1 ready`; encender el 65XE | El menú sigue mostrando `C: INTERNATIONAL_KARATE.CAS`; D1–D8 iguales | `unidades restauradas …`; `D1 ready at …` | ❓ sin rastro en la consola (un solo arranque); repetir |
+| **AC5** | *(bloqueado, ver abajo)* FujiNet solo por SIO, USB desconectado | Apagar el 65XE, esperar 5 s, encenderlo | Igual que AC5-USB | — (sin USB no hay consola) | ⏸ bloqueado por T1a/T1b |
+| **AC6** | `mala.cas` en la raíz (paso D) y la cinta buena en `C:` | letra de `MALA.CAS`, luego `C` | `CINTA NO VALIDA`; `C:` sigue mostrando la cinta anterior | — | 🟡 parcial, testimonio general: «reconoce archivos .cas válidos e inválidos»; no consta el texto `CINTA NO VALIDA` ni que `C:` conservara la cinta anterior |
+| **AC7** | Cinta en `C:`, sin START | Encender el 65XE con el USB conectado | El menú sale en D1 como siempre | `D1 ready at N ms` con **N ≤ 280 ms** (hoy ~230 + 50) | ✅ [C] solo el tiempo: `D1 ready at 232 ms`; registro `listo_ms=232`. ATR, XEX y TNFS en AC7b–d |
+| **AC7b** | Igual | Fuente 1: una `.ATR` a D1, `A` | El juego ATR corre | `menu_mount …` | ❓ ningún `menu_mount` en la consola; repetir |
+| **AC7c** | Igual | Fuente 1: una `.XEX` a D1, `A` | El programa corre | `menu_mount …` | ❓ ningún `menu_mount` en la consola; repetir |
+| **AC7d** | Igual, Wi-Fi ya conectado | Fuente 2 (TNFS): una `.ATR` a D1, `A` | El juego corre | `Wi-Fi connected in … ms`, `sources: 1 TNFS server(s)` | ❓ ningún `menu_mount` en la consola; repetir |
+| **AC8** | Todo el ensayo | — | AC2 dijo `AUN NO PUEDE CARGARSE` | `cas: sin M3a/H4 …` al arrancar; **ninguna** línea `DATA IN: cambio` en todo el ensayo; ningún `uart_driver_delete` | 🟡 parcial: [C] `cas: sin M3a/H4 …` al arrancar; 0 `DATA IN: cambio`, 0 `uart_driver_delete`, 0 `panic` en toda la captura. Falta ver en pantalla `CINTA EN C:, AUN NO PUEDE CARGARSE` |
 
 **Cómo crear `mala.cas` (paso D):** un archivo de texto con una línea cualquiera, por ejemplo `NO ES UNA CINTA`,
 guardado como `mala.cas`. No empieza con un bloque `FUJI`, así que la casetera la rechaza. Al terminar el banco se
@@ -158,8 +159,14 @@ en cada fase. Hoy no hay registro de T1a ni de T1b en `02-DOCS/raw/`. Por eso:
 
 ## 7. Veredicto
 
-**T8 parcial (primera sesión, 2026-11-23).**
-- ✅ AC1, AC2, AC3, AC4, AC6, AC7 (tiempo de D1) y AC8. NVS igual antes y después; registro `brownout=0`, `panic=0`.
-- ❓ AC5-USB y AC7b–d: sin evidencia en la consola. Se repiten en una segunda sesión.
+**T8 parcial (primera sesión, 2026-11-23).** Revisión de ChatGPT sobre `e0e6114`: no aprobar todavía.
+- ✅ AC3a, AC3b y AC4 (testimonio del dueño); tiempo de D1 de AC7. NVS igual antes y después; registro
+  `brownout=0`, `panic=0`. `brownout=0` no prueba que el montaje sea seguro.
+- 🟡 AC1, AC2, AC6 y AC8: evidencia incompleta (ver cada fila).
+- ❓ AC5-USB y AC7b–d: sin evidencia en la consola.
+- **Segunda sesión, en este orden:** (1) el pin 10 medido sin tensión, con circuito abierto en el pin 10 y
+  continuidad en GND, antes de conectar nada; (2) AC1 con foto de la lista; (3) AC2 con foto del mensaje
+  `CINTA EN C:, AUN NO PUEDE CARGARSE` (cierra AC8); (4) AC6 con foto de `CINTA NO VALIDA` y `C:` sin cambio;
+  (5) AC5-USB; (6) AC7b–d.
 - ⏸ AC5: bloqueado por T1a/T1b.
 - ⚠️ El pin 10 no estuvo aislado (§6). La segunda sesión empieza con el cable revisado y medido sin tensión.

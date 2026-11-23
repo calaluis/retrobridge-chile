@@ -79,15 +79,18 @@ rb::host::MenuSources g_loadedSources;      // written by the network task befor
 std::atomic<bool> g_sourcesPublished{false};
 bool g_sourcesApplied = false;              // SIO task only
 
-// Menu events on the console. Only the outcome of a TNFS job, a mount and a rejected server are shown;
-// every key and every TNFS request stays at DEBUG, so the SIO task never waits on the UART for a line.
+// Menu events on the console. Only the outcome of a TNFS job, a mount, a rejected server and the restore
+// of the drives (menu_restore: a few lines per power-up, one per drive and outcome; the bench of
+// menu-tnfs-persistente T8 needs them) are shown; every key and every TNFS request stays at DEBUG, so the
+// SIO task never waits on the UART for a line.
 class FirmwareMenuEvents final : public rb::host::MenuEvents {
 public:
     void menuEvent(const char* name, const char* detail) override
     {
         const char* text = detail != nullptr ? detail : "";
         if (std::strcmp(name, "menu_tnfs") == 0 || std::strcmp(name, "menu_fetch") == 0 ||
-            std::strcmp(name, "menu_mount") == 0 || std::strcmp(name, "menu_source_rejected") == 0) {
+            std::strcmp(name, "menu_mount") == 0 || std::strcmp(name, "menu_source_rejected") == 0 ||
+            std::strcmp(name, "menu_restore") == 0) {
             ESP_LOGI("rb_menu_sio", "%s %s", name, text);
         } else {
             ESP_LOGD("rb_menu_sio", "%s %s", name, text);

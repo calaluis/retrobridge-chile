@@ -121,6 +121,16 @@ private:
 
 bool failedWith(Rig& rig, const char* text) { return rig.events.has(text); }
 
+// How many events say `text`: a line logged once per mount, not once per poll.
+unsigned countOf(Rig& rig, const char* text)
+{
+    unsigned count = 0;
+    for (const std::string& line : rig.events.log) {
+        count += line.find(text) != std::string::npos ? 1u : 0u;
+    }
+    return count;
+}
+
 }  // namespace
 
 void setUp(void) {}
@@ -137,11 +147,20 @@ void test_a_remembered_atr_shows_cargando_then_mounts_on_d2()
     const MenuReply loading = rig.press(kRedraw);
     assert_line(loading, driveLine(2), "D2: CARGANDO ATARI LOGO.ATR");
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionWait, loading.action());  // the Atari polls for the result
+    for (int i = 0; i < 20; ++i) {
+        (void)rig.press(kPoll);  // polls while loading: none of them says applied
+    }
+    TEST_ASSERT_FALSE(rig.events.has("net applied"));
     rig.gated.open();
     until(rig, [&] { return rig.controller->driveName(2) != nullptr; });
     rig.step();  // the mount is applied
     TEST_ASSERT_EQUAL_STRING_LEN("*tnfs*", rig.mounted(2), 6);
     assert_line(rig.press(kRedraw), driveLine(2), "D2 ATARI LOGO.ATR                SL");
+    for (int i = 0; i < 20; ++i) {
+        rig.step();
+        (void)rig.press(kRedraw);
+    }
+    TEST_ASSERT_EQUAL_UINT(1, countOf(rig, "menu_restore D2 net applied"));  // once, from the bay's reply
     TEST_ASSERT_EQUAL_STRING("pulgarcito", rig.restore.renamedTo);
     TEST_ASSERT_FALSE(rig.controller->memoryChanged());  // what was remembered is what is mounted
     assertRemembered(rig, 2);
@@ -357,6 +376,7 @@ void test_no_free_slot_or_an_ambiguous_error_applying_a_restored_image_keeps_the
         const MenuReply after = rig.press(kRedraw);
         assert_line(after, driveLine(c.drive), c.line);
         TEST_ASSERT_FALSE(rig.events.has("net failed: invalid"));
+        TEST_ASSERT_FALSE(rig.events.has("net applied"));  // refused: never said applied
         TEST_ASSERT_FALSE(rig.controller->memoryChanged());
         assertRemembered(rig, c.drive);
         awaitSlots(rig.store(), 0);  // the image's slot went back to the loader

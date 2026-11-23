@@ -42,7 +42,7 @@ enum class DataInChange { None, ToTape, ToDisk, TakeFailed, BeginFailed, Release
 
 class DataInArbiter {
 public:
-    static constexpr uint64_t kRetryUs = 100000;  // a failed begin or release, again after 100 ms
+    static constexpr uint64_t kRetryUs = 100000;  // a failed take, begin or release, again after 100 ms
 
     DataInArbiter(DiskLine& disk, TapeLine& tape) noexcept : disk_(disk), tape_(tape) {}
 
@@ -61,6 +61,7 @@ private:
     TapeLine& tape_;
     DataInOwner owner_ = DataInOwner::Disk;
     bool releasePending_ = false;  // the tape must give the line back; its release failed
+    bool takeFailed_ = false;      // the last take failed: the disk keeps UART2 until the retry
     uint64_t lastTryUs_ = 0;
 };
 

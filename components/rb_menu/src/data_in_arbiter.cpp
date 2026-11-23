@@ -24,7 +24,15 @@ DataInChange DataInArbiter::step(const DataInInputs& in, uint64_t nowUs) noexcep
         // Rule 1, by state: MOTOR on (already, or now), a ready tape and both gates.
         const bool wantTape = in.gates && in.motorOn && in.tapeReady && !in.tapeEnded
                               && !in.poweredOff && !in.tapeStopped;
-        return wantTape ? toTape(nowUs) : DataInChange::None;
+        if (!wantTape) {
+            return DataInChange::None;  // takeFailed_ stays: a MOTOR flicker must not skip the wait
+        }
+        // Review of PR #85: after a failed take the disk keeps UART2; one new attempt per 100 ms,
+        // never an end/take/begin every step (each one drops SIO frames).
+        if (takeFailed_ && !due(nowUs)) {
+            return DataInChange::None;
+        }
+        return toTape(nowUs);
     }
     }
 }
@@ -33,9 +41,12 @@ DataInChange DataInArbiter::toTape(uint64_t nowUs) noexcept
 {
     disk_.end();
     if (tape_.take()) {
+        takeFailed_ = false;
         owner_ = DataInOwner::Tape;
         return DataInChange::ToTape;
     }
+    takeFailed_ = true;
+    lastTryUs_ = nowUs;
     // Rule 5: the tape could not install the line: the disk begins again at once.
     const DataInChange begun = beginDisk(nowUs);
     return begun == DataInChange::ToDisk ? DataInChange::TakeFailed : begun;

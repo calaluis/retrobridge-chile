@@ -306,6 +306,28 @@ void test_losing_the_gates_gives_the_line_back()
     assertCalls({"disk.end", "tape.take", "tape.release", "disk.begin"});
 }
 
+// Review of PR #85 (T4): take() keeps failing while MOTOR stays on with the tape ready. The disk
+// keeps UART2 while it waits: one attempt per 100 ms, never one per step (10 per 10 steps before).
+void test_a_take_that_keeps_failing_is_retried_every_100_ms_with_the_disk_up()
+{
+    Rig rig;
+    rig.tape.failTake = true;
+    TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::TakeFailed);
+    for (int i = 0; i < 9; ++i) {  // 90 ms: the disk stays installed, nothing is called
+        TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::None);
+        TEST_ASSERT_TRUE(rig.disk.installed);
+    }
+    assertCalls({"disk.end", "tape.take", "disk.begin"});
+    TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::TakeFailed);  // 100 ms: the second try
+    rig.tape.failTake = false;
+    for (int i = 0; i < 9; ++i) {
+        TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::None);
+    }
+    TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::ToTape);  // 100 ms later: it works
+    assertCalls({"disk.end", "tape.take", "disk.begin", "disk.end", "tape.take", "disk.begin",
+                 "disk.end", "tape.take"});
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -320,6 +342,7 @@ int main(void)
     RUN_TEST(test_end_of_tape_power_off_or_eject_give_the_line_back);
     RUN_TEST(test_the_tape_can_take_the_line_again);
     RUN_TEST(test_a_failed_take_gives_the_line_back_to_the_disk);
+    RUN_TEST(test_a_take_that_keeps_failing_is_retried_every_100_ms_with_the_disk_up);
     RUN_TEST(test_a_failed_begin_is_retried_every_100_ms);
     RUN_TEST(test_a_failed_release_never_begins_the_disk_until_it_succeeds);
     RUN_TEST(test_losing_the_gates_gives_the_line_back);

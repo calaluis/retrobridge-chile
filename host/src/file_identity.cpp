@@ -113,7 +113,8 @@ bool endsWithImage(const Char* name) noexcept
     }
     const bool atr = lower(ext[1]) == 'a' && lower(ext[2]) == 't' && lower(ext[3]) == 'r';
     const bool xex = lower(ext[1]) == 'x' && lower(ext[2]) == 'e' && lower(ext[3]) == 'x';  // menu-xex X003
-    return atr || xex;
+    const bool cas = lower(ext[1]) == 'c' && lower(ext[2]) == 'a' && lower(ext[3]) == 's';  // menu-cinta T1
+    return atr || xex || cas;
 }
 
 }  // namespace

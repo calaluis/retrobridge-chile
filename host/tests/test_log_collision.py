@@ -66,6 +66,7 @@ class HostCase(unittest.TestCase):
 
 
 XEX = bytes([0xFF, 0xFF, 0x00, 0x30, 0x00, 0x30, 0x60])  # menu-xex: one segment, a single RTS
+CAS = b"FUJI\x00\x00\x00\x00"  # menu-cinta: a FUJI chunk with no data
 
 
 class LogCollisionTest(HostCase):
@@ -118,6 +119,28 @@ class ImagesFolderTest(HostCase):
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("refusing to write into the image", result.stderr)
         self.assertEqual(xex.read_bytes(), XEX)
+        self.assertEqual(self.entries(), before, "a file was created")
+
+    def test_log_naming_a_cas_of_the_folder_is_refused(self):
+        """menu-cinta T1: the menu lists a .cas of the folder; the log never writes into it."""
+        cas = self.root / "images" / "karate.cas"
+        cas.write_bytes(CAS)
+        before = self.entries()
+        result = self.run_folder("images", "images\\KARATE.CAS" if os.name == "nt" else "images/karate.cas")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("refusing to write into the image", result.stderr)
+        self.assertEqual(cas.read_bytes(), CAS)
+        self.assertEqual(self.entries(), before, "a file was created")
+
+    def test_log_naming_an_upper_case_cas_is_refused(self):
+        """menu-cinta T1: the extension check ignores case (a file named .CAS)."""
+        cas = self.root / "images" / "NAVE.CAS"
+        cas.write_bytes(CAS)
+        before = self.entries()
+        result = self.run_folder("images", "images\\NAVE.CAS" if os.name == "nt" else "images/NAVE.CAS")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("refusing to write into the image", result.stderr)
+        self.assertEqual(cas.read_bytes(), CAS)
         self.assertEqual(self.entries(), before, "a file was created")
 
     def make_21_images(self):

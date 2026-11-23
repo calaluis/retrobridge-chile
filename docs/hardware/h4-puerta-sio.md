@@ -155,7 +155,7 @@ en serie [E]. El ESP32 admite como máximo **VDD + 0,3 V (unos 3,6 V)** en sus e
 
 **Lado del Atari: 65XE NTSC del equipo (2026-10-26).** En su esquema (redibujo de terceros, hoja 5), MOTOR CONTROL
 sale del colector de **Q7, un PNP con el emisor en +5 V**, hacia el pin 8 a través de L11 (bobina), **sin resistencia
-en serie**; la base la controla el PIA (CA2) por R91 (≈ 2k7, legible solo en parte). El modelo de Q7 no es legible
+en serie**; la base la controla el PIA (CA2) por R91 (2k7; legible en la copia de 2026-11-23, abajo). El modelo de Q7 no es legible
 [E-Atari]. El manual de Atari solo dice "alto = encendido" y **no especifica la tensión** [M].
 
 **Tensión prevista, no medida:**
@@ -172,6 +172,36 @@ en serie**; la base la controla el PIA (CA2) por R91 (≈ 2k7, legible solo en p
 - **Alimentación parásita:** con la FujiNet apagada y MOTOR en alto, el ESP32 podría alimentarse parcialmente a través
   de la protección del pin [I].
 - La forma de alimentar la placa (USB o +5 V del SIO) no cambia el recorrido de MOTOR [I].
+
+**Ampliación del 2026-11-23: referencias mandantes del responsable.** El responsable volvió a aportar los dos
+esquemas de terceros (65XE, Jerzy Sobola, 2003, 9 hojas; XC12, mismo autor, 2002) y decidió que **mandan** para el
+diseño de la casetera: «esos datos que te pasé son los que mandan, aunque sean referencias». Siguen siendo redibujos
+de terceros [E-Atari], no se versionan y **no sustituyen a M3a**. Lectura de la copia aportada:
+
+| Punto | 65XE [E-Atari] (hojas 5 y 9) |
+|---|---|
+| Quién enciende MOTOR | PIA U23, pin 39 (CA2) → R91 **2k7** → base de Q7 (PNP, emisor en +5A). **CA2 en bajo = motor encendido** [I] |
+| Salida | Colector de Q7 → L11 (ferrita) → `MTR CTRL` → SIO pin 8. C81 (1 nF) a masa. **Sin resistencia en serie** |
+| Motor apagado | Q7 abierto y **ninguna resistencia del Atari baja el pin 8**: queda flotando hasta que el periférico lo fija (R2 en la FujiNet) |
+| Pin 10 (+5 V / READY) | +5A, el +5 V principal del Atari, por L10 (ferrita), con C79 (22 µF) y C80 (1 nF) a masa. Coincide con los 4780 mV medidos en el banco T8 de `menu-cinta` [C] |
+
+| Punto | XC12 [E-Atari] |
+|---|---|
+| Motor | Lo alimenta el **pin 10** por S1 (PLAY) y Q1 (PNP). Q2 (NPN) enciende Q1; su base recibe el **pin 8** por R3 (27 k). FWD (S2) y REW (S3) puentean Q2: el motor gira sin MOTOR solo para avanzar o rebobinar |
+| Electrónica | El **pin 8** también alimenta la electrónica de la casetera: los amplificadores LM324, Q7 (salida hacia DATA IN, pin 3) y el LED (R4, CR7). Sin MOTOR, la XC12 **no envía datos**, aunque PLAY esté pulsado |
+| Carga sobre el pin 8 | No es solo R3: es toda esa electrónica. La caída en Q7 del Atari será algo mayor que con R2 sola [I]; la tensión sigue sin medir [P] |
+| Otros pines | 3 DATA IN, 4 GND, 5 DATA OUT (grabación), 11 audio. Los demás, sin conectar |
+
+**Uso en el 65XE, según el responsable (2026-11-23), testimonio:** arrancar con START (+OPTION) → el Atari pita → **RETURN**
+enciende MOTOR → carga; al **terminar** el programa o ante un **error**, el sistema de carga apaga MOTOR. No se sabe aún
+si algunos programas lo apagan y encienden entre bloques [P].
+
+**Consecuencias para el diseño:**
+- Una casetera fiel **obedece el pin 8**: montar un `.cas` en `C:` equivale a dejar PLAY pulsado, y los datos salen
+  solo mientras el Atari mantiene MOTOR en alto. La opción «casetera sin MOTOR» (reproducir con las pausas del `.cas`
+  y un botón de «play») **queda descartada**: ninguna XC12 funciona así.
+- Por eso leer MOTOR es imprescindible para T9 de `menu-cinta`, y **M3a sigue siendo el punto de detención**.
+- El esquema del 65XE confirma que del lado del Atari **nada limita la corriente** hacia IO36 (R1).
 
 **Evidencia histórica [H] (proyecto WSS, G5-2, prueba T5, `FUJINET_WSS_P5_G5_2_REPORT.md` §4):**
 - El registro de la FujiNet muestra «MOTOR ON: activating cassette» a las 23:01:22 y la emisión del casete hasta

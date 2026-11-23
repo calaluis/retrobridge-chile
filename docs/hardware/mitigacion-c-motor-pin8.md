@@ -8,6 +8,9 @@
 > - **H4 no está aprobado.**
 >
 > Validar esta mitigación resolvería **solo R1**. La aprobación global de H4 es una decisión aparte (§8).
+>
+> **2026-11-23:** con el pin 8 abierto la casetera de RetroBridge (T9 de `menu-cinta`) tampoco funcionaría: una
+> casetera fiel obedece MOTOR (`h4-puerta-sio.md` §3.4, «Ampliación del 2026-11-23»).
 
 **Etiquetas:**
 - **[E]** esquema oficial `FN32ROV-1.3-Q24_schematic.jpg` (`fujinet-hardware`, commit `0e539b8`);

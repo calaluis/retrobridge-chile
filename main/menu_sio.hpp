@@ -4,9 +4,15 @@
 // over the physical SIO of the FujiNet 1.3. Only built with CONFIG_RB_MENU_SIO.
 // H4 and M3a stay unsigned: this package transmits on DATA IN only under the
 // owner's written risk acceptance, with the SIO adapter that has no pin 8
-// (docs/hardware/mitigacion-c-motor-pin8.md). The cassette is not started.
+// (docs/hardware/mitigacion-c-motor-pin8.md).
+//
+// menu-cinta T6: the cassette service starts after D1 is served (it reads tapes into PSRAM), and
+// the menu gets its tape deck before the drives are restored, so the tape remembered on C: comes
+// back too. The cassette never drives DATA IN here: EspDataIn is not configured, its outputs are
+// discarded, and MOTOR is not read (T7 hands DATA IN over, behind H4 and M3a).
 
 #include "rb/board/board_profile.hpp"
+#include "rb/esp/cassette_service.hpp"
 #include "rb/hwdiag/diag_types.hpp"
 
 namespace rb::menusio {
@@ -20,7 +26,9 @@ bool start(const rb::board::BoardProfile& board);
 // After the microSD mount and the diagnostic console: reads the catalog of the
 // microSD root (the SIO task takes it between two frames), registers the console
 // commands `menu` and `sio`, and appends a boot record to the microSD ~10 s later.
-// Does nothing if start() failed.
-void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot);
+// With the microSD mounted it also starts `cassette` (logging the free PSRAM before and
+// after) and hands the menu its tape deck; a cassette that cannot start leaves a deck
+// that answers "no memory" (plan §4, R3). Does nothing if start() failed.
+void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot, rb::esp::CassetteService& cassette);
 
 }  // namespace rb::menusio

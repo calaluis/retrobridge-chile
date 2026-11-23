@@ -40,6 +40,7 @@
 #include "rb/sio/sio_line_transport.hpp"
 
 #include "esp_pthread.h"
+#include "esp_tape_deck.hpp"
 #include "tnfs_link.hpp"
 #include "tnfs_loader.hpp"
 #include "udp_tnfs_port.hpp"
@@ -154,6 +155,14 @@ constexpr int64_t kPowerSampleUs = 50000;  // plan §4: the SIO task samples the
 // queues and rb_drive_save, and only then publishes g_planPublished (release). The SIO task touches g_plan
 // and the queues only after it has seen that flag (acquire), and the queues only when g_plan allows saving.
 // The SIO task never writes to the microSD.
+// The tape deck (menu-cinta T6): finish() starts the cassette and creates the deck, then publishes it
+// (release) BEFORE g_planPublished; the SIO task gives it to the controller between two frames, so the
+// restore that follows the plan already has it (C: comes back with D1-D8), and pumps it every step.
+const rb::board::BoardProfile* g_board = nullptr;  // start(): the gates come from it
+EspTapeDeck* g_tape = nullptr;                     // finish() creates it; then the SIO task only
+std::atomic<bool> g_tapePublished{false};
+bool g_tapeApplied = false;                        // SIO task only
+
 rb::host::DriveMemoryPlan g_plan;            // written by finish() before g_planPublished
 std::atomic<bool> g_planPublished{false};
 rb::host::DriveMemoryLink g_link;            // SIO task only (~1 KB: not on its stack)
@@ -379,9 +388,18 @@ void sioTask(void*)
             g_sourcesApplied = true;
             ESP_LOGI(kTag, "sources: %u TNFS server(s)", static_cast<unsigned>(g_sources.count()));
         }
+        // Before the drive memory: published before the plan, so the restore of C: finds the deck.
+        if (!g_tapeApplied && g_tapePublished.load(std::memory_order_acquire)) {
+            g_station->controller().setTapeDeck(&g_tape->deck());
+            g_tapeApplied = true;
+            ESP_LOGI(kTag, "cas: deck en el menu (puertas %s)", g_tape->deck().gatesOpen() ? "abiertas" : "cerradas");
+        }
         serviceDriveMemory(g_station->controller(), planSeen, restoreLogged);
 
         const rb::sio::StepOutcome stepped = g_station->step();
+        if (g_tapeApplied) {
+            g_tape->deck().pump();  // takes `cas` replies and sends what waits; never blocks
+        }
 
         const bool down = gpio_get_level(kButtonA) == 0;
         const int64_t now = esp_timer_get_time();
@@ -602,6 +620,7 @@ bool start(const rb::board::BoardProfile& board)
         ESP_LOGE(kTag, "board profile has no SIO pins: menu not served");
         return false;
     }
+    g_board = &board;
     (void)gpio_set_direction(kButtonA, GPIO_MODE_INPUT);
     (void)gpio_pullup_en(kButtonA);
     if (!startAdc()) {
@@ -676,7 +695,41 @@ bool start(const rb::board::BoardProfile& board)
     return true;
 }
 
-void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot)
+// The cassette (menu-cinta T6, plan §4 and R3): started after D1, with the free PSRAM logged before and
+// after its bank is reserved. The deck is created even if the cassette cannot start: it then answers
+// "no memory". Without the microSD there are no tapes: no deck, and C: says the cassette is missing.
+static void startCassette(bool sdMounted, rb::esp::CassetteService& cassette)
+{
+    if (!sdMounted || g_board == nullptr) {
+        ESP_LOGW(kTag, "cas: sin microSD, la casetera no arranca");
+        return;
+    }
+    const std::size_t freeBefore = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    const std::size_t largestBefore = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+    ESP_LOGI(kTag, "PSRAM libre antes de la casetera: %u B (bloque mayor %u B)", static_cast<unsigned>(freeBefore),
+             static_cast<unsigned>(largestBefore));
+    const bool started = cassette.start();
+    ESP_LOGI(kTag, "PSRAM libre despues de la casetera: %u B (bloque mayor %u B); RAM interna libre %u B",
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)),
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)));
+    g_tape = createOnce<EspTapeDeck>(cassette, *g_board);
+    if (g_tape == nullptr) {
+        ESP_LOGE(kTag, "cas: sin memoria para el deck; C: dice CASETERA NO DISPONIBLE");
+        return;
+    }
+    if (!started) {
+        ESP_LOGW(kTag, "cas: no arranca (falta PSRAM para el banco de %u B); montar una cinta dice SIN MEMORIA",
+                 static_cast<unsigned>(rb::esp::CassetteService::kBankBytes));
+    } else if (!g_tape->start()) {
+        ESP_LOGW(kTag, "cas: tarea tape_cmd no creada; montar una cinta dice SIN MEMORIA");
+    } else {
+        ESP_LOGI(kTag, "cas: listo (puertas %s)", g_tape->deck().gatesOpen() ? "abiertas" : "cerradas");
+    }
+    g_tapePublished.store(true, std::memory_order_release);  // the SIO task applies it, before the plan
+}
+
+void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot, rb::esp::CassetteService& cassette)
 {
     g_boot = boot;
     if (g_station == nullptr) {
@@ -738,6 +791,9 @@ void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot)
             }
         }
     }
+    // menu-cinta T6: the deck is published before the plan, so the restore of C: finds it.
+    startCassette(sdMounted, cassette);
+
     // rb_drive_save touches the store only after g_planPublished, so *loaded is still this read.
     rb::host::planDriveMemory(failure, failureError, loaded, saverReady, g_plan);
     g_planPublished.store(true, std::memory_order_release);  // after g_plan, the queues and the task

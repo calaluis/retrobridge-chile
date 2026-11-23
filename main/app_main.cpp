@@ -114,13 +114,14 @@ extern "C" void app_main(void)
     }
 
 #if CONFIG_RB_MENU_SIO
-    // Test package menu-sio (menu-sio-fisico): the menu as D1 on the physical SIO. The cassette is
-    // not started: it would share UART2 and GPIO21 (DATA IN), and MOTOR is not read.
+    // Test package menu-sio (menu-sio-fisico): the menu as D1 on the physical SIO. The cassette starts
+    // in finish(), after D1 (menu-cinta T6), with DATA IN not configured: it would share UART2 and GPIO21
+    // with the SIO, so its outputs are discarded, and MOTOR is not read (T7 hands DATA IN over).
     if (!rb::console::start_diagnostic_console(g_console)) {
         ESP_LOGE(kTag, "diagnostic console could not start");
     }
     if (menuStarted) {
-        rb::menusio::finish(mounted.ok(), boot);  // catalog, console commands, boot record
+        rb::menusio::finish(mounted.ok(), boot, g_cassette);  // catalog, cassette, console commands, boot record
     }
     return;
 #endif

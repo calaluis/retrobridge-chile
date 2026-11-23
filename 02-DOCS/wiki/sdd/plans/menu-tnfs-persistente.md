@@ -22,18 +22,21 @@ status: draft
   Nada de red, DNS ni Wi-Fi ocurre antes de `D1 ready`.
 - **Plazos:** **30 s** para que el Wi-Fi quede `Ready`, contados desde el arranque; **30 s** para la primera
   respuesta del servidor; **30 s** sin datos durante una descarga. **Sin plazo total** de descarga (una ATR grande
-  tarda ~65 s, plan `menu-tnfs`).
+  tarda ~65 s, plan `menu-tnfs`). «Sin datos» se mide con **bytes recibidos** (contador del loader) y un reloj
+  **monotónico** del controlador, nunca con el porcentaje entero: el porcentaje puede quedarse igual con datos llegando.
 - **Servidor recordado:** el nombre del servidor tal como estaba en la fuente al montar (`MenuSources::kMaxName` =
   32 caracteres) y la ruta absoluta (`kTnfsMaxPath` = 255). El puerto es el de hoy (16384, fijo); no se guarda.
   Editar una fuente con `E` **no** cambia el servidor de una unidad recordada (AC9).
 - **Formato:** la memoria de unidades pasa a **v3**. v1 y v2 se siguen leyendo; solo se escribe v3. Nunca se borra
   ni se reescribe en bloque la NVS; la memoria vive en la microSD (`retrobridge-unidades-a.dat` / `-b.dat`) [C].
 - **Textos (40 columnas):** `D2: CARGANDO <nombre>`, `D2: SIN RED`, `D2: FALTA <nombre>`, `D2: INVALIDA <motivo>`,
-  `D2: NO CABE`. `A` con D1 en carga: `D1 CARGANDO, ESPERA`. Ninguno muestra la clave Wi-Fi ni el servidor completo
+  `D2: NO CABE`, `D2: SERVIDOR NO ENCONTRADO`, `D2: NO SE PUDO ABRIR`. `A` con D1 en carga: `D1 CARGANDO, ESPERA`. Ninguno muestra la clave Wi-Fi ni el servidor completo
   si no cabe (se recorta por la derecha).
 - **Sin asignaciones en el hilo SIO** (ADR-011). `DriveMemory` nunca va en la pila de la tarea SIO.
 - **Sin código de FujiNet ni de terceros** (ADR-012). `main` cerrada: rama y PR propios.
-- **Banco:** flashear y abrir COM3 necesitan aprobación por separado. El banco **solo por SIO** de AC8 está
+- **Banco:** flashear y abrir COM3 necesitan aprobación por separado. El montaje USB + SIO a la vez necesita una
+  **autorización específica** para este banco: la excepción aceptada en T8 de `menu-cinta` valía solo para ese banco
+  y no se extiende a este PR. El banco **solo por SIO** de AC8 está
   **bloqueado** hasta T1a/T1b (`menu-sio-wifi-tnfs`) o una autorización escrita del responsable.
 
 ## 1. Context & constraints
@@ -48,7 +51,10 @@ status: draft
 - [C] `MenuLoader` hace un trabajo a la vez («a job in progress is cancelled») y direcciona por **número de fuente**,
   no por servidor. `changeServer()` cambia el servidor de una fuente.
 - [C] Durante `restoring_` toda tecla responde «espera» y `A` no hace nada. Hoy eso dura lo que tarda la microSD.
-- [C] `LoaderError::NoSePudoAbrir` mezcla «el servidor se negó», «sin memoria», «sin ranura» y «ruta larga».
+- [C] `LoaderError::NoSePudoAbrir` mezcla «el servidor se negó», «sin memoria», «sin ranura» y «ruta larga». Debajo,
+  `TnfsResult::NotOpened` mezcla «ruta inexistente», «no es un archivo», «otro estado de error» y «el destino se
+  negó» (`tnfs_client.hpp`); el código TNFS de la respuesta queda en `TnfsClient::lastStatus()`.
+- [C] El loader informa solo `percent` (entero, 0..99) mientras descarga (`tnfs_loader.cpp`, `percentOf`).
 
 ## 2. Architecture
 
@@ -111,16 +117,23 @@ drive_memory_codec
 MenuLoader (añade)
   startFetchAt(server, path, length) -> job     // ATR por servidor recordado
   startXexAt(server, path, length)   -> job     // .xex por servidor recordado
-  LoaderError añade NoExiste (el servidor dice que la ruta no existe) y NoCabe (sin memoria o sin ranura)
+  LoaderError añade:
+    NoExiste         solo si la respuesta TNFS a OPEN o STAT trae el estado ENOENT
+    NoCabe           el destino se negó (sin memoria, sin ranura, demasiado grande)
+  NoEncontrado ya existe: el nombre del servidor no resuelve (DNS)
+  NoSePudoAbrir queda para lo ambiguo: otro estado TNFS (permisos, no es archivo...), ruta larga
+  LoaderStatus.bytes, en InProgress: bytes recibidos hasta ahora (crece con cada bloque)
 
 NetRestoreQueue (puro, sin E/S, reloj inyectado)
   begin(memory, nowMs)            // toma las unidades Net*
   next(networkReady, nowMs) -> unidad a pedir | ninguna
-  started(drive, job) / progressed(drive, nowMs) / done(drive) / failed(drive, motivo)
+  started(drive, job) / progressed(drive, bytes, nowMs) / done(drive) / failed(drive, motivo)
+                                  // progressed: si bytes crece, nowMs pasa a ser el último dato
   cancel(drive)                   // el usuario cambió la unidad: se descarta, también su resultado tardío
   requeue(drive)                  // un trabajo del usuario la interrumpió
   state(drive) -> Pendiente | Cargando | Montada | Fallida(motivo)
-  expired(nowMs) -> unidades cuyo plazo venció (Wi-Fi 30 s, primera respuesta 30 s, sin datos 30 s)
+  expired(nowMs) -> unidades cuyo plazo venció (Wi-Fi 30 s, primera respuesta 30 s, 30 s desde el último dato)
+  el reloj es monotónico y lo inyecta el llamador (esp_timer en el FujiNet, falso en host)
 ```
 
 Reglas del resultado por motivo:
@@ -128,10 +141,12 @@ Reglas del resultado por motivo:
 | Resultado | Pantalla | ¿Sigue recordada? |
 |---|---|---|
 | Imagen llega y vale | Nombre, como cualquier unidad | Sí |
-| Wi-Fi no `Ready` en 30 s, `NoResponde`, `NoEncontrado` (DNS), 30 s sin datos | `SIN RED` | Sí (reintenta al encender) |
-| `NoExiste` | `FALTA <nombre>` | No: se guarda una versión nueva sin ella (AC5) |
+| Wi-Fi no `Ready` en 30 s, `NoResponde`, 30 s sin datos | `SIN RED` | Sí (reintenta al encender) |
+| `NoEncontrado` (DNS) | `SERVIDOR NO ENCONTRADO` | Sí (reintenta al encender) |
+| `NoExiste` (estado ENOENT confirmado) | `FALTA <nombre>` | No: se guarda una versión nueva sin ella (AC5) |
+| `NoSePudoAbrir` (estado ambiguo: permisos, no es archivo, otro error) | `NO SE PUDO ABRIR` | Sí: un error ambiguo nunca borra la asignación |
 | Imagen o `.xex` inválidos | `INVALIDA <motivo>` | No (AC5) |
-| `NoCabe` | `NO CABE` | Sí [I] (puede caber en otro encendido) |
+| `NoCabe` | `NO CABE` | Sí (decisión de la revisión: puede caber en otro encendido) |
 
 Contrato de cancelación (AC6): cuando el usuario monta otra imagen en una unidad `Cargando` o la desmonta, el
 controlador cancela el trabajo, marca la unidad `cancel` y guarda el cambio del usuario. Un `LoaderStatus` que
@@ -159,11 +174,14 @@ memoria.
 | AC1 | Host (`menu_tnfs_rig`) | Encender con D2 `NetAtr` → `CARGANDO` → nombre; el Atari lee D2 | `FakeTnfsServer`, reloj |
 | AC2 | Host | D1 `NetXex` → al llegar, `A` arranca el `.xex` | Servidor falso |
 | AC3 | Host | D1 local lista sin esperar la red; `A` funciona con D2 `Cargando` | Loader lento |
-| AC4 | Host | Wi-Fi no `Ready` 30 s / servidor mudo 30 s / 30 s sin datos → `SIN RED`; sigue recordada | `NetworkGate` falso, reloj |
-| AC5 | Host | `NoExiste` → `FALTA`, versión nueva sin la unidad; `.xex` inválido → `INVALIDA` | Servidor falso |
+| AC4 | Host | Wi-Fi no `Ready` 30 s / servidor mudo 30 s → `SIN RED`; DNS falla → `SERVIDOR NO ENCONTRADO`; las dos siguen recordadas | `NetworkGate` falso, reloj |
+| AC4 | Host | Inactividad: (a) progreso lento, un bloque cada 20 s durante 2 min, sin que cambie el porcentaje → **no** vence; (b) pausa de 31 s a mitad → `SIN RED`; (c) servidor detenido tras el primer bloque → `SIN RED` a los 30 s | Servidor falso con ritmo controlado, reloj |
+| AC5 | Host | Estado ENOENT → `FALTA`, versión nueva sin la unidad; `.xex` inválido → `INVALIDA`. Con EACCES, otro estado, respuesta mala, sin red o sin memoria la unidad **sigue recordada** | Servidor falso con cada estado |
+| — | Host | `NO CABE` y recuperación: primer encendido sin memoria → `NO CABE`, sigue recordada; encendido siguiente con memoria libre → montada | `MemoryImageStore` con límite |
 | AC6 | Host, **determinista** | El usuario cambia o desmonta D2 en `Cargando`; luego el loader entrega la imagen; D2 y la memoria no cambian; la ranura se recicla | Loader falso controlado paso a paso |
 | AC7 | Unidad (`drive_memory`) | Ranuras v1 y v2 de prueba se leen sin pérdida; v3 ida y vuelta | — |
-| AC8 | Banco con USB | `listo_ms` ≤ hoy + 50 ms con unidades de red recordadas | — |
+| AC7 | Integración (`SlotFileStore` real en un directorio temporal) | Ranura A v2 (1 168 B) y B v3 (3 488 B), de tamaños distintos: gana la de mayor secuencia; CRC malo y escritura cortada (archivo truncado) se rechazan y gana la otra; el primer guardado v3 tras leer v2 escribe la ranura que no tiene la más nueva y la v2 sigue válida; D1–D8 y `C:` se conservan en cada paso | Archivos en disco del PC |
+| AC8 | Banco con USB (autorización específica, §0) | `listo_ms` ≤ hoy + 50 ms con unidades de red recordadas | — |
 | AC9 | Host | D2 recordada de `srv-a`; `E` cambia la fuente 2 a `srv-b`; al encender se pide a `srv-a` | Dos servidores falsos |
 
 `NetRestoreQueue` lleva además pruebas unitarias propias (plazos, `requeue`, `cancel`). Los textos de §0 se comprueban
@@ -173,14 +191,14 @@ literales en la pantalla renderizada.
 
 | # | Tarea | AC | Riesgo | Depende | Paralela | Done-check |
 |---|---|---|---|---|---|---|
-| T1 | `DriveMemory` v3 + codec; lectura v1/v2 | AC7 | 1 | — | sí | `ctest -R drive_memory` verde; ranuras v1 y v2 de prueba se leen |
-| T2 | `NetRestoreQueue` (pura) con plazos, `cancel`, `requeue` | AC4, AC6 | 1 | — | sí | `ctest -R net_restore` verde |
-| T3 | `LoaderError::NoExiste`/`NoCabe` en `TnfsLoader` | AC5 | 1 | — | sí | `ctest -R tnfs_loader` verde con ENOENT y sin memoria |
+| T1 | `DriveMemory` v3 + codec; lectura v1/v2; integración con `SlotFileStore` | AC7 | 1 | — | sí | `ctest -R "drive_memory\|drive_slot_store"` verde con los casos de integración de §5 |
+| T2 | `NetRestoreQueue` (pura) con plazos por bytes y reloj monotónico, `cancel`, `requeue` | AC4, AC6 | 1 | — | sí | `ctest -R net_restore` verde con progreso lento, pausa de 31 s y servidor detenido |
+| T3 | `NoExiste` solo por estado ENOENT; `NoCabe`; `bytes` en `InProgress` | AC4, AC5 | 1 | — | sí | `ctest -R "tnfs_client\|tnfs_loader"` verde con ENOENT, EACCES, otro estado, sin memoria y `bytes` creciente |
 | T4 | Spike + `startFetchAt`/`startXexAt` con sesión interna | AC9 | 2 | T3 | no | `ctest -R tnfs_loader` verde; nota del spike en el plan |
 | T5 | Controlador: recordar el origen al montar; `snapshot()` v3 | AC1, AC9 | 1 | T1 | no | `ctest -R menu_unidades` verde |
 | T6 | Controlador: restauración de red en segundo plano, textos, `A` con D1 en carga | AC1–AC5 | 2 | T2, T4, T5 | no | `ctest -R "menu_tnfs\|menu_unidades"` verde |
 | T7 | Cancelación y respuesta tardía; prioridad del usuario | AC6 | 2 | T6 | no | prueba determinista de AC6 verde |
-| T8 | Paquete `menu-sio` + banco con USB (aprobación aparte) | AC1–AC5, AC8 (USB), AC9 | 2 | T7 | no | registro en `02-DOCS/raw/` con consola y fotos |
+| T8 | Paquete `menu-sio` + banco con USB (autorización específica del montaje USB + SIO, más flasheo y COM3) | AC1–AC5, AC8 (USB), AC9 | 2 | T7 | no | registro en `02-DOCS/raw/` con consola y fotos |
 | T9 | Banco solo por SIO | AC8 | — | T8, T1a/T1b | no | **bloqueado** hasta T1a/T1b o autorización escrita |
 
 ## 7. Risks & open decisions
@@ -192,9 +210,11 @@ literales en la pantalla renderizada.
 | R3 | `DriveMemory` v3 (~3.5 KB) presiona pilas | Una copia en pila | Desbordamiento | Siempre miembro; revisar `snapshot()` y el guardado; prueba ASan |
 | R4 | Los plazos del cliente TNFS no coinciden con 30 s | T6 | `SIN RED` antes o después de lo pactado | `NetRestoreQueue` mide sus 30 s con su reloj y cancela; no depende de los reintentos del cliente |
 | R5 | Una v3 escrita no se puede leer con un firmware anterior | Volver a un paquete viejo | Unidades vacías | Aceptado: el firmware viejo ve la ranura como no válida y arranca vacío (no rompe) |
-| R6 | `NoCabe` recordada para siempre | Imagen demasiado grande | `NO CABE` en cada encendido | Decisión [I]: se mantiene; el usuario la cambia. Revisar en T8 |
+| R6 | `NoCabe` recordada para siempre | Imagen demasiado grande | `NO CABE` en cada encendido | Aceptado en la revisión: se mantiene; el usuario la cambia. Prueba de recuperación en §5 |
+| R7 | El valor del estado ENOENT de TNFS | T3 | `FALTA` en el caso equivocado borraría una asignación | [P] Confirmar el código en la documentación pública del protocolo TNFS (no en código de FujiNet); prueba con el servidor falso. Ante cualquier duda, `NoSePudoAbrir`, que no borra |
 
-Decisiones abiertas: ninguna pregunta abierta. `NoCabe` sigue recordada (R6) y `NoEncontrado` (DNS) cuenta como
-`SIN RED`; las dos son suposiciones tomadas del plan, para revisar en la revisión.
+Decisiones abiertas: ninguna. Revisión del PR #87 (2026-11-23): `NO CABE` sigue recordada, con prueba de
+recuperación; un fallo de DNS se muestra como `SERVIDOR NO ENCONTRADO`, distinto de `SIN RED`, y la unidad sigue
+recordada; solo ENOENT confirmado borra una asignación.
 
 No se consultó código de FujiNet (ADR-012).

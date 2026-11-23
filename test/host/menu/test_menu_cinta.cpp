@@ -28,6 +28,7 @@ public:
         if (busy) {
             return false;
         }
+        ++accepted;
         pendingPolls = pendingFor;
         loading = true;
         return true;
@@ -56,7 +57,8 @@ public:
     int pendingFor = 1;
     bool busy = false;
     bool gates = true;
-    int mounts = 0;
+    int mounts = 0;    // every mount() call
+    int accepted = 0;  // the ones that started a load
     int cancels = 0;
     int ejects = 0;
     char last[160] = {};
@@ -428,6 +430,36 @@ void test_a_remembered_tape_the_deck_refuses_is_taken_out()
     TEST_ASSERT_EQUAL_STRING("", saved.tape());
 }
 
+// Review of PR #85 (T3): a cassette busy at power-up refuses the first mount(); the remembered
+// tape stays on C:, the restore stays pending, and the tape is asked again until the deck takes it.
+void test_a_busy_cassette_at_power_up_gets_the_tape_when_it_is_free()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    deck.busy = true;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    restoreWith(rig, tapeMemory("KARATE.CAS"));
+    rig.step();
+    rig.step();
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", rig.controller->tapeName());
+    TEST_ASSERT_EQUAL_INT(0, deck.accepted);
+    TEST_ASSERT_TRUE(deck.mounts >= 1);
+    TEST_ASSERT_TRUE(rig.events.has("C: name=KARATE.CAS restore waits: cassette busy"));
+    deck.busy = false;  // the cassette is free: the next service() asks again
+    rig.step();
+    TEST_ASSERT_EQUAL_INT(1, deck.accepted);
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", deck.last);
+    rig.step();
+    rig.step();  // Pending once, then Ready
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", rig.controller->tapeName());
+    const int asked = deck.mounts;
+    rig.step();
+    TEST_ASSERT_EQUAL_INT(asked, deck.mounts);  // Ready ends the restore: no more requests
+    assert_line(rig.press(kPoll), rb::host::kMainTape, tapeLine("KARATE.CAS").c_str());
+    TEST_ASSERT_FALSE(rig.controller->memoryChanged());  // C: never changed
+}
+
 int main(void)
 {
     writeFolder();
@@ -449,5 +481,6 @@ int main(void)
     RUN_TEST(test_a_remembered_tape_is_back_on_c_after_power_up);
     RUN_TEST(test_a_missing_remembered_tape_is_reported);
     RUN_TEST(test_a_remembered_tape_the_deck_refuses_is_taken_out);
+    RUN_TEST(test_a_busy_cassette_at_power_up_gets_the_tape_when_it_is_free);
     return UNITY_END();
 }

@@ -704,7 +704,7 @@ void MenuController::chooseTape(EntryIndex entry)
         return;
     }
     std::snprintf(tapeIncoming_, sizeof tapeIncoming_, "%s", name);
-    restoringTape_ = false;  // the deck answers for this load now
+    tapeRestore_ = TapeRestore::None;  // the deck answers for this load now
     message_[0] = '\0';
     job_ = Job::Tape;
 }
@@ -748,14 +748,15 @@ void MenuController::ejectTape()
     char detail[MenuCatalog::kMaxName + 32];
     std::snprintf(detail, sizeof detail, "C: name=%s unmounted", tapeName_);
     tapeName_[0] = '\0';
-    restoringTape_ = false;
+    tapeRestore_ = TapeRestore::None;
     message_[0] = '\0';
     event("menu_select", detail);
     changed();
 }
 
 // T3 (AC5): the tape remembered for C: comes back with D1-D8. It shows at once; the deck reads it
-// in the background, and serviceRestoredTape() takes it out if the deck refuses it.
+// in the background, and serviceRestoredTape() takes it out if the deck refuses it. A busy deck
+// keeps the restore pending: mount() is asked again until it starts (review of PR #85).
 void MenuController::restoreTape(const char* name)
 {
     const EntryIndex entry = findEntry(name);
@@ -765,22 +766,43 @@ void MenuController::restoreTape(const char* name)
     }
     std::snprintf(tapeName_, sizeof tapeName_, "%s", name);
     ++restored_;
-    restoringTape_ = tape_ != nullptr && tape_->mount(name);  // no deck: kept, as remembered
     char detail[MenuCatalog::kMaxName + 32];
     std::snprintf(detail, sizeof detail, "C: name=%s restored", name);
     event("menu_restore", detail);
+    tapeBusyLogged_ = false;
+    tapeRestore_ = tape_ != nullptr ? TapeRestore::Ask : TapeRestore::None;  // no deck: kept, as remembered
+    askRestoredTape();
+}
+
+void MenuController::askRestoredTape()
+{
+    if (tapeRestore_ != TapeRestore::Ask || tape_ == nullptr) {
+        return;
+    }
+    if (tape_->mount(tapeName_)) {
+        tapeRestore_ = TapeRestore::Read;
+    } else if (!tapeBusyLogged_) {
+        tapeBusyLogged_ = true;  // asked again on every service(); logged once
+        char detail[MenuCatalog::kMaxName + 48];
+        std::snprintf(detail, sizeof detail, "C: name=%s restore waits: cassette busy", tapeName_);
+        event("menu_restore", detail);
+    }
 }
 
 void MenuController::serviceRestoredTape()
 {
-    if (!restoringTape_ || job_ == Job::Tape || tape_ == nullptr) {
+    if (tapeRestore_ == TapeRestore::None || job_ == Job::Tape || tape_ == nullptr) {
         return;
+    }
+    if (tapeRestore_ == TapeRestore::Ask) {
+        askRestoredTape();
+        return;  // polled from the next service() on
     }
     const TapeState state = tape_->poll();
     if (state == TapeState::Pending) {
         return;
     }
-    restoringTape_ = false;
+    tapeRestore_ = TapeRestore::None;
     if (state == TapeState::Ready) {
         return;
     }

@@ -8,8 +8,8 @@
 > - Cada medición necesita **autorización explícita del responsable** antes de empezar (§8).
 >
 > Origen: un integrante de la comunidad Atari sugirió el 74LVC4245. Este informe comprueba si sirve y lo compara.
-> Complementa la propuesta del PR #93 (`docs/hardware/proteccion-motor-gpio36.md`, **pendiente de fusión**:
-> https://github.com/calaluis/retrobridge-chile/pull/93), que ya verificó los esquemas 1.3 y 1.6.
+> Complementa la propuesta del PR #93, ya fusionada: [`proteccion-motor-gpio36.md`](proteccion-motor-gpio36.md)
+> (https://github.com/calaluis/retrobridge-chile/pull/93). Ese documento verificó los esquemas 1.3 y 1.6.
 
 ## 0. Etiquetas
 
@@ -22,6 +22,7 @@
 | **[T]** | Cálculo propio |
 | **[I]** | Inferencia: razonable, pero no leída ni medida |
 | **[P]** | Pendiente: no verificado. No se deduce |
+| **[R]** | Evidencia aportada por el revisor del PR #93, con fuente citada, que este informe **no pudo leer** |
 
 ## 1. Situación de partida
 
@@ -99,9 +100,23 @@ Ya verificado en el PR #93 §2.1 (esquema `FN32ROV-1.6_schematic.jpg`, commit `3
 | Alimentación | Una: `VCC_BUF` (5 V conmutado por Q2/Q3 solo si hay 3V3) | Dos: VCCA (5 V) y VCCB (3V3) |
 | Nivel en IO36 | Lo fija R2 (10K a 3V3) | Lo fija VCCB |
 | Lado Atari | R24 2K a GND | Necesita un pull-down aparte (la entrada CMOS no puede flotar) [D] |
-| FujiNet apagada | `VCC_BUF` = 0. IO36 sin camino. Entrada LS sin VCC: **no especificado** [P] | VCCB = 0 → alta impedancia; Ioff ≤ 2 µA [D] |
+| FujiNet apagada | `VCC_BUF` = 0. IO36 sin camino. Entrada LS con tensión > VCC, incluso VCC = 0: **tolerada según TI E2E**, respetando el máximo absoluto [R] (§3.1) | VCCB = 0 → alta impedancia; Ioff ≤ 2 µA [D] |
 
 La 1.6 **no usa** un 74LVC4245. Usa una puerta libre de un 74LS07 que la placa ya tenía.
+
+### 3.1 Entrada del SN74LS07 con VCC = 0 [R]
+
+- **Evidencia:** según el revisor del PR #93, TI confirma en su foro técnico E2E que la entrada del SN74LS07 tolera
+  una tensión mayor que VCC, **incluso con VCC = 0**, siempre que se respete el máximo absoluto. Fuente:
+  https://e2e.ti.com/support/logic-group/logic/f/logic-forum/1637475/
+- **Límite de esta evidencia:** el 2026-11-23 la página respondió **HTTP 403** (acceso denegado) a la lectura
+  automática y al navegador integrado. Este informe **no leyó el hilo**: no cita texto, fecha ni autor. Queda como
+  evidencia del revisor, a confirmar por quien pueda abrir la página [P].
+- **Máximo absoluto de la entrada:** 7 V en la hoja de datos de TI (`h4-puerta-sio.md` §3.1) [D]. MOTOR previsto
+  ≤ 5,25 V [T] queda por debajo. Los picos están sin medir [P] (M3a).
+- **Qué cubre:** solo la **entrada** del 74LS07 sin alimentación. **No valida** el circuito completo de la 1.6 ni la
+  modificación E del #93: faltan la fuga real de la entrada sin VCC, el estado de la salida 2Y con `VCC_BUF` = 0 y la
+  medición en la placa [P].
 
 ## 4. Soluciones de un solo canal
 
@@ -151,7 +166,7 @@ Valores para MOTOR = 4,7–5,25 V.
 | IO36 alto | ≈ VCCB [D] | ≥ 3,2 V [D][T] | 3,3 V (pull-up) [T] | 3,3 V (pull-up) [I] | 2,73–3,20 V [T] |
 | Margen frente a VIH 2,48 V | ≈ 0,7 V | ≈ 0,7 V | ≈ 0,8 V | ≈ 0,8 V | **0,25 V** |
 | Máx. en la entrada | VCCA + 0,5 V: **riesgo si VCCA < MOTOR** [T] | 6,5 V abs.; 5,5 V operativo [D] | 6,5 V abs.; 5,5 V operativo [D] | 7 V abs. [D] | Lo limita Rs |
-| FujiNet apagada: corriente desde MOTOR | ≤ 2 µA (Ioff, rev. K) [D] | ≤ 10 µA [D] | ≤ 10 µA [D] | No especificado [P] | ≈ 0,6 mA [T] |
+| FujiNet apagada: corriente desde MOTOR | ≤ 2 µA (Ioff, rev. K) [D] | ≤ 10 µA [D] | ≤ 10 µA [D] | Entrada tolerada con VCC = 0 [R]; corriente sin cifra [P] | ≈ 0,6 mA [T] |
 | FujiNet apagada: ¿algo alimenta IO36? | No, si VCCB = 3V3 de la placa [D] | No [D] | No [D] | No [I] | Sí, ≈ 0,6 mA [T] |
 | Carga sobre MOTOR | ≈ 0,49 mA (pull-down 10 k) | ≈ 0,45 mA (§6.1) | ≈ 0,49 mA (pull-down 10 k) | ≈ 2,4 mA (R24 2K) | ≈ 0,29 mA |
 | ¿Toca la placa? | Sí (3V3, y cortar pista o adaptador con cable) | Mínimo (un cable a 3V3) | Sí (mover R2) | Sí (cortar pista, levantar pin, mover R2) | No |
@@ -219,6 +234,7 @@ revisión K. El 74LVC1G17 da la misma protección con la placa apagada (Ioff), c
 | L7 | J2 recibe 3,3 V en MOTOR | 6.1 | Documentado; sin XC12 detrás |
 | L8 | Errores de montaje (pin 8 cruzado, puentes) | Todas | Etapas V2–V5 |
 | L9 | Umbrales del ESP32 sin confirmar en la WROVER | Todas | Revisar la hoja de datos [P] |
+| L10 | Tolerancia del 74LS07 sin VCC apoyada en un hilo de foro no leído aquí | 74LS07 (1.6, modificación E) | Confirmar el hilo de TI E2E; medir la fuga si se elige esa vía |
 
 ## 8. Validación por etapas
 
@@ -252,11 +268,15 @@ Hojas de datos de Texas Instruments, consultadas el 2026-11-23 (no se suben al r
 - **SN74LV1T34**, SCLS743E (revisada en febrero de 2024) — https://www.ti.com/lit/ds/symlink/sn74lv1t34.pdf —
   SHA-256 `04b2e1f1…0d52`. VIH; sin Ioff.
 
+Foro técnico de TI (evidencia del revisor del PR #93, no leída aquí: HTTP 403 el 2026-11-23):
+- TI E2E, Logic forum, hilo 1637475 — https://e2e.ti.com/support/logic-group/logic/f/logic-forum/1637475/ —
+  entrada del SN74LS07 por encima de VCC, incluso con VCC = 0 (§3.1).
+
 Esquemas:
 - FujiNet FN32ROV-1.6 y FN32ROV-1.3-Q24, repositorio oficial `FujiNetWIFI/fujinet-hardware`, commit
   `372bf92236b883c27c0c5928a77adbe5e6e81b66` —
   https://github.com/FujiNetWIFI/fujinet-hardware/tree/372bf92236b883c27c0c5928a77adbe5e6e81b66/ATARI/Old-Versions.
-  Lectura detallada y SHA-256 en el PR #93 (`proteccion-motor-gpio36.md` §2 y §9).
+  Lectura detallada y SHA-256 en [`proteccion-motor-gpio36.md`](proteccion-motor-gpio36.md) §2 y §9 (PR #93).
 - Esquemas de terceros del 65XE (hojas 5 y 9) y de la XC12 (`docs/fuentes.md`, 2026-10-26 y 2026-11-23).
 
 Documentos del proyecto: `h4-puerta-sio.md` §3.1 y §3.4, `ficha-medicion-m3a-motor.md`,

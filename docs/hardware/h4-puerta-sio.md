@@ -216,7 +216,8 @@ si algunos programas lo apagan y encienden entre bloques [P].
 
 **Revisiones posteriores de FujiNet [E]:** según el README de la FN32ROV-1.6, esa revisión **pasa MOTOR por un buffer**
 («Run Motor Control signal through buffer»), con un pull-up de 10 k en el lado del ESP32 y un pull-down de 2 k en el
-lado del Atari. No se revisó el esquema de la 1.6; no se le atribuye nada más.
+lado del Atari. El esquema de la 1.6 se revisó el 2026-11-23 (U3 puerta 2, R24 2K, R2 10K a 3V3):
+ver `proteccion-motor-gpio36.md` §2, propuesta de protección **no aprobada**.
 
 **[P] Punto de detención (M3a, sin cambios):** la primera medición del nivel alto de MOTOR CONTROL se hace **en el
 Atari solo, con la FujiNet desconectada del SIO** (procedimiento, etapa M3a), con el motor del casete encendido y un

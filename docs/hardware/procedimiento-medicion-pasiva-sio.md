@@ -85,12 +85,15 @@ Sin USB, sin Atari y con S5 apagado.
 
 ### M3a. Atari solo, FujiNet desconectada del SIO: nivel de MOTOR y reposo del bus (punto de detención)
 
+Ficha autocontenida para un colaborador, con el modo de encender MOTOR y la hoja de registro:
+`ficha-medicion-m3a-motor.md` (no cambia esta etapa ni sus criterios).
+
 Con autorización. **La FujiNet no está conectada al Atari.** Se mide en el conector SIO del propio Atari, o en un
 cable SIO de prueba sin ningún periférico, respecto de GND (pin 4 o 6).
 
 | Medición | Instrumento | Esperado | Criterio |
 |---|---|---|---|
-| Pin 8 (MOTOR) en reposo | Multímetro u osciloscopio con sonda 10× | Bajo [M] | Registrar el valor |
+| Pin 8 (MOTOR) en reposo | Multímetro u osciloscopio con sonda 10× | Bajo con un periférico que lo cargue [M]; **sin periférico puede quedar flotante**: en el 65XE ninguna resistencia lo baja (`h4-puerta-sio.md` §3.4) [E-Atari] | Registrar el valor |
 | **Pin 8 (MOTOR) con el motor del casete encendido** (por ejemplo, una operación de casete desde el Atari) | **Osciloscopio con sonda 10×**: ver el nivel estable y cualquier pico | Desconocido: el manual solo dice "alto = encendido" [M] | **Punto de detención (abajo)** |
 | Pin 10 (+5V/READY) | Multímetro | unos 5 V | Registrar el valor |
 | Pines 7 (COMMAND), 5 (DATA OUT) y 3 (DATA IN) en reposo | Multímetro u osciloscopio | Altos (pull-ups del Atari) | Registrar el valor |

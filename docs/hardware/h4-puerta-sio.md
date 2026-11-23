@@ -159,12 +159,13 @@ en serie**; la base la controla el PIA (CA2) por R91 (2k7; legible en la copia d
 [E-Atari]. El manual de Atari solo dice "alto = encendido" y **no especifica la tensión** [M].
 
 **Tensión prevista, no medida:**
-- Con el motor encendido: **≈ 4,7–4,9 V** en el pin 8 (5 V menos la saturación de Q7, con la carga ligera de R2 y de
-  la casetera) [T]. Es una **previsión a partir de un esquema de terceros, no una medición** [P].
+- Con el motor encendido: **≈ 4,7–4,9 V** en el pin 8 (5 V menos la saturación de Q7, con la carga de R2 o de la
+  casetera) [T]. Es una **previsión a partir de un esquema de terceros, no una medición** [P].
 - Sin resistencia en serie, la corriente disponible depende de Q7 y no está limitada por el circuito [T][I].
 - Con el motor apagado, Q7 queda abierto y el nivel lo fija la carga del periférico (R2 en la FujiNet) [I].
-- La carga del lado del casete no limita esa tensión: en la XC12, el pin 8 entra por R3 (27 k) a la base de un
-  transistor que conmuta el motor [E-Atari][I].
+- La carga del lado del casete no limita esa tensión. En la XC12, el pin 8 entra por R3 (27 k) a la base del
+  transistor que conmuta el motor **y además alimenta la electrónica de la casetera** (ver «Ampliación del
+  2026-11-23»); la carga es mayor que R2 sola, pero tampoco hay limitación en serie [E-Atari][I].
 
 **Riesgos (no son daños confirmados):**
 - **Exceso de tensión en IO36:** la tensión prevista supera el máximo admisible; con la placa alimentada, la
@@ -201,7 +202,8 @@ si algunos programas lo apagan y encienden entre bloques [P].
   solo mientras el Atari mantiene MOTOR en alto. La opción «casetera sin MOTOR» (reproducir con las pausas del `.cas`
   y un botón de «play») **queda descartada**: ninguna XC12 funciona así.
 - Por eso leer MOTOR es imprescindible para T9 de `menu-cinta`, y **M3a sigue siendo el punto de detención**.
-- El esquema del 65XE confirma que del lado del Atari **nada limita la corriente** hacia IO36 (R1).
+- Según el esquema del 65XE, del lado del Atari **no hay resistencia en serie ni limitador dedicado** que proteja
+  IO36: la corriente disponible depende del circuito de Q7. R1 sigue abierto y M3a pendiente.
 
 **Evidencia histórica [H] (proyecto WSS, G5-2, prueba T5, `FUJINET_WSS_P5_G5_2_REPORT.md` §4):**
 - El registro de la FujiNet muestra «MOTOR ON: activating cassette» a las 23:01:22 y la emisión del casete hasta

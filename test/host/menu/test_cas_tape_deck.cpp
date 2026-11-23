@@ -66,8 +66,8 @@ void test_the_mount_replies_are_classified()
     TEST_ASSERT_TRUE(rb::host::classifyMountReply("cannot open GAME.CAS") == CasMountReply::Invalid);
     TEST_ASSERT_TRUE(rb::host::classifyMountReply("GAME.CAS: not a valid .cas (FUJI header, cut block or baud 0)")
                      == CasMountReply::Invalid);
-    TEST_ASSERT_TRUE(rb::host::classifyMountReply("") == CasMountReply::Invalid);  // no reply in time
-    TEST_ASSERT_TRUE(rb::host::classifyMountReply(nullptr) == CasMountReply::Invalid);
+    TEST_ASSERT_TRUE(rb::host::classifyMountReply("") == CasMountReply::NoReply);  // no reply in time
+    TEST_ASSERT_TRUE(rb::host::classifyMountReply(nullptr) == CasMountReply::NoReply);
 }
 
 // mount -> Pending while the service reads, Ready once it says "mounted", then Idle.
@@ -282,6 +282,148 @@ void test_a_name_too_long_is_invalid()
     assertSent(channel, {});
 }
 
+// Review of PR #85 (T5), 1: "busy" to an eject. The tape is still in the cassette: eject again.
+void test_a_busy_eject_is_sent_again()
+{
+    FakeChannel channel;
+    CasTapeDeck deck(channel, true);
+    deck.mount("A.CAS");
+    channel.replies.push_back("mounted A.CAS: 1 data, 0 fsk");
+    deck.poll();
+    deck.eject();
+    channel.replies.push_back("busy: the last tape is still closing");
+    deck.pump();
+    channel.replies.push_back("ejected A.CAS");
+    deck.pump();
+    deck.pump();
+    assertSent(channel, {"mount A.CAS", "eject", "eject"});
+}
+
+// An eject with no reply in time is sent again too (a second eject is harmless: "no tape").
+void test_an_eject_with_no_reply_is_sent_again()
+{
+    FakeChannel channel;
+    CasTapeDeck deck(channel, true);
+    deck.eject();
+    channel.replies.push_back("");
+    deck.pump();
+    channel.replies.push_back("no tape");
+    deck.pump();
+    deck.pump();
+    assertSent(channel, {"eject", "eject"});
+}
+
+// Review 1: "busy" while putting the old tape back after a cancel: try the old tape again,
+// never eject the new one as if the old tape were gone.
+void test_a_busy_restore_is_sent_again()
+{
+    FakeChannel channel;
+    CasTapeDeck deck(channel, true);
+    deck.mount("OLD.CAS");
+    channel.replies.push_back("mounted OLD.CAS: 1 data, 0 fsk");
+    deck.poll();
+    deck.mount("NEW.CAS");
+    deck.cancel();
+    channel.replies.push_back("mounted NEW.CAS: 1 data, 0 fsk");
+    deck.pump();
+    channel.replies.push_back("busy: the last tape is still closing");
+    deck.pump();
+    channel.replies.push_back("mounted OLD.CAS: 1 data, 0 fsk");
+    deck.pump();
+    deck.pump();
+    TEST_ASSERT_EQUAL_STRING("OLD.CAS", deck.loaded());
+    assertSent(channel, {"mount OLD.CAS", "mount NEW.CAS", "mount OLD.CAS", "mount OLD.CAS"});
+}
+
+// Review 2: pump() took "mounted", then the menu cancels before poll() hands out Ready. The
+// cassette holds the new tape: the old one goes back, and C: keeps saying the old one.
+void test_cancel_after_the_tape_was_mounted_but_not_yet_seen_puts_the_old_tape_back()
+{
+    FakeChannel channel;
+    CasTapeDeck deck(channel, true);
+    deck.mount("OLD.CAS");
+    channel.replies.push_back("mounted OLD.CAS: 1 data, 0 fsk");
+    deck.poll();
+    deck.mount("NEW.CAS");
+    channel.replies.push_back("mounted NEW.CAS: 1 data, 0 fsk");
+    deck.pump();
+    deck.cancel();
+    TEST_ASSERT_TRUE(deck.poll() == TapeState::Idle);
+    channel.replies.push_back("mounted OLD.CAS: 1 data, 0 fsk");
+    deck.pump();
+    TEST_ASSERT_EQUAL_STRING("OLD.CAS", deck.loaded());
+    assertSent(channel, {"mount OLD.CAS", "mount NEW.CAS", "mount OLD.CAS"});
+}
+
+// Review 3: no reply in time, but the service keeps the command and may finish the mount. Ask
+// the cassette what it holds ("status" runs after the mount, on the same loop): the new tape.
+void test_a_mount_with_no_reply_asks_the_status_and_finds_the_new_tape()
+{
+    FakeChannel channel;
+    CasTapeDeck deck(channel, true);
+    deck.mount("SLOW.CAS");
+    channel.replies.push_back("");
+    TEST_ASSERT_TRUE(deck.poll() == TapeState::Pending);
+    channel.replies.push_back("SLOW.CAS: segment 1/9, gap 0 ms, motor off");
+    TEST_ASSERT_TRUE(deck.poll() == TapeState::Ready);
+    TEST_ASSERT_EQUAL_STRING("SLOW.CAS", deck.loaded());
+    assertSent(channel, {"mount SLOW.CAS", "status"});
+}
+
+// Review 3: no reply in time, and the status shows the old tape: the new one was not taken.
+void test_a_mount_with_no_reply_and_the_old_tape_in_the_status_is_invalid()
+{
+    FakeChannel channel;
+    CasTapeDeck deck(channel, true);
+    deck.mount("OLD.CAS");
+    channel.replies.push_back("mounted OLD.CAS: 1 data, 0 fsk");
+    deck.poll();
+    deck.mount("NEW.CAS");
+    channel.replies.push_back("");
+    deck.poll();
+    channel.replies.push_back("OLD.CAS: segment 1/1, gap 0 ms, motor off");
+    TEST_ASSERT_TRUE(deck.poll() == TapeState::Invalid);
+    TEST_ASSERT_EQUAL_STRING("OLD.CAS", deck.loaded());
+}
+
+// Review 3: a status with no reply either is asked again, a bounded number of times.
+void test_a_status_with_no_reply_is_asked_again_then_gives_up()
+{
+    FakeChannel channel;
+    CasTapeDeck deck(channel, true);
+    deck.mount("A.CAS");
+    TapeState state = TapeState::Pending;
+    int polls = 0;
+    while (state == TapeState::Pending && polls < 100) {
+        channel.replies.push_back("");
+        state = deck.poll();
+        ++polls;
+    }
+    TEST_ASSERT_TRUE(state == TapeState::Invalid);
+    TEST_ASSERT_TRUE(polls < 100);
+}
+
+// Review 3 with a cancel: no reply in time, cancel, and the status shows the new tape: the
+// old one goes back.
+void test_cancel_during_a_status_check_puts_the_old_tape_back()
+{
+    FakeChannel channel;
+    CasTapeDeck deck(channel, true);
+    deck.mount("OLD.CAS");
+    channel.replies.push_back("mounted OLD.CAS: 1 data, 0 fsk");
+    deck.poll();
+    deck.mount("NEW.CAS");
+    channel.replies.push_back("");
+    deck.pump();
+    deck.cancel();
+    channel.replies.push_back("NEW.CAS: segment 1/1, gap 0 ms, motor off");
+    deck.pump();
+    channel.replies.push_back("mounted OLD.CAS: 1 data, 0 fsk");
+    deck.pump();
+    TEST_ASSERT_EQUAL_STRING("OLD.CAS", deck.loaded());
+    assertSent(channel, {"mount OLD.CAS", "mount NEW.CAS", "status", "mount OLD.CAS"});
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -301,5 +443,13 @@ int main(void)
     RUN_TEST(test_a_mount_waits_for_an_eject_in_flight);
     RUN_TEST(test_the_gates_are_the_ones_given);
     RUN_TEST(test_a_name_too_long_is_invalid);
+    RUN_TEST(test_a_busy_eject_is_sent_again);
+    RUN_TEST(test_an_eject_with_no_reply_is_sent_again);
+    RUN_TEST(test_a_busy_restore_is_sent_again);
+    RUN_TEST(test_cancel_after_the_tape_was_mounted_but_not_yet_seen_puts_the_old_tape_back);
+    RUN_TEST(test_a_mount_with_no_reply_asks_the_status_and_finds_the_new_tape);
+    RUN_TEST(test_a_mount_with_no_reply_and_the_old_tape_in_the_status_is_invalid);
+    RUN_TEST(test_a_status_with_no_reply_is_asked_again_then_gives_up);
+    RUN_TEST(test_cancel_during_a_status_check_puts_the_old_tape_back);
     return UNITY_END();
 }

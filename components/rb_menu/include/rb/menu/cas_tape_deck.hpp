@@ -9,11 +9,16 @@
 //
 //   mount(name)  -> "mount <name>"; "mounted ..." = Ready, "too many blocks" = NoMemory,
 //                   "busy..." (the last tape is still closing) = sent again, anything else = Invalid.
-//                   A service that did not start (no PSRAM) answers NoMemory at once.
-//   cancel()     -> the reply is dropped; if the cassette took the new tape, the tape that was on
-//                   C: goes back ("mount <old>", or "eject" if there was none), so C: stays (AC6).
-//   eject()      -> "eject", once nothing else is in flight.
+//                   No reply in time: the service keeps the command and may still finish it, so
+//                   "status" is asked (it runs after the mount, on the same loop) and the tape it
+//                   names decides. A service that did not start (no PSRAM) answers NoMemory at once.
+//   cancel()     -> the load is dropped, even if its result was already taken but not yet handed
+//                   out by poll(); if the cassette took the new tape, the tape that was on C: goes
+//                   back ("mount <old>", or "eject" if there was none), so C: stays (AC6).
+//   eject()      -> "eject", once nothing else is in flight; sent again on "busy" or no reply.
 //   pump()       -> takes replies and sends what waits; poll() pumps too. Call it every SIO step.
+//
+// Review of PR #85 (T5): the deck never says a tape that the cassette does not hold.
 
 #include <cstddef>
 
@@ -39,15 +44,19 @@ protected:
     ~CasChannel() = default;
 };
 
-enum class CasMountReply { Mounted, Busy, TooBig, Invalid };
+enum class CasMountReply { Mounted, Busy, TooBig, NoReply, Invalid };
 
 // What a `cas mount` reply says.
 CasMountReply classifyMountReply(const char* reply) noexcept;
 
+// True if a `cas status` reply names `name` as the tape the cassette holds.
+bool statusHolds(const char* reply, const char* name) noexcept;
+
 class CasTapeDeck final : public TapeDeck {
 public:
     static constexpr std::size_t kNameMax = 128;  // with the NUL
-    static constexpr int kBusyRetries = 20;       // "busy" replies before the load gives up
+    static constexpr int kBusyRetries = 20;       // "busy" replies before a command gives up
+    static constexpr int kStatusRetries = 5;      // "status" with no reply before the load gives up
 
     CasTapeDeck(CasChannel& channel, bool gatesOpen) noexcept : channel_(channel), gates_(gatesOpen) {}
 
@@ -63,20 +72,26 @@ public:
     const char* loaded() const noexcept { return loaded_; }
 
 private:
-    enum class Op { None, Mount, Restore, Eject };
+    enum class Op { None, Mount, MountStatus, Restore, RestoreStatus, Eject };
 
     bool post(Op op, const char* verb, const char* name) noexcept;
     void onReply(const char* reply) noexcept;
+    void mountDone(bool taken, CasMountReply kind) noexcept;
+    void restoreDone(bool taken) noexcept;
+    void undo() noexcept;  // the cassette holds asked_, the menu does not want it
     void sendWaiting() noexcept;
 
     CasChannel& channel_;
     bool gates_;
     Op inFlight_ = Op::None;
     bool cancelled_ = false;
+    bool restoreWaiting_ = false;
     bool ejectWaiting_ = false;
     int busyLeft_ = 0;
+    int statusLeft_ = 0;
     TapeState report_ = TapeState::Idle;  // a result poll() has not handed out yet
     char asked_[kNameMax] = {};
+    char previous_[kNameMax] = {};  // the tape on C: when mount() was called
     char loaded_[kNameMax] = {};
 };
 

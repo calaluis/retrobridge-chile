@@ -9,6 +9,7 @@ namespace {
 
 constexpr std::size_t kLineMax = 160;    // CassetteService::kLineMax
 constexpr std::size_t kReplyMax = 160;   // CassetteService::kReplyMax
+constexpr std::size_t kCasNameMax = 63;  // CassetteCommands::kNameMax without the NUL: longer names are cut
 
 bool startsWith(const char* text, const char* prefix) noexcept
 {
@@ -25,7 +26,7 @@ void copyName(char (&out)[CasTapeDeck::kNameMax], const char* name) noexcept
 CasMountReply classifyMountReply(const char* reply) noexcept
 {
     if (reply == nullptr || reply[0] == '\0') {
-        return CasMountReply::Invalid;  // no reply in time: the menu says the tape is not valid
+        return CasMountReply::NoReply;
     }
     if (startsWith(reply, "mounted ")) {
         return CasMountReply::Mounted;
@@ -39,10 +40,23 @@ CasMountReply classifyMountReply(const char* reply) noexcept
     return CasMountReply::Invalid;
 }
 
+bool statusHolds(const char* reply, const char* name) noexcept
+{
+    // "cas status": "<name>: segment ..." or "<name>: end, ..."; "no tape, ..." when empty.
+    if (reply == nullptr || name == nullptr || name[0] == '\0') {
+        return false;
+    }
+    std::size_t length = std::strlen(name);
+    if (length > kCasNameMax) {
+        length = kCasNameMax;
+    }
+    return std::strncmp(reply, name, length) == 0 && reply[length] == ':';
+}
+
 bool CasTapeDeck::mount(const char* name) noexcept
 {
     pump();
-    if (inFlight_ != Op::None || ejectWaiting_ || report_ != TapeState::Idle) {
+    if (inFlight_ != Op::None || restoreWaiting_ || ejectWaiting_ || report_ != TapeState::Idle) {
         return false;
     }
     if (!channel_.available()) {
@@ -54,8 +68,10 @@ bool CasTapeDeck::mount(const char* name) noexcept
         return true;
     }
     copyName(asked_, name);
+    copyName(previous_, loaded_);
     cancelled_ = false;
     busyLeft_ = kBusyRetries;
+    statusLeft_ = kStatusRetries;
     return post(Op::Mount, "mount", asked_);
 }
 
@@ -67,13 +83,20 @@ TapeState CasTapeDeck::poll() noexcept
         report_ = TapeState::Idle;
         return state;
     }
-    return inFlight_ == Op::Mount && !cancelled_ ? TapeState::Pending : TapeState::Idle;
+    const bool loading = inFlight_ == Op::Mount || inFlight_ == Op::MountStatus;
+    return loading && !cancelled_ ? TapeState::Pending : TapeState::Idle;
 }
 
 void CasTapeDeck::cancel() noexcept
 {
-    if (inFlight_ == Op::Mount) {
+    if (inFlight_ == Op::Mount || inFlight_ == Op::MountStatus) {
         cancelled_ = true;
+    }
+    if (report_ == TapeState::Ready) {
+        // pump() already took "mounted", poll() has not handed it out: the cassette holds the new
+        // tape the menu no longer wants (review of PR #85, 2).
+        undo();
+        sendWaiting();
     }
     report_ = TapeState::Idle;
 }
@@ -81,7 +104,9 @@ void CasTapeDeck::cancel() noexcept
 void CasTapeDeck::eject() noexcept
 {
     loaded_[0] = '\0';
+    restoreWaiting_ = false;
     ejectWaiting_ = true;
+    busyLeft_ = kBusyRetries;
     sendWaiting();
 }
 
@@ -115,58 +140,114 @@ void CasTapeDeck::onReply(const char* reply) noexcept
 {
     const Op done = inFlight_;
     inFlight_ = Op::None;
-    if (done == Op::Eject) {
-        return;
-    }
     const CasMountReply kind = classifyMountReply(reply);
-    if (done == Op::Restore) {
-        if (kind != CasMountReply::Mounted) {
-            // The old tape is gone: the cassette still holds the one the menu dropped. Take it out.
-            loaded_[0] = '\0';
-            ejectWaiting_ = true;
-        }
-        return;
-    }
-    // done == Op::Mount
-    if (kind == CasMountReply::Busy && !cancelled_) {
-        if (busyLeft_ > 0) {
+    switch (done) {
+    case Op::Mount:
+        if (kind == CasMountReply::Busy && busyLeft_ > 0) {
             --busyLeft_;
-            if (post(Op::Mount, "mount", asked_)) {
-                return;
-            }
+            (void)post(Op::Mount, "mount", asked_);
+            return;
         }
-        report_ = TapeState::Invalid;
+        if (kind == CasMountReply::NoReply) {
+            // The service may still finish the mount: ask what the cassette holds (review 3).
+            (void)post(Op::MountStatus, "status", nullptr);
+            return;
+        }
+        mountDone(kind == CasMountReply::Mounted, kind);
+        return;
+    case Op::MountStatus:
+        if (kind == CasMountReply::NoReply && statusLeft_ > 0) {
+            --statusLeft_;
+            (void)post(Op::MountStatus, "status", nullptr);
+            return;
+        }
+        mountDone(statusHolds(reply, asked_), CasMountReply::Invalid);
+        return;
+    case Op::Restore:
+        if (kind == CasMountReply::Busy && busyLeft_ > 0) {
+            --busyLeft_;
+            (void)post(Op::Restore, "mount", previous_);
+            return;
+        }
+        if (kind == CasMountReply::NoReply) {
+            (void)post(Op::RestoreStatus, "status", nullptr);
+            return;
+        }
+        restoreDone(kind == CasMountReply::Mounted);
+        return;
+    case Op::RestoreStatus:
+        if (kind == CasMountReply::NoReply && statusLeft_ > 0) {
+            --statusLeft_;
+            (void)post(Op::RestoreStatus, "status", nullptr);
+            return;
+        }
+        restoreDone(statusHolds(reply, previous_));
+        return;
+    case Op::Eject:
+        if ((kind == CasMountReply::Busy || kind == CasMountReply::NoReply) && busyLeft_ > 0) {
+            --busyLeft_;
+            ejectWaiting_ = true;  // the tape may still be in: eject again (review 1)
+        }
+        return;
+    case Op::None:
+    default:
         return;
     }
+}
+
+void CasTapeDeck::mountDone(bool taken, CasMountReply kind) noexcept
+{
     if (cancelled_) {
         cancelled_ = false;
-        if (kind == CasMountReply::Mounted) {
-            // The cassette took the tape the menu no longer wants: put C: back as it was (AC6).
-            if (loaded_[0] != '\0') {
-                (void)post(Op::Restore, "mount", loaded_);
-            } else {
-                (void)post(Op::Eject, "eject", nullptr);
-            }
+        if (taken) {
+            undo();
         }
         return;
     }
-    switch (kind) {
-    case CasMountReply::Mounted:
+    if (taken) {
         copyName(loaded_, asked_);
         report_ = TapeState::Ready;
-        break;
-    case CasMountReply::TooBig:
-        report_ = TapeState::NoMemory;
-        break;
-    default:
-        report_ = TapeState::Invalid;
-        break;
+        return;
+    }
+    report_ = kind == CasMountReply::TooBig ? TapeState::NoMemory : TapeState::Invalid;
+}
+
+void CasTapeDeck::restoreDone(bool taken) noexcept
+{
+    if (taken) {
+        copyName(loaded_, previous_);
+        return;
+    }
+    // The old tape is gone: the cassette still holds the one the menu dropped. Take it out.
+    loaded_[0] = '\0';
+    ejectWaiting_ = true;
+    busyLeft_ = kBusyRetries;
+}
+
+void CasTapeDeck::undo() noexcept
+{
+    copyName(loaded_, previous_);
+    busyLeft_ = kBusyRetries;
+    statusLeft_ = kStatusRetries;
+    if (previous_[0] != '\0') {
+        restoreWaiting_ = true;
+    } else {
+        ejectWaiting_ = true;
     }
 }
 
 void CasTapeDeck::sendWaiting() noexcept
 {
-    if (ejectWaiting_ && inFlight_ == Op::None && post(Op::Eject, "eject", nullptr)) {
+    if (inFlight_ != Op::None) {
+        return;
+    }
+    if (restoreWaiting_) {
+        if (post(Op::Restore, "mount", previous_)) {
+            restoreWaiting_ = false;
+        }
+        return;
+    }
+    if (ejectWaiting_ && post(Op::Eject, "eject", nullptr)) {
         ejectWaiting_ = false;
     }
 }

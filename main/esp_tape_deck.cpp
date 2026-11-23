@@ -69,7 +69,7 @@ void EspCasChannel::run() noexcept
         if (xQueueReceive(lines_, &line, portMAX_DELAY) != pdTRUE) {
             continue;
         }
-        answer.text[0] = '\0';  // no reply in time: CasTapeDeck reads it as not valid
+        answer.text[0] = '\0';  // no reply in time: CasTapeDeck asks "status"
         if (!service_.request(line.text, answer.text, sizeof answer.text)) {
             answer.text[0] = '\0';
         }

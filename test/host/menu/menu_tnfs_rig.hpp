@@ -248,6 +248,7 @@ struct Rig {
     GatedPort gated{server};
     FakeLink link{gated};
     FakeLink unresolved{gated};
+    FakeLink restore{gated};  // menu-tnfs-persistente T6: the restore session's link (any name reaches the fake server)
     TnfsLink* links[TnfsLoader::kMaxSource + 1] = {};
     Clock clock;
     TestMemory memory;
@@ -269,7 +270,8 @@ struct Rig {
     // The loader starts once the test has set up the server (it is not thread-safe).
     void start()
     {
-        loader.emplace(links, repository->memory(), clock, memory, nullptr, RB_TEST_MENU_DIR);  // menu-xex: local .xex
+        loader.emplace(links, repository->memory(), clock, memory, nullptr, RB_TEST_MENU_DIR,  // menu-xex: local .xex
+                       &restore);
         controller.emplace(catalog, sources, *repository, mailbox, &events, &*loader);
         controller->onColdReset();
         controller->service();

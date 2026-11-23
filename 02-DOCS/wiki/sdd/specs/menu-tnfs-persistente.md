@@ -66,8 +66,10 @@ El dueño del 65XE con la FujiNet en su banco, alimentada solo por el SIO o por 
 - Cada unidad de red recordada muestra que se está cargando (por ejemplo `D2: CARGANDO <nombre>`) hasta que su imagen
   llega; entonces muestra su nombre, como cualquier unidad montada. El texto exacto lo fija el plan, dentro de 40
   columnas.
-- Si tras unos 30 s el Wi-Fi o el servidor no responden, esa unidad queda vacía en esta sesión y el menú dice por qué
-  (por ejemplo `D2: SIN RED`). Su nombre se sigue recordando: el próximo encendido lo intenta otra vez.
+- Si tras unos 30 s el Wi-Fi no conecta o el servidor no responde, o si una descarga en curso pasa unos 30 s sin
+  recibir datos, esa unidad queda vacía en esta sesión y el menú dice por qué
+  (por ejemplo `D2: SIN RED`). Su nombre se sigue recordando: el próximo encendido lo intenta otra vez. Una descarga
+  que avanza no tiene plazo total: una ATR grande puede tardar unos 65 s (`menu-tnfs`, plan).
 - Si el servidor responde pero la imagen ya no está o no es válida, la unidad queda vacía y el menú lo dice, como
   con la microSD (`FALTA`, `INVALIDA`), y deja de recordarse.
 - Mientras D1 recordada sea de red y no haya llegado, `A` no arranca una imagen a medio cargar.
@@ -95,7 +97,9 @@ El dueño del 65XE con la FujiNet en su banco, alimentada solo por el SIO o por 
 - Tests de host: la memoria de unidades guarda y lee una unidad de red (servidor + ruta) junto a las de la microSD;
   una memoria v1/v2 se sigue leyendo; la restauración de red monta al llegar la imagen, avisa con el motivo si falla
   o si se agota el plazo, y no bloquea la pantalla ni `A` de las unidades de la microSD.
-- Banco en el 65XE con USB (consola) y otro solo con SIO: montar una ATR de la fuente 2 en D2 y un `.XEX` de la fuente
+- Prueba de host determinista para AC6: la descarga de D2 termina **después** de que el usuario cambió o desmontó D2;
+  la respuesta tardía no cambia la asignación de D2 ni la memoria de unidades.
+- Banco en el 65XE con USB (consola) y otro solo con SIO (el de solo SIO, bloqueado como AC8): montar una ATR de la fuente 2 en D2 y un `.XEX` de la fuente
   2 en D1, apagar, encender. Foto de la pantalla con `CARGANDO` y luego con ambas asignadas; `A` arranca el `.XEX`.
 - Banco con el servidor apagado o inalcanzable: foto con el aviso de la unidad tras el plazo; el encendido siguiente,
   con el servidor de vuelta, la restaura.
@@ -124,14 +128,17 @@ El dueño del 65XE con la FujiNet en su banco, alimentada solo por el SIO o por 
   disponible, D2 vuelve.
 - **AC5** — Dada D2 de red recordada cuya imagen ya no existe en el servidor, cuando se enciende, entonces D2 queda
   vacía con el motivo, como con la microSD, y el encendido siguiente ya no la intenta.
-- **AC9** — Dada D2 recordada desde el servidor de la fuente 2, cuando se edita con `E` la fuente 2 para que apunte a
-  otro servidor, entonces el encendido siguiente pide D2 al servidor original, no al nuevo.
 - **AC6** — Dada D2 en `CARGANDO`, cuando el usuario monta otra imagen en D2 o la desmonta, entonces la restauración
-  se cancela y se recuerda el cambio del usuario.
+  se cancela y se recuerda el cambio del usuario; una descarga que termine después no cambia D2 ni la memoria de
+  unidades.
 - **AC7** — Dada una memoria de unidades v2 (de `menu-cinta`), cuando arranca el firmware nuevo, entonces se leen
   D1..D8 y `C:` sin pérdida.
 - **AC8** — Con unidades de red recordadas, cuando se enciende solo por SIO, entonces `listo_ms` no empeora más de
-  50 ms respecto de hoy.
+  50 ms respecto de hoy. **Banco bloqueado** hasta que T1a y T1b estén confirmados con su registro
+  (`menu-sio-wifi-tnfs`, plan), o hasta una autorización escrita del responsable para un ensayo limitado solo por
+  SIO, copiada con su fecha en el registro del banco. Mientras tanto, `listo_ms` se mide con USB.
+- **AC9** — Dada D2 recordada desde el servidor de la fuente 2, cuando se edita con `E` la fuente 2 para que apunte a
+  otro servidor, entonces el encendido siguiente pide D2 al servidor original, no al nuevo.
 
 ## Fuera de alcance
 
@@ -149,7 +156,8 @@ El dueño del 65XE con la FujiNet en su banco, alimentada solo por el SIO o por 
 - **suposición tomada** — la restauración de red va en segundo plano; el menú responde enseguida y muestra la carga
   por unidad. *Base:* el responsable aceptó la recomendación el 2026-11-23. *Riesgo:* el Atari puede leer D2 antes de
   que llegue; hasta entonces responde como unidad sin disco.
-- **suposición tomada** — plazo de unos 30 s; al agotarse, la unidad queda vacía en la sesión y su nombre se sigue
+- **suposición tomada** — plazo de unos 30 s para conectar el Wi-Fi, para la primera respuesta del servidor y para
+  cada pausa sin datos de una descarga; no hay plazo total de descarga (una ATR grande tarda ~65 s). Al agotarse, la unidad queda vacía en la sesión y su nombre se sigue
   recordando hasta que el usuario la cambie. *Base:* el responsable aceptó la recomendación el 2026-11-23. El valor
   exacto lo fija el plan.
 - **suposición tomada** — la spec se escribe en la rama `spec/menu-tnfs-persistente` desde `main`; la implementación
@@ -185,3 +193,6 @@ todo, sigue»): la meta es que la FujiNet funcione al 100 % con Wi-Fi/TNFS.
 - 2026-11-23 — ¿Imagen que ya no existe en el servidor? → se olvida, como en la microSD → «no existe» no es pasajero.
 - 2026-11-23 — ¿Servidor por número de fuente o por dirección? → por `host:puerto` y ruta → editar fuentes con `E`
   no cambia de servidor una unidad recordada.
+- 2026-11-23 — Revisión del PR #86 (ChatGPT) → el plazo de ~30 s cubre conexión, primera respuesta y pausas sin
+  datos, no la descarga entera; AC6 exige que una respuesta tardía no cambie D2; el banco solo SIO de AC8 queda
+  bloqueado por T1a/T1b; AC9 pasa al final → aplicado.

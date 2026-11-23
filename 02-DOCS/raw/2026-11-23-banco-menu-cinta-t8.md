@@ -148,9 +148,15 @@ en cada fase. Hoy no hay registro de T1a ni de T1b en `02-DOCS/raw/`. Por eso:
 ## 6. Desviaciones del montaje previsto
 
 - **El pin 10 no estuvo aislado durante las pruebas.** [C] Al arrancar, con el 65XE apagado: `SIO +5V (pin 10) 0 mV`.
-  Al encender el 65XE: `65XE on at 220827 ms (SIO +5V 4780 mV)`. El USB y el +5 V del Atari estuvieron unidos,
-  contra §2 paso 6 (debía pararse). [C] Sin efecto visible: `brownout=0`, `panic=0`, un solo arranque en la captura.
-  Hay que revisar el cable antes de otro ensayo con USB. Es la misma desviación que en la demo E2.
+  Al encender el 65XE: `65XE on at 220827 ms (SIO +5V 4780 mV)`. El USB y el +5 V del Atari alimentaron la placa a
+  la vez, contra §2 paso 6 (debía pararse). No estuvieron unidos directamente: según el esquema 1.3, cada uno llega
+  a VCC por su diodo Schottky (USB → D4, pin 10 → D5) [E]; el reparto de corriente no está medido. [C] Sin efecto
+  visible: `brownout=0`, `panic=0`, un solo arranque en la captura; eso no prueba que el montaje sea seguro. Es la
+  misma desviación que en la demo E2.
+- **Segunda sesión (2026-11-23), parada al empezar.** [C] `65XE on at 21301 ms (SIO +5V 4780 mV)` con el cable
+  «revisado». El responsable aclaró que la FujiNet usa los 13 pines del SIO: no hay cable con el pin 10 aislado, y el
+  pin 8 (MOTOR → IO36) también pasa. Ninguna prueba AC. La propuesta de montaje está en
+  `docs/hardware/adaptador-banco-t8.md` (no aprobada).
 - **Sin rastro en la consola de AC5-USB ni de AC7b–d:** un solo arranque del ESP32 y ningún `menu_mount` de una
   imagen. La memoria de unidades se guardó tres veces (versiones 1–3), lo que cuadra con montar, desmontar y
   volver a montar `C:`.

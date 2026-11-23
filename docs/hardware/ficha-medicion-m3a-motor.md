@@ -1,5 +1,8 @@
 # Ficha de medición M3a: tensión de MOTOR (pin 8 del SIO) en un Atari 65XE
 
+> **NO EJECUTAR M3a SIN AUTORIZACIÓN EXPLÍCITA DEL RESPONSABLE.** La autorización para medir **no** es una
+> aprobación de M3a ni de H4: esas aprobaciones son decisiones aparte, con su propio registro.
+>
 > **Ficha para un colaborador.** Se entiende sola: no hace falta conocer el proyecto. Desarrolla la etapa M3a de
 > `procedimiento-medicion-pasiva-sio.md` (§3) y no la cambia. **Esta ficha no aprueba M3a:** la decisión, el
 > registro y el cambio de `docs/mediciones/puertas.json` son del responsable, en un PR aparte.
@@ -8,6 +11,9 @@
 > abre ningún puerto serie y no se inyecta tensión en ningún pin.
 
 ## 1. Para qué sirve
+
+**Alcance:** MOTOR (pin 8), la alimentación del pin 10 y el reposo de COMMAND, DATA OUT y DATA IN (pines 7, 5 y
+3), que la etapa M3a del procedimiento también pide. Nada más de H4.
 
 RetroBridge quiere cargar programas de casete (`.cas`) en un Atari 65XE desde una placa FujiNet con un ESP32. Para
 saber cuándo «arranca la casetera», el ESP32 debe leer la línea **MOTOR CONTROL** (pin 8 del conector SIO).
@@ -42,7 +48,8 @@ Solo se tocan estos pines. **Ningún otro.**
 |---|---|---|
 | 4 y 6 | GND (masa) | Referencia de todas las medidas |
 | 8 | MOTOR CONTROL | **La medición** |
-| 10 | +5 V / READY | Solo para confirmar la orientación del conector (unos 5 V con el Atari encendido) |
+| 10 | +5 V / READY | Confirmar la orientación del conector (unos 5 V con el Atari encendido) y medición D |
+| 7, 5 y 3 | COMMAND, DATA OUT, DATA IN | Solo reposo, con multímetro (medición E) |
 
 **Confirmar la orientación antes de medir** (los dibujos del conector cambian según se miren desde el Atari o desde el
 cable):
@@ -80,8 +87,9 @@ PACTL tiene que confirmarse en el equipo real.
 | A2 | Multímetro: pin 8 respecto de masa | Tensión |
 | A3 | Osciloscopio en el pin 8, 1 V/div, 1 ms/div | Nivel y si hay ruido |
 
-Nota: según el esquema, con el motor apagado el pin 8 del Atari **queda al aire** (no hay resistencia que lo baje).
-Sin carga, el valor puede ser inestable. Anótalo tal cual.
+Nota: según el esquema del 65XE, con el motor apagado el pin 8 **queda flotante**: ninguna resistencia del Atari lo
+baja; lo fija la carga del periférico (la FujiNet pone 10 kΩ a masa). **Sin periférico, el reposo puede no ser
+«bajo»** y el valor puede ser inestable. Anótalo tal cual; la medición C muestra el reposo con carga.
 
 ### Medición B — motor encendido, sin carga (punto de detención)
 
@@ -111,6 +119,16 @@ acceso seguro al pin (cable o *breakout*).
 |---|---|---|
 | D1 | Multímetro: pin 10 respecto de masa, con el motor apagado y encendido | Las dos tensiones |
 
+### Medición E — reposo de COMMAND, DATA OUT y DATA IN
+
+Solo lectura, con multímetro, en BASIC y sin ninguna operación de disco ni de casete en curso.
+
+| Paso | Qué hacer | Anotar |
+|---|---|---|
+| E1 | Pin 7 (COMMAND) respecto de masa | Tensión (se espera alta: resistencia a +5 V del Atari) |
+| E2 | Pin 5 (DATA OUT) respecto de masa | Tensión (se espera alta) |
+| E3 | Pin 3 (DATA IN) respecto de masa | Tensión (se espera alta) |
+
 ## 6. Criterio (lo decide el responsable)
 
 El límite de la entrada del ESP32 es **VDD + 0,3 V, unos 3,6 V**.
@@ -123,6 +141,15 @@ El límite de la entrada del ESP32 es **VDD + 0,3 V, unos 3,6 V**.
   cable). Esa protección es un cambio de hardware con aprobación aparte.
 
 El colaborador **no decide**: entrega los datos. El responsable aplica el criterio.
+
+**Dos criterios distintos; ninguno se deduce del otro:**
+
+| Puerta | Criterio | Documento |
+|---|---|---|
+| M3a | Nivel estable y picos claramente por debajo de VDD + 0,3 V (unos 3,6 V), con margen | `procedimiento-medicion-pasiva-sio.md`, etapa M3a |
+| H4-C, condición C5 | Pico de MOTOR ≤ 3,3 V medido en el Atari solo, **o** un adaptador validado | `h4-c-casetera.md` |
+
+Pasar M3a no aprueba C5 ni H4, y una aprobación de H4 no aprueba M3a. Cada una se decide y se registra aparte.
 
 ## 7. Qué entregar
 
@@ -151,6 +178,7 @@ El responsable lo registra en `docs/mediciones/m3a-motor-<fecha>.md`.
 | B5: pico o rebote al apagar (positivo y negativo), 3 veces | |
 | C: con 10 kΩ (B2, B3, B5), si se hizo | |
 | D1: pin 10 con motor apagado / encendido | |
+| E1 / E2 / E3: pines 7, 5 y 3 en reposo | |
 | ¿`POKE 54018,52` y `,60` encendieron y apagaron el nivel? | sí / no |
 | Observaciones (olor, calor, comportamiento raro) | |
 

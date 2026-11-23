@@ -379,3 +379,7 @@ set_tests_properties(test_tnfs_link PROPERTIES FIXTURES_REQUIRED menu_images)
 # menu-cinta T4: who owns DATA IN (disk or tape), plan §2.3; pure logic, fakes for both lines.
 rb_add_host_test(test_data_in_arbiter menu/test_data_in_arbiter.cpp ${rb_root}/components/rb_menu/src/data_in_arbiter.cpp)
 target_include_directories(test_data_in_arbiter PRIVATE ${rb_root}/components/rb_menu/include)
+
+# menu-cinta T5: the TapeDeck over the `cas` commands, through a channel that never waits.
+rb_add_host_test(test_cas_tape_deck menu/test_cas_tape_deck.cpp ${rb_root}/components/rb_menu/src/cas_tape_deck.cpp)
+target_include_directories(test_cas_tape_deck PRIVATE ${rb_root}/components/rb_menu/include)

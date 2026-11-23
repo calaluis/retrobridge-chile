@@ -95,8 +95,12 @@ dueño por defecto. La casetera nunca instala UART2 por su cuenta: pide la líne
 
 ### 2.3 Reglas del traspaso (precisa el área no formulable de la spec)
 
-1. **Disco → cinta:** MOTOR pasa a activo **y** hay cinta lista en `C:` **y** las dos puertas están aprobadas →
-   tras la trama en curso, `DiskLine.end()`, luego `TapeLine.take()`. La casetera reproduce desde el principio.
+1. **Disco → cinta:** se decide por **estado**, no por flanco: en cada paso, si MOTOR está activo **y** hay cinta
+   lista en `C:` **y** las dos puertas están aprobadas → tras la trama en curso, `DiskLine.end()`, luego
+   `TapeLine.take()`. La casetera reproduce desde el principio.
+   - **MOTOR activo antes de que la cinta quede lista** (la cinta recordada se restaura en segundo plano al
+     encender con START, y el usuario pulsa la tecla antes): el árbitro cede DATA IN en el paso en que la cinta
+     pasa a `Ready`, sin esperar otro flanco de MOTOR. Revisión del PR #85, 2026-11-23.
 2. **La cinta conserva la línea mientras MOTOR se apaga y enciende** (pausas entre bloques, `cassette-cas`
    «reanudar con MOTOR»). Soltarla en cada pausa haría saltar el UART sin necesidad.
 3. **Cinta → disco** cuando ocurre lo primero de:
@@ -186,7 +190,7 @@ DataInArbiter.step(motorOn, commandLow, tapeReady, tapeEnded, poweredOff, gates)
 | AC6 | unidad | `Invalid` → `CINTA NO VALIDA`; `NoMemory` → `SIN MEMORIA PARA LA CINTA`; `C:` sin cambio | `FakeTapeDeck` |
 | AC7 | CI + banco | paquete `menu-sio` compila con la casetera; `listo_ms` del registro de arranque ≤ valor de hoy + 50 ms; discos, XEX y TNFS como antes | — |
 | AC8 | unidad + CI + banco | `gatesOpen() == false` → `CINTA EN C:, AUN NO PUEDE CARGARSE`; árbitro siempre `Keep`/Disk; las comprobaciones de puertas del paquete siguen verdes | `FakeTapeDeck`, árbitro con `gates=false` |
-| AC9–AC12 | unidad del árbitro ahora; banco tras M3a/H4 | tabla de transiciones de §2.3 completa (MOTOR on/off, pausa, COMMAND, fin, apagado, fallo de `take`/`begin`) | líneas falsas que registran el orden de `end/take/release/begin` |
+| AC9–AC12 | unidad del árbitro ahora; banco tras M3a/H4 | tabla de transiciones de §2.3 completa (MOTOR on/off, pausa, COMMAND, fin, apagado, fallo de `take`/`begin`), incluido **MOTOR ya activo cuando la cinta pasa a `Ready` → `ToTape` en ese paso** | líneas falsas que registran el orden de `end/take/release/begin` |
 
 Prueba RED obligatoria del árbitro: el orden `end` antes de `take` y `release` antes de `begin` (dos UART2
 instalados a la vez es el fallo que más cuesta en el equipo).
@@ -198,7 +202,7 @@ instalados a la vez es el fallo que más cuesta en el equipo).
 | T1 | `.cas` en el catálogo, `Entry.kind` | AC1 | 0 | — | sí | `ctest -R menu_catalog` verde con casos `.cas`/`.CAS` |
 | T2 | Puerto `TapeDeck` + `FakeTapeDeck`; `C` como destino, cruces rechazados, línea `C:`, desmontar | AC2–AC4, AC6, AC8 | 1 | T1 | no | `ctest -R menu_cinta` verde, textos de §3 literales |
 | T3 | `DriveMemory` v2 con `C:`; lectura v1 | AC5 | 1 | — | sí | `ctest -R "drive_memory\|menu_unidades"` verde; ranura v1 de prueba se lee |
-| T4 | `DataInArbiter` puro + tabla de transiciones | AC8, AC9–AC12 (lógica) | 1 | — | sí | `ctest -R data_in_arbiter` verde; prueba RED del orden vista fallar antes |
+| T4 | `DataInArbiter` puro + tabla de transiciones | AC8, AC9–AC12 (lógica) | 1 | — | sí | `ctest -R data_in_arbiter` verde; prueba RED del orden vista fallar antes; caso «MOTOR activo antes de `Ready`» cubierto |
 | T5 | `EspTapeDeck` sobre `CassetteService`; `gatesOpen()` desde `validate_for_cassette_output` y M3a | AC6, AC8 | 1 | T2 | no | compila en CI (ESP-IDF build) |
 | T6 | `menu_sio`: arrancar la casetera tras D1, medir PSRAM libre, restaurar `C:` al arrancar | AC5, AC7 | 2 | T3, T5 | no | paquete `menu-sio` verde en CI; consola muestra PSRAM libre y `cas: listo` |
 | T7 | Enchufar el árbitro al bucle SIO (inerte sin puertas): MOTOR solo con M3a, COMMAND por GPIO39 | AC7, AC8 | 2 | T4, T6 | no | CI verde; comprobaciones de puertas del paquete verdes; sin puertas, ningún `uart_driver_delete` del SIO en el registro |
@@ -216,7 +220,7 @@ Cada tarea de riesgo 2 pide flasheo y banco con aprobación.
 | R2 | La casetera retrasa D1 | `cas_loop` (prioridad 5) o `start()` compiten con `rb_sio_menu` al arrancar | AC7 falla | Arrancar el servicio en `finish()`, tras servir D1; comparar `listo_ms` con el valor de hoy (T6) |
 | R3 | No cabe el banco PSRAM junto a `MemoryImageStore` | PSRAM fragmentada | casetera sin arrancar | Medir en T6; si falta, la casetera no arranca y `mount` da `NoMemory`; decisión del tamaño en un PR aparte |
 | R4 | Volver a un firmware anterior borra la memoria de unidades | ranura v2 leída por código v1 | D1–D8 vacías tras bajar de versión | Aceptado y documentado en el registro de T8; no se pierde ningún archivo |
-| R5 | La cinta tarda en leerse y el usuario pulsa la tecla antes | `.cas` grande, `mount` en segundo plano al arrancar | la carga no empieza | La casetera espera `Ready` antes de reproducir; el OS espera el tono guía. Se mide el tiempo de lectura en T8 |
+| R5 | La cinta tarda en leerse y el usuario pulsa la tecla antes | `.cas` grande, `mount` en segundo plano al arrancar | la carga no empieza | El árbitro decide por estado: MOTOR activo + `Ready` cede la línea aunque MOTOR subiera antes (§2.3 regla 1, prueba en T4); el OS espera el tono guía. Se mide el tiempo de lectura en T8 |
 | R6 | El juego lee disco tras la cinta y pierde una trama | regla 3 de §2.3 | un reintento del OS | El OS reintenta; se verifica en T9 con un caso real si existe |
 | R7 | AC9–AC12 dependen de puertas no aprobadas | M3a/H4 en `false` | el objetivo final queda pendiente | T9 fuera de este PR; T4 y T7 dejan la lógica probada e inerte |
 

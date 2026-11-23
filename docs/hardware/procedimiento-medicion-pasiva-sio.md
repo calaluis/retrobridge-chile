@@ -85,6 +85,9 @@ Sin USB, sin Atari y con S5 apagado.
 
 ### M3a. Atari solo, FujiNet desconectada del SIO: nivel de MOTOR y reposo del bus (punto de detención)
 
+Ficha autocontenida para un colaborador, con el modo de encender MOTOR y la hoja de registro:
+`ficha-medicion-m3a-motor.md` (no cambia esta etapa ni sus criterios).
+
 Con autorización. **La FujiNet no está conectada al Atari.** Se mide en el conector SIO del propio Atari, o en un
 cable SIO de prueba sin ningún periférico, respecto de GND (pin 4 o 6).
 

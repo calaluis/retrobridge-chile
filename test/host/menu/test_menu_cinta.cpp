@@ -327,6 +327,107 @@ void test_without_the_gates_the_tape_mounts_with_a_warning()
     TEST_ASSERT_TRUE(rig.events.has("C: name=KARATE.CAS mounted gates=0"));
 }
 
+// --- T3 (AC5): C: is remembered with D1-D8 -----------------------------------------
+
+// Restores `memory` as menu-sio does at power-up and waits until the drives are back.
+void restoreWith(Rig& rig, const rb::host::DriveMemory& memory)
+{
+    rig.controller->beginRestore();
+    rig.controller->restore(memory);
+    for (int i = 0; i < 50 && rig.controller->restoring(); ++i) {
+        rig.step();
+    }
+    TEST_ASSERT_FALSE(rig.controller->restoring());
+}
+
+rb::host::DriveMemory tapeMemory(const char* tape)
+{
+    rb::host::DriveMemory memory;
+    TEST_ASSERT_TRUE(memory.setTape(tape));
+    return memory;
+}
+
+// Mounting and taking out a tape are changes to save, like a drive; the snapshot carries C:.
+void test_the_tape_on_c_is_in_the_snapshot()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    restoreWith(rig, rb::host::DriveMemory{});
+    rig.press(K1);
+    rig.press(KC);
+    rig.press(KC);    // reading (the deck answers Pending once)
+    rig.press(kPoll);  // Ready: C: changes; the screen waits for the save, as for a drive
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", rig.controller->tapeName());
+    TEST_ASSERT_TRUE(rig.controller->memoryChanged());
+    rb::host::DriveMemory saved;
+    rig.controller->saveResult(rig.controller->snapshot(saved), true, 0);
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", saved.tape());
+    rig.press(KU);
+    rig.press(KC);
+    TEST_ASSERT_NULL(rig.controller->tapeName());
+    TEST_ASSERT_TRUE(rig.controller->memoryChanged());
+    rig.controller->snapshot(saved);
+    TEST_ASSERT_EQUAL_STRING("", saved.tape());
+}
+
+// AC5: after a power cycle the remembered tape is on C: again and the deck is asked to read it.
+void test_a_remembered_tape_is_back_on_c_after_power_up()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    restoreWith(rig, tapeMemory("KARATE.CAS"));
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", rig.controller->tapeName());
+    TEST_ASSERT_EQUAL_INT(1, deck.mounts);
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", deck.last);
+    rig.step();
+    rig.step();  // the deck answers Ready in the background
+    const MenuReply shown = rig.press(kPoll);
+    assert_line(shown, rb::host::kMainTape, tapeLine("KARATE.CAS").c_str());
+    assert_line(shown, kMainMessage, " UNIDADES RESTAURADAS");
+    TEST_ASSERT_FALSE(rig.controller->memoryChanged());  // what was restored is what is saved
+    TEST_ASSERT_TRUE(rig.events.has("C: name=KARATE.CAS restored"));
+}
+
+// A remembered tape that is no longer on the card: C: empty, and the line says so.
+void test_a_missing_remembered_tape_is_reported()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    restoreWith(rig, tapeMemory("BORRADA.CAS"));
+    TEST_ASSERT_NULL(rig.controller->tapeName());
+    TEST_ASSERT_EQUAL_INT(0, deck.mounts);
+    const MenuReply shown = rig.press(kPoll);
+    assert_line(shown, rb::host::kMainTape, "C: SIN CINTA");
+    assert_line(shown, kMainMessage, " C: FALTA BORRADA.CAS");
+}
+
+// A remembered tape the deck cannot read any more: C: is emptied and that is saved.
+void test_a_remembered_tape_the_deck_refuses_is_taken_out()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    deck.result = TapeState::Invalid;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    restoreWith(rig, tapeMemory("KARATE.CAS"));
+    rig.step();
+    rig.step();
+    TEST_ASSERT_NULL(rig.controller->tapeName());
+    const MenuReply shown = rig.press(kPoll);
+    assert_line(shown, rb::host::kMainTape, "C: SIN CINTA");
+    TEST_ASSERT_TRUE(rig.events.has("C: name=KARATE.CAS restore refused: invalid"));
+    TEST_ASSERT_TRUE(rig.controller->memoryChanged());
+    rb::host::DriveMemory saved;
+    rig.controller->snapshot(saved);
+    TEST_ASSERT_EQUAL_STRING("", saved.tape());
+}
+
 int main(void)
 {
     writeFolder();
@@ -344,5 +445,9 @@ int main(void)
     RUN_TEST(test_a_busy_or_missing_deck_says_so);
     RUN_TEST(test_esc_while_reading_cancels_the_tape);
     RUN_TEST(test_without_the_gates_the_tape_mounts_with_a_warning);
+    RUN_TEST(test_the_tape_on_c_is_in_the_snapshot);
+    RUN_TEST(test_a_remembered_tape_is_back_on_c_after_power_up);
+    RUN_TEST(test_a_missing_remembered_tape_is_reported);
+    RUN_TEST(test_a_remembered_tape_the_deck_refuses_is_taken_out);
     return UNITY_END();
 }

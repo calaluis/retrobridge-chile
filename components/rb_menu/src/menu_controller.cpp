@@ -284,6 +284,8 @@ void MenuController::service()
     }
     if (restoring_) {
         restoreNext();  // after the menu: D1 comes first
+    } else {
+        serviceRestoredTape();
     }
 }
 
@@ -702,6 +704,7 @@ void MenuController::chooseTape(EntryIndex entry)
         return;
     }
     std::snprintf(tapeIncoming_, sizeof tapeIncoming_, "%s", name);
+    restoringTape_ = false;  // the deck answers for this load now
     message_[0] = '\0';
     job_ = Job::Tape;
 }
@@ -716,6 +719,7 @@ void MenuController::tapeDone(TapeState state)
         const bool gates = tape_->gatesOpen();
         say(gates ? " CINTA EN C:, ENCIENDE CON START" : " CINTA EN C:, AUN NO PUEDE CARGARSE");
         std::snprintf(detail, sizeof detail, "C: name=%s mounted gates=%d", tapeName_, gates ? 1 : 0);
+        changed();  // remembered with D1-D8 (T3)
         break;
     }
     case TapeState::NoMemory:
@@ -744,8 +748,49 @@ void MenuController::ejectTape()
     char detail[MenuCatalog::kMaxName + 32];
     std::snprintf(detail, sizeof detail, "C: name=%s unmounted", tapeName_);
     tapeName_[0] = '\0';
+    restoringTape_ = false;
     message_[0] = '\0';
     event("menu_select", detail);
+    changed();
+}
+
+// T3 (AC5): the tape remembered for C: comes back with D1-D8. It shows at once; the deck reads it
+// in the background, and serviceRestoredTape() takes it out if the deck refuses it.
+void MenuController::restoreTape(const char* name)
+{
+    const EntryIndex entry = findEntry(name);
+    if (entry == kNoEntry || !hasCasExtension(name)) {
+        restoreProblem(0, "FALTA", name);
+        return;
+    }
+    std::snprintf(tapeName_, sizeof tapeName_, "%s", name);
+    ++restored_;
+    restoringTape_ = tape_ != nullptr && tape_->mount(name);  // no deck: kept, as remembered
+    char detail[MenuCatalog::kMaxName + 32];
+    std::snprintf(detail, sizeof detail, "C: name=%s restored", name);
+    event("menu_restore", detail);
+}
+
+void MenuController::serviceRestoredTape()
+{
+    if (!restoringTape_ || job_ == Job::Tape || tape_ == nullptr) {
+        return;
+    }
+    const TapeState state = tape_->poll();
+    if (state == TapeState::Pending) {
+        return;
+    }
+    restoringTape_ = false;
+    if (state == TapeState::Ready) {
+        return;
+    }
+    char detail[MenuCatalog::kMaxName + 64];
+    std::snprintf(detail, sizeof detail, "C: name=%s restore refused: %s", tapeName_,
+                  state == TapeState::NoMemory ? "no memory" : "invalid");
+    say(state == TapeState::NoMemory ? " C: SIN MEMORIA PARA LA CINTA" : " C: CINTA NO VALIDA");
+    tapeName_[0] = '\0';
+    event("menu_restore", detail);
+    changed();  // C: empty is what the card keeps now
 }
 
 std::optional<ErrorCode> MenuController::assignD1(EntryIndex entry)
@@ -1607,6 +1652,9 @@ void MenuController::restore(const DriveMemory& memory)
             ++restored_;
         }
     }
+    if (memory.tape()[0] != '\0') {
+        restoreTape(memory.tape());
+    }
     restoreLoaded_ = true;
     restoreNext();
 }
@@ -1637,7 +1685,11 @@ void MenuController::restoreNext()
 void MenuController::restoreProblem(unsigned number, const char* what, const char* detail) noexcept
 {
     if (++problems_ == 1) {
-        std::snprintf(problem_.data(), problem_.size(), " D%u: %s %s", number, what, detail);
+        if (number == 0) {
+            std::snprintf(problem_.data(), problem_.size(), " C: %s %s", what, detail);
+        } else {
+            std::snprintf(problem_.data(), problem_.size(), " D%u: %s %s", number, what, detail);
+        }
     }
 }
 
@@ -1678,13 +1730,14 @@ void MenuController::restoreFailed(const char* message) noexcept
 
 uint32_t MenuController::snapshot(DriveMemory& out) noexcept
 {
-    out = DriveMemory{};
+    out.clear();
     for (unsigned number = 1; number <= kDrives; ++number) {
         const Shown& shown = shown_[number - 1];
         if (shown.kind == Shown::Kind::Local) {
             (void)out.set(number, catalog_.name(shown.entry));  // a name it refuses is remembered empty
         }
     }
+    (void)out.setTape(tapeName_);  // menu-cinta T3
     emitted_ = version_;
     return version_;
 }

@@ -284,7 +284,10 @@ private:
     bool saving() const noexcept { return persistent_ && !restoring_ && !saveFailed_ && version_ != confirmed_; }
     EntryIndex findEntry(const char* name) const noexcept;
     void restoreNext();
+    // drive 0: C: (menu-cinta).
     void restoreProblem(unsigned drive, const char* what, const char* detail) noexcept;
+    void restoreTape(const char* name);
+    void serviceRestoredTape();
     void finishRestore() noexcept;
     Cursor popPosition() noexcept;
 
@@ -336,6 +339,9 @@ private:
     // C: (menu-cinta): the tape on it, and the one being read while job_ is Job::Tape.
     char tapeName_[MenuCatalog::kMaxName + 1] = {};
     char tapeIncoming_[MenuCatalog::kMaxName + 1] = {};
+    // A remembered tape the deck is reading again after power-up (T3): tapeName_ shows it; if the
+    // deck refuses it, C: is emptied and that is saved.
+    bool restoringTape_ = false;
     uint8_t percent_ = 0;
 
     // E (menu-editar-servidor): the source edited (2..8) and the field the 6502 sends.

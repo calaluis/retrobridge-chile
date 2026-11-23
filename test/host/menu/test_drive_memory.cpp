@@ -1,6 +1,7 @@
 // DriveMemory and its slot codec (menu-unidades-persistentes T1, C1 and C9): the names of D1..D8
 // survive a round trip through one fixed-size slot, and any damaged slot is rejected.
 
+#include <array>
 #include <cstdint>
 #include <cstring>
 
@@ -114,7 +115,10 @@ static void test_a_sealed_slot_with_a_wrong_header_or_name_field_is_rejected(voi
     TEST_ASSERT_FALSE_MESSAGE(codec::decode(magic.data(), magic.size(), slot), "magic");
 
     codec::Block version = good;
-    version[4] = 2;
+    version[4] = 3;  // menu-cinta: 2 is the current version, 1 the old size (test_a_version_1_slot_*)
+    reseal(version);
+    TEST_ASSERT_FALSE_MESSAGE(codec::decode(version.data(), version.size(), slot), "version");
+    version[4] = 1;  // version 1 at the version 2 size
     reseal(version);
     TEST_ASSERT_FALSE_MESSAGE(codec::decode(version.data(), version.size(), slot), "version");
 
@@ -176,9 +180,95 @@ static void test_newest_picks_the_valid_slot_with_the_highest_sequence(void)
     TEST_ASSERT_EQUAL_PTR(&a, codec::newest(&a, &tie));
 }
 
+// --- menu-cinta T3 (AC5): the tape on C: is remembered too -----------------------
+
+// A version 1 slot as the firmware before menu-cinta writes it: 8 name fields, no tape.
+std::array<uint8_t, codec::kSlotSizeV1> versionOne(const DriveMemory& memory, uint32_t seq)
+{
+    std::array<uint8_t, codec::kSlotSizeV1> out{};
+    const uint32_t magic = codec::kMagic;
+    for (int i = 0; i < 4; ++i) {
+        out[i] = static_cast<uint8_t>(magic >> (8 * i));
+        out[8 + i] = static_cast<uint8_t>(seq >> (8 * i));
+    }
+    out[4] = 1;
+    for (unsigned drive = 1; drive <= DriveMemory::kDrives; ++drive) {
+        const char* name = memory.name(drive);
+        std::memcpy(out.data() + codec::kNamesOffset + (drive - 1) * codec::kNameField, name, std::strlen(name));
+    }
+    const uint32_t crc = rb::host::crc32(out.data(), codec::kSlotSizeV1 - 4);
+    for (int i = 0; i < 4; ++i) {
+        out[codec::kSlotSizeV1 - 4 + i] = static_cast<uint8_t>(crc >> (8 * i));
+    }
+    return out;
+}
+
+static void test_the_tape_is_empty_by_default_and_takes_only_valid_names(void)
+{
+    DriveMemory memory;
+    TEST_ASSERT_EQUAL_STRING("", memory.tape());
+    TEST_ASSERT_TRUE(memory.setTape("KARATE.CAS"));
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", memory.tape());
+    TEST_ASSERT_FALSE(memory.setTape("CON\x07" "CONTROL.CAS"));
+    char tooLong[DriveMemory::kMaxName + 2];
+    std::memset(tooLong, 'A', sizeof tooLong - 1);
+    tooLong[sizeof tooLong - 1] = '\0';
+    TEST_ASSERT_FALSE(memory.setTape(tooLong));
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", memory.tape());  // a refused name changes nothing
+    DriveMemory other = memory;
+    TEST_ASSERT_TRUE(other == memory);
+    TEST_ASSERT_TRUE(other.setTape(""));
+    TEST_ASSERT_TRUE(other != memory);  // the tape counts for equality
+}
+
+static void test_a_version_2_slot_round_trips_the_tape(void)
+{
+    DriveMemory memory = sample();
+    TEST_ASSERT_TRUE(memory.setTape("KARATE.CAS"));
+    codec::Block block{};
+    codec::encode(memory, 12, block);
+    TEST_ASSERT_EQUAL_UINT8(2, block[4]);
+    TEST_ASSERT_EQUAL_size_t(codec::kSlotSizeV1 + codec::kNameField, codec::kSlotSize);
+    DriveMemorySlot slot{};
+    TEST_ASSERT_TRUE(codec::decode(block.data(), block.size(), slot));
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", slot.memory.tape());
+    TEST_ASSERT_TRUE(slot.memory == memory);
+
+    codec::Block tail = block;  // garbage after the tape's NUL
+    tail[codec::kNamesOffset + DriveMemory::kDrives * codec::kNameField + codec::kNameField - 1] = 'Z';
+    reseal(tail);
+    TEST_ASSERT_FALSE(codec::decode(tail.data(), tail.size(), slot));
+}
+
+static void test_a_version_1_slot_is_read_with_no_tape(void)
+{
+    const auto old = versionOne(sample(), 30);
+    DriveMemorySlot slot{};
+    TEST_ASSERT_TRUE(slot.memory.setTape("STALE.CAS"));
+    TEST_ASSERT_TRUE(codec::decode(old.data(), old.size(), slot));
+    TEST_ASSERT_TRUE(slot.memory == sample());  // D1..D8 as written, and no tape
+    TEST_ASSERT_EQUAL_STRING("", slot.memory.tape());
+    TEST_ASSERT_EQUAL_UINT32(30, slot.seq);
+
+    auto wrongVersion = old;  // version 2 at the version 1 size
+    wrongVersion[4] = 2;
+    const uint32_t crc = rb::host::crc32(wrongVersion.data(), codec::kSlotSizeV1 - 4);
+    for (int i = 0; i < 4; ++i) {
+        wrongVersion[codec::kSlotSizeV1 - 4 + i] = static_cast<uint8_t>(crc >> (8 * i));
+    }
+    TEST_ASSERT_FALSE(codec::decode(wrongVersion.data(), wrongVersion.size(), slot));
+    auto damaged = old;
+    damaged[20] ^= 0x01;
+    TEST_ASSERT_FALSE(codec::decode(damaged.data(), damaged.size(), slot));
+    TEST_ASSERT_FALSE(codec::decode(old.data(), old.size() - 1, slot));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_the_tape_is_empty_by_default_and_takes_only_valid_names);
+    RUN_TEST(test_a_version_2_slot_round_trips_the_tape);
+    RUN_TEST(test_a_version_1_slot_is_read_with_no_tape);
     RUN_TEST(test_a_new_memory_has_every_drive_empty);
     RUN_TEST(test_set_rejects_drives_out_of_range_and_names_too_long);
     RUN_TEST(test_a_slot_round_trips_the_names_and_the_sequence);

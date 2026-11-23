@@ -32,7 +32,15 @@ const char* DriveMemory::name(unsigned drive) const noexcept
 
 bool DriveMemory::set(unsigned drive, const char* name) noexcept
 {
-    if (drive < 1 || drive > kDrives || name == nullptr) {
+    if (drive < 1 || drive > kDrives) {
+        return false;
+    }
+    return setField(drive - 1, name);
+}
+
+bool DriveMemory::setField(std::size_t index, const char* name) noexcept
+{
+    if (name == nullptr) {
         return false;
     }
     std::size_t length = 0;
@@ -41,7 +49,7 @@ bool DriveMemory::set(unsigned drive, const char* name) noexcept
             return false;
         }
     }
-    std::array<char, kMaxName + 1>& field = names_[drive - 1];
+    std::array<char, kMaxName + 1>& field = names_[index];
     field.fill('\0');
     std::memcpy(field.data(), name, length);
     return true;
@@ -62,18 +70,26 @@ void encode(const DriveMemory& memory, uint32_t seq, Block& out) noexcept
         const char* name = memory.name(drive);
         std::memcpy(out.data() + kNamesOffset + (drive - 1) * kNameField, name, std::strlen(name));
     }
+    const char* tape = memory.tape();
+    std::memcpy(out.data() + kNamesOffset + DriveMemory::kDrives * kNameField, tape, std::strlen(tape));
     put32(out.data() + kSlotSize - 4, crc32(out.data(), kSlotSize - 4));
 }
 
 bool decode(const uint8_t* data, std::size_t size, DriveMemorySlot& out) noexcept
 {
-    if (data == nullptr || size != kSlotSize || get32(data + kSlotSize - 4) != crc32(data, kSlotSize - 4) ||
-        get32(data) != kMagic || (data[4] | data[5] << 8) != kVersion || data[6] != 0 || data[7] != 0) {
+    // The size says the version it must carry: 9 fields for version 2, 8 for version 1.
+    if (data == nullptr || (size != kSlotSize && size != kSlotSizeV1)) {
+        return false;
+    }
+    const uint16_t version = size == kSlotSize ? kVersion : kVersion1;
+    const unsigned fields = size == kSlotSize ? DriveMemory::kDrives + 1 : DriveMemory::kDrives;
+    if (get32(data + size - 4) != crc32(data, size - 4) || get32(data) != kMagic ||
+        (data[4] | data[5] << 8) != version || data[6] != 0 || data[7] != 0) {
         return false;
     }
     // Every name field is checked before `out` is touched, so a rejected slot leaves `out` as it was
     // without a DriveMemorySlot copy on the stack (~1 KB: it overflowed the 3584 B app_main stack).
-    for (unsigned drive = 1; drive <= DriveMemory::kDrives; ++drive) {
+    for (unsigned drive = 1; drive <= fields; ++drive) {
         const uint8_t* field = data + kNamesOffset + (drive - 1) * kNameField;
         const void* nul = std::memchr(field, 0, kNameField);
         if (nul == nullptr) {
@@ -89,6 +105,9 @@ bool decode(const uint8_t* data, std::size_t size, DriveMemorySlot& out) noexcep
     for (unsigned drive = 1; drive <= DriveMemory::kDrives; ++drive) {
         out.memory.set(drive, reinterpret_cast<const char*>(data + kNamesOffset + (drive - 1) * kNameField));
     }
+    out.memory.setTape(fields > DriveMemory::kDrives
+                           ? reinterpret_cast<const char*>(data + kNamesOffset + DriveMemory::kDrives * kNameField)
+                           : "");
     out.seq = get32(data + 8);
     return true;
 }

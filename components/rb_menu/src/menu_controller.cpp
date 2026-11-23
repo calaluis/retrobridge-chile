@@ -31,6 +31,7 @@ constexpr uint8_t kLetterCodes[kListMaxEntries] = {
 constexpr uint8_t kKeyA = 0x3F;
 constexpr uint8_t kKeyE = 0x2A;
 constexpr uint8_t kKeyU = 0x0B;
+constexpr uint8_t kKeyC = 0x12;  // menu-cinta: C, the cassette
 constexpr uint8_t kKeyN = 0x23;
 constexpr uint8_t kKeyS = 0x3E;
 constexpr uint8_t kKeyM = 0x25;
@@ -283,6 +284,8 @@ void MenuController::service()
     }
     if (restoring_) {
         restoreNext();  // after the menu: D1 comes first
+    } else {
+        serviceRestoredTape();
     }
 }
 
@@ -362,6 +365,11 @@ MenuReply MenuController::key(uint8_t code, uint8_t row)
             view_ = View::List;
             chosen_ = kNoEntry;
             message_[0] = '\0';
+        } else if (key == kKeyC) {
+            const EntryIndex entry = chosen_;
+            chosen_ = kNoEntry;
+            view_ = View::Main;
+            chooseTape(entry);
         } else if (!moveLine(driveLine_, key) && driveDigit(key, digit) != 0) {
             onPick(driveDigit(key, digit));
         }
@@ -370,6 +378,9 @@ MenuReply MenuController::key(uint8_t code, uint8_t row)
         if (key == kKeyEsc) {
             view_ = View::Main;
             message_[0] = '\0';
+        } else if (key == kKeyC) {
+            view_ = View::Main;
+            ejectTape();
         } else if (!moveLine(driveLine_, key) && driveDigit(key, digit) != 0) {
             onUnmount(driveDigit(key, digit));
         }
@@ -452,7 +463,7 @@ void MenuController::onMain(int digit, uint8_t key)
     } else if (key == kKeyU) {
         view_ = View::Unmount;
         driveLine_ = 0;
-        say(" DESMONTAR: PULSA 1-8, ESC CANCELA");
+        say(" DESMONTAR: PULSA 1-8 O C, ESC CANCELA");
     } else if (key == kKeyN) {
         startCreate();
     }
@@ -625,6 +636,14 @@ void MenuController::onPick(int digit)
     chosen_ = kNoEntry;
     view_ = View::Main;
     const char* name = catalog_.name(entry);
+    if (hasCasExtension(name)) {
+        // menu-cinta (AC3): a tape never goes on a disk drive; C: takes it (T2).
+        say(" UNA CINTA VA EN C:");
+        char detail[MenuCatalog::kMaxName + 48];
+        std::snprintf(detail, sizeof detail, "D%d name=%s refused: a tape only goes on C:", digit, name);
+        event("menu_select", detail);
+        return;
+    }
     if (hasXexExtension(name)) {
         chooseXex(digit, 1, name, std::strlen(name), name);
         return;
@@ -658,6 +677,160 @@ void MenuController::onUnmount(int digit)
 {
     view_ = View::Main;
     emptyDrive(static_cast<unsigned>(digit));
+}
+
+// menu-cinta (AC2, AC3, AC6): C puts the chosen tape on C:. The deck reads it elsewhere;
+// the menu polls it as a job (key() never waits), and C: changes only when it is Ready.
+void MenuController::chooseTape(EntryIndex entry)
+{
+    const char* name = catalog_.name(entry);
+    char detail[MenuCatalog::kMaxName + 64];
+    if (!hasCasExtension(name)) {
+        say(" UN DISCO NO VA EN C:");
+        std::snprintf(detail, sizeof detail, "C: name=%s refused: a disk does not go on C:", name);
+        event("menu_select", detail);
+        return;
+    }
+    if (tape_ == nullptr) {
+        say(" CASETERA NO DISPONIBLE");
+        std::snprintf(detail, sizeof detail, "C: name=%s refused: no cassette", name);
+        event("menu_select", detail);
+        return;
+    }
+    if (!tape_->mount(name)) {
+        say(" CASETERA OCUPADA, REPITE EN UN RATO");
+        std::snprintf(detail, sizeof detail, "C: name=%s refused: cassette busy", name);
+        event("menu_select", detail);
+        return;
+    }
+    std::snprintf(tapeIncoming_, sizeof tapeIncoming_, "%s", name);
+    tapeRestore_ = TapeRestore::None;  // the deck answers for this load now
+    message_[0] = '\0';
+    job_ = Job::Tape;
+}
+
+void MenuController::tapeDone(TapeState state)
+{
+    job_ = Job::None;
+    char detail[MenuCatalog::kMaxName + 64];
+    switch (state) {
+    case TapeState::Ready: {
+        std::memcpy(tapeName_, tapeIncoming_, sizeof tapeName_);
+        const bool gates = tape_->gatesOpen();
+        say(gates ? " CINTA EN C:, ENCIENDE CON START" : " CINTA EN C:, AUN NO PUEDE CARGARSE");
+        std::snprintf(detail, sizeof detail, "C: name=%s mounted gates=%d", tapeName_, gates ? 1 : 0);
+        changed();  // remembered with D1-D8 (T3)
+        break;
+    }
+    case TapeState::NoMemory:
+        say(" SIN MEMORIA PARA LA CINTA");
+        std::snprintf(detail, sizeof detail, "C: name=%s refused: no memory", tapeIncoming_);
+        break;
+    case TapeState::Unconfirmed:  // review 2 of PR #85: nobody knows; C: stays as it was
+        say(" CASETERA NO RESPONDE, REPITE EN UN RATO");
+        std::snprintf(detail, sizeof detail, "C: name=%s unconfirmed: no reply", tapeIncoming_);
+        break;
+    case TapeState::Invalid:
+    default:  // Idle: the deck lost the load; the tape on C: stays, as with Invalid
+        say(" CINTA NO VALIDA");
+        std::snprintf(detail, sizeof detail, "C: name=%s refused: invalid", tapeIncoming_);
+        break;
+    }
+    tapeIncoming_[0] = '\0';
+    event("menu_select", detail);
+}
+
+void MenuController::ejectTape()
+{
+    if (tapeName_[0] == '\0') {
+        message_[0] = '\0';
+        return;
+    }
+    if (tape_ != nullptr) {
+        tape_->eject();
+    }
+    char detail[MenuCatalog::kMaxName + 32];
+    std::snprintf(detail, sizeof detail, "C: name=%s unmounted", tapeName_);
+    tapeName_[0] = '\0';
+    tapeRestore_ = TapeRestore::None;
+    message_[0] = '\0';
+    event("menu_select", detail);
+    changed();
+}
+
+// T3 (AC5): the tape remembered for C: comes back with D1-D8. It shows at once; the deck reads it
+// in the background, and serviceRestoredTape() takes it out if the deck refuses it. A busy deck
+// keeps the restore pending: mount() is asked again until it starts (review of PR #85).
+void MenuController::restoreTape(const char* name)
+{
+    const EntryIndex entry = findEntry(name);
+    if (entry == kNoEntry || !hasCasExtension(name)) {
+        restoreProblem(0, "FALTA", name);
+        return;
+    }
+    std::snprintf(tapeName_, sizeof tapeName_, "%s", name);
+    ++restored_;
+    // "remembered": shown on C: from power-up; "restored" only once the deck says Ready (review of
+    // PR #85), or "remembered, no cassette" when this package has none to ask.
+    char detail[MenuCatalog::kMaxName + 48];
+    std::snprintf(detail, sizeof detail, "C: name=%s remembered%s", name, tape_ != nullptr ? "" : ", no cassette");
+    event("menu_restore", detail);
+    tapeBusyLogged_ = false;
+    tapeRestore_ = tape_ != nullptr ? TapeRestore::Ask : TapeRestore::None;  // no deck: kept, as remembered
+    askRestoredTape();
+}
+
+void MenuController::askRestoredTape()
+{
+    if (tapeRestore_ != TapeRestore::Ask || tape_ == nullptr) {
+        return;
+    }
+    if (tape_->mount(tapeName_)) {
+        tapeRestore_ = TapeRestore::Read;
+    } else if (!tapeBusyLogged_) {
+        tapeBusyLogged_ = true;  // asked again on every service(); logged once
+        char detail[MenuCatalog::kMaxName + 48];
+        std::snprintf(detail, sizeof detail, "C: name=%s restore waits: cassette busy", tapeName_);
+        event("menu_restore", detail);
+    }
+}
+
+void MenuController::serviceRestoredTape()
+{
+    if (tapeRestore_ == TapeRestore::None || job_ == Job::Tape || tape_ == nullptr) {
+        return;
+    }
+    if (tapeRestore_ == TapeRestore::Ask) {
+        askRestoredTape();
+        return;  // polled from the next service() on
+    }
+    const TapeState state = tape_->poll();
+    if (state == TapeState::Pending) {
+        return;
+    }
+    tapeRestore_ = TapeRestore::None;
+    if (state == TapeState::Ready) {
+        char done[MenuCatalog::kMaxName + 32];
+        std::snprintf(done, sizeof done, "C: name=%s restored", tapeName_);
+        event("menu_restore", done);
+        return;
+    }
+    if (state == TapeState::Unconfirmed) {
+        // Review 2 of PR #85: the cassette did not answer. The tape stays remembered on C: (it is
+        // not known to be bad); nothing is saved.
+        char unsure[MenuCatalog::kMaxName + 48];
+        std::snprintf(unsure, sizeof unsure, "C: name=%s restore unconfirmed: no reply", tapeName_);
+        event("menu_restore", unsure);
+        say(" C: CASETERA NO RESPONDE");
+        return;
+    }
+    char detail[MenuCatalog::kMaxName + 64];
+    std::snprintf(detail, sizeof detail, "C: name=%s restore refused: %s", tapeName_,
+                  state == TapeState::NoMemory ? "no memory" : "invalid");
+    say(state == TapeState::NoMemory ? " C: SIN MEMORIA PARA LA CINTA" : " C: CINTA NO VALIDA");
+    tapeName_[0] = '\0';
+    event("menu_restore", detail);
+    changed();  // C: empty is what the card keeps now
 }
 
 std::optional<ErrorCode> MenuController::assignD1(EntryIndex entry)
@@ -874,7 +1047,9 @@ MenuReply MenuController::render(uint8_t action) const noexcept
         }
         put(screen, kMainDrives + (n - 1) * kMenuLineWidth, kMenuLineWidth, text, true);
     }
-    put(screen, kMainTape, kMenuLineWidth, "C: SIN CINTA", true);
+    std::snprintf(text, sizeof text, "C: %.*s", static_cast<int>(kMenuLineWidth - 3),
+                  tapeName_[0] != '\0' ? tapeName_ : "SIN CINTA");
+    put(screen, kMainTape, kMenuLineWidth, text, true);
     const bool local = action == kMenuActionShow && job_ == Job::None;  // the 6502 moves the bar (N007)
     if (view_ == View::Edit) {
         // No bar: the 6502 shows its own cursor in the field (after "n  ").
@@ -899,7 +1074,9 @@ MenuReply MenuController::render(uint8_t action) const noexcept
         invert(screen, kMainDrives + driveLine_ * kMenuLineWidth);
         cursorBlock(screen, kMainDrives, local ? kDrives : 0, driveLine_, 0);
     }
-    if (job_ != Job::None) {
+    if (job_ == Job::Tape) {
+        put(screen, kMainMessage, kMenuLineWidth, " LEYENDO CINTA...", true);
+    } else if (job_ != Job::None) {
         std::snprintf(text, sizeof text, " CARGANDO %u%%", static_cast<unsigned>(percent_));
         put(screen, kMainMessage, kMenuLineWidth, text, true);
     } else if (editing() && view_ == View::Create) {
@@ -1261,6 +1438,13 @@ void MenuController::onFolderPick(uint8_t key, int digit)
         message_[0] = '\0';
         return;
     }
+    if (key == kKeyC) {
+        // menu-cinta (AC3): a TNFS folder lists disks only; none goes on C:.
+        chosen_ = kNoEntry;
+        view_ = View::Folder;
+        say(" UN DISCO NO VA EN C:");
+        return;
+    }
     if (digit == 0) {
         return;
     }
@@ -1316,7 +1500,11 @@ void MenuController::startJob(Job job, unsigned source, const char* path, std::s
 
 void MenuController::cancelJob() noexcept
 {
-    if (job_ != Job::None) {
+    if (job_ == Job::Tape) {
+        tape_->cancel();  // the tape on C: stays
+        tapeIncoming_[0] = '\0';
+        job_ = Job::None;
+    } else if (job_ != Job::None) {
         loader_->cancel(jobNumber_);  // a late result is dropped and its slot freed by the loader
         job_ = Job::None;
         jobNumber_ = 0;
@@ -1354,6 +1542,14 @@ MenuReply MenuController::advance()
 {
     if (job_ == Job::None) {
         return render(kMenuActionShow);  // the job did not start (T5: no network)
+    }
+    if (job_ == Job::Tape) {
+        const TapeState state = tape_->poll();
+        if (state == TapeState::Pending) {
+            return render(kMenuActionWait);
+        }
+        tapeDone(state);
+        return render(kMenuActionShow);
     }
     loader_->await(jobNumber_, kLoadWaitMicros);
     const LoaderStatus status = loader_->poll(jobNumber_, folder_);
@@ -1496,6 +1692,9 @@ void MenuController::restore(const DriveMemory& memory)
             ++restored_;
         }
     }
+    if (memory.tape()[0] != '\0') {
+        restoreTape(memory.tape());
+    }
     restoreLoaded_ = true;
     restoreNext();
 }
@@ -1526,7 +1725,11 @@ void MenuController::restoreNext()
 void MenuController::restoreProblem(unsigned number, const char* what, const char* detail) noexcept
 {
     if (++problems_ == 1) {
-        std::snprintf(problem_.data(), problem_.size(), " D%u: %s %s", number, what, detail);
+        if (number == 0) {
+            std::snprintf(problem_.data(), problem_.size(), " C: %s %s", what, detail);
+        } else {
+            std::snprintf(problem_.data(), problem_.size(), " D%u: %s %s", number, what, detail);
+        }
     }
 }
 
@@ -1567,13 +1770,14 @@ void MenuController::restoreFailed(const char* message) noexcept
 
 uint32_t MenuController::snapshot(DriveMemory& out) noexcept
 {
-    out = DriveMemory{};
+    out.clear();
     for (unsigned number = 1; number <= kDrives; ++number) {
         const Shown& shown = shown_[number - 1];
         if (shown.kind == Shown::Kind::Local) {
             (void)out.set(number, catalog_.name(shown.entry));  // a name it refuses is remembered empty
         }
     }
+    (void)out.setTape(tapeName_);  // menu-cinta T3
     emitted_ = version_;
     return version_;
 }

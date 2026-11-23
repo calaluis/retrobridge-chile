@@ -5,7 +5,9 @@
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/rb_build_flags.cmake)
 
 set(rb_srcs
+    "src/cas_tape_deck.cpp"
     "src/create_atr.cpp"
+    "src/data_in_arbiter.cpp"
     "src/drive_memory.cpp"
     "src/drive_memory_link.cpp"
     "src/drive_slot_store.cpp"

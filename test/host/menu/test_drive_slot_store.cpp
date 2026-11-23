@@ -1,6 +1,7 @@
 // SlotFileStore (menu-unidades-persistentes T2; C1, C5, C8, C9a, C9b, C9c): D1..D8 in two
 // fixed-size slot files; a power cut that leaves one slot incomplete loses at most that write.
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -10,6 +11,7 @@
 
 #include "rb/menu/drive_memory.hpp"
 #include "rb/menu/drive_slot_store.hpp"
+#include "rb/menu/sio_write_log.hpp"
 #include "unity.h"
 
 using rb::host::DriveMemory;
@@ -270,9 +272,51 @@ static void test_a_save_after_the_last_sequence_is_refused(void)
     TEST_ASSERT_TRUE(reload().memory == memory("A.ATR"));
 }
 
+// menu-cinta T3 (AC5): a card written by the firmware before menu-cinta (version 1 slots) keeps
+// its drives; the next saves write version 2, with the tape, at the new size.
+static void test_a_version_1_card_is_read_and_the_next_saves_write_version_2(void)
+{
+    std::vector<uint8_t> old(codec::kSlotSizeV1, 0);
+    const uint32_t magic = codec::kMagic;
+    const uint32_t seq = 5;
+    for (int i = 0; i < 4; ++i) {
+        old[i] = static_cast<uint8_t>(magic >> (8 * i));
+        old[8 + i] = static_cast<uint8_t>(seq >> (8 * i));
+    }
+    old[4] = 1;
+    const char name[] = "VIEJO.ATR";
+    std::copy(name, name + sizeof name - 1, old.begin() + codec::kNamesOffset);
+    const uint32_t crc = rb::host::crc32(old.data(), codec::kSlotSizeV1 - 4);
+    for (int i = 0; i < 4; ++i) {
+        old[codec::kSlotSizeV1 - 4 + i] = static_cast<uint8_t>(crc >> (8 * i));
+    }
+    std::FILE* file = std::fopen(path_of(SlotFileStore::kSlotA).c_str(), "wb");
+    TEST_ASSERT_NOT_NULL(file);
+    TEST_ASSERT_EQUAL_size_t(old.size(), std::fwrite(old.data(), 1, old.size(), file));
+    std::fclose(file);
+
+    SlotFileStore store{kDir};
+    const SlotFileStore::LoadResult& loaded = store.load();
+    TEST_ASSERT_EQUAL(Status::Loaded, loaded.status);
+    TEST_ASSERT_TRUE(loaded.memory == memory("VIEJO.ATR"));
+    TEST_ASSERT_EQUAL_STRING("", loaded.memory.tape());
+
+    DriveMemory withTape = memory("VIEJO.ATR");
+    TEST_ASSERT_TRUE(withTape.setTape("KARATE.CAS"));
+    TEST_ASSERT_TRUE(store.save(withTape).ok);  // slot B, seq 6
+    TEST_ASSERT_TRUE(store.save(withTape).ok);  // slot A again: the old, shorter file is rewritten
+    const SlotFileStore::LoadResult again = reload();
+    TEST_ASSERT_EQUAL(Status::Loaded, again.status);
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", again.memory.tape());
+    TEST_ASSERT_EQUAL_UINT32(7, again.seq);
+    TEST_ASSERT_EQUAL_UINT64(codec::kSlotSize, std::filesystem::file_size(path_of(SlotFileStore::kSlotA)));
+    TEST_ASSERT_EQUAL_UINT64(codec::kSlotSize, std::filesystem::file_size(path_of(SlotFileStore::kSlotB)));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_a_version_1_card_is_read_and_the_next_saves_write_version_2);
     RUN_TEST(test_a_save_is_refused_while_a_slot_cannot_be_read);
     RUN_TEST(test_a_save_after_the_last_sequence_is_refused);
     RUN_TEST(test_a_valid_slot_with_an_extra_byte_is_ignored);

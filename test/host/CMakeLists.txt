@@ -342,6 +342,14 @@ rb_add_host_test(test_menu_xex menu/test_menu_xex.cpp ${rb_root}/components/rb_m
 target_include_directories(test_menu_xex PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu_tnfs/include ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_menu_xex PRIVATE RB_TEST_MENU_DIR="${CMAKE_CURRENT_BINARY_DIR}/xex-images")
 target_link_libraries(test_menu_xex PRIVATE rb_net_tnfs Threads::Threads)
+# menu-cinta T1: .cas files are listed and refused on D1-D8
+rb_add_host_test(test_menu_cinta menu/test_menu_cinta.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp
+                 ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
+                 ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/components/rb_menu_tnfs/src/tnfs_loader.cpp ${rb_root}/components/rb_menu/src/xex_image.cpp
+                 ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/sha256.cpp)
+target_include_directories(test_menu_cinta PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu_tnfs/include ${rb_root}/components/rb_menu/include)
+target_compile_definitions(test_menu_cinta PRIVATE RB_TEST_MENU_DIR="${CMAKE_CURRENT_BINARY_DIR}/cinta-images")
+target_link_libraries(test_menu_cinta PRIVATE rb_net_tnfs Threads::Threads)
 
 # Cursor and pages in the lists (menu-navegacion N003), on the rig of test_menu_tnfs.
 rb_add_host_test(test_menu_navegacion menu/test_menu_navegacion.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp
@@ -367,3 +375,15 @@ if(WIN32)
     target_link_libraries(test_tnfs_link PRIVATE ws2_32)
 endif()
 set_tests_properties(test_tnfs_link PROPERTIES FIXTURES_REQUIRED menu_images)
+
+# menu-cinta T4: who owns DATA IN (disk or tape), plan §2.3; pure logic, fakes for both lines.
+rb_add_host_test(test_data_in_arbiter menu/test_data_in_arbiter.cpp ${rb_root}/components/rb_menu/src/data_in_arbiter.cpp)
+target_include_directories(test_data_in_arbiter PRIVATE ${rb_root}/components/rb_menu/include)
+
+# menu-cinta T5: the TapeDeck over the `cas` commands, through a channel that never waits.
+rb_add_host_test(test_cas_tape_deck menu/test_cas_tape_deck.cpp ${rb_root}/components/rb_menu/src/cas_tape_deck.cpp)
+target_include_directories(test_cas_tape_deck PRIVATE ${rb_root}/components/rb_menu/include)
+
+# menu-cinta T6 (review of PR #85): the SIO task reads the plan before the deck.
+rb_add_host_test(test_startup_flags menu/test_startup_flags.cpp)
+target_include_directories(test_startup_flags PRIVATE ${rb_root}/components/rb_menu/include)

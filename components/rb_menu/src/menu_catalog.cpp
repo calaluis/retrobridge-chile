@@ -64,9 +64,19 @@ bool hasImageExtension(const char* fileName) noexcept
     return hasAtrExtension(fileName) || hasXexExtension(fileName);
 }
 
+bool hasCasExtension(const char* fileName) noexcept { return hasExtension(fileName, "cas"); }
+
+EntryKind entryKind(const char* fileName) noexcept
+{
+    if (hasCasExtension(fileName)) {
+        return EntryKind::Tape;
+    }
+    return hasXexExtension(fileName) ? EntryKind::Xex : EntryKind::Disk;
+}
+
 bool isCatalogName(const char* fileName) noexcept
 {
-    if (!hasImageExtension(fileName) || std::strlen(fileName) > MenuCatalog::kMaxName) {
+    if (!(hasImageExtension(fileName) || hasCasExtension(fileName)) || std::strlen(fileName) > MenuCatalog::kMaxName) {
         return false;
     }
     // build_image_path also refuses ':' and '\'; such a file could be listed but never opened.

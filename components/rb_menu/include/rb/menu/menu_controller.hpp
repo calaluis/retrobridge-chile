@@ -72,6 +72,7 @@
 #include "rb/menu/menu_image.hpp"
 #include "rb/menu/menu_loader.hpp"
 #include "rb/menu/network_gate.hpp"
+#include "rb/menu/tape_deck.hpp"
 #include "rb/menu/menu_sources.hpp"
 #include "rb/app/inline_drive_mailbox.hpp"
 #include "rb/app/ports/image_repository.hpp"
@@ -126,6 +127,8 @@ public:
     // What a TNFS source asks before each job (menu-sio-wifi-tnfs T5); nullptr: the
     // network is always there (the PC).
     void setNetworkGate(const NetworkGate* gate) noexcept { network_ = gate; }
+    // The cassette C: puts tapes on (menu-cinta); nullptr: C says there is no cassette.
+    void setTapeDeck(TapeDeck* deck) noexcept { tape_ = deck; }
     // The --images folder and its catalog (the one given to the constructor), where N
     // creates a blank ATR (menu-formatear-disco); not set: N says there is none.
     void setImagesFolder(const char* folder, MenuCatalog& catalog) noexcept
@@ -149,6 +152,8 @@ public:
     // Name shown for drive 1..8 (for D1, the assigned image), or nullptr: the
     // catalog name of a local image, the display name of a TNFS one.
     const char* driveName(unsigned drive) const noexcept;
+    // The tape on C: (its catalog name), or nullptr (menu-cinta).
+    const char* tapeName() const noexcept { return tapeName_[0] != 0 ? tapeName_ : nullptr; }
 
     void beginRestore() noexcept;
     void restore(const DriveMemory& memory);
@@ -183,7 +188,7 @@ private:
     enum class View : uint8_t { Main, List, Pick, Unmount, Folder, FolderPick, Edit, Create };
     enum class CreateStep : uint8_t { Name, Density, Drive };
     enum class InFlight : uint8_t { None, Menu, Boot, Mount, Unmount };
-    enum class Job : uint8_t { None, Open, Enter, Up, Fetch, Xex };
+    enum class Job : uint8_t { None, Open, Enter, Up, Fetch, Xex, Tape };
 
     // What a drive shows: nothing, an entry of the local catalog, or an image in a
     // slot of the MemoryImageStore: one that came over TNFS, or the disk a .xex (local
@@ -211,6 +216,9 @@ private:
     void onPick(int digit);
     void chooseXex(int digit, unsigned source, const char* path, std::size_t length, const char* name);
     void onUnmount(int digit);
+    void chooseTape(EntryIndex entry);
+    void ejectTape();
+    void tapeDone(TapeState state);
     void startEdit();
     void onEdit(uint8_t code);
     void saveEdit();
@@ -276,7 +284,11 @@ private:
     bool saving() const noexcept { return persistent_ && !restoring_ && !saveFailed_ && version_ != confirmed_; }
     EntryIndex findEntry(const char* name) const noexcept;
     void restoreNext();
+    // drive 0: C: (menu-cinta).
     void restoreProblem(unsigned drive, const char* what, const char* detail) noexcept;
+    void restoreTape(const char* name);
+    void askRestoredTape();
+    void serviceRestoredTape();
     void finishRestore() noexcept;
     Cursor popPosition() noexcept;
 
@@ -290,6 +302,7 @@ private:
     MenuEvents* events_;
     MenuLoader* loader_;
     const NetworkGate* network_ = nullptr;
+    TapeDeck* tape_ = nullptr;
 
     View view_ = View::Main;
     EntryIndex chosen_ = kNoEntry;         // catalog entry (or folder entry) waiting for a drive
@@ -323,6 +336,16 @@ private:
     std::size_t jobPathLength_ = 0;
     unsigned jobDrive_ = 0;
     char jobName_[TnfsFolder::kDisplayWidth + 1] = {};
+
+    // C: (menu-cinta): the tape on it, and the one being read while job_ is Job::Tape.
+    char tapeName_[MenuCatalog::kMaxName + 1] = {};
+    char tapeIncoming_[MenuCatalog::kMaxName + 1] = {};
+    // A remembered tape after power-up (T3): tapeName_ shows it at once. Ask: mount() was refused
+    // (cassette busy) and is asked again by service(); Read: the deck is reading it. If the deck
+    // refuses it, C: is emptied and that is saved; Ready ends it.
+    enum class TapeRestore : uint8_t { None, Ask, Read };
+    TapeRestore tapeRestore_ = TapeRestore::None;
+    bool tapeBusyLogged_ = false;
     uint8_t percent_ = 0;
 
     // E (menu-editar-servidor): the source edited (2..8) and the field the 6502 sends.

@@ -26,6 +26,7 @@
 #include "rb/esp/esp_clock.hpp"
 #include "rb/esp/esp_sio_uart.hpp"
 #include "rb/esp/sd_card_storage.hpp"
+#include "rb/menu/data_in_arbiter.hpp"
 #include "rb/menu/drive_memory.hpp"
 #include "rb/menu/drive_memory_link.hpp"
 #include "rb/menu/drive_slot_store.hpp"
@@ -36,10 +37,12 @@
 #include "rb/menu/menu_station.hpp"
 #include "rb/menu/network_gate.hpp"
 #include "rb/menu/sio_power_watch.hpp"
+#include "rb/menu/startup_flags.hpp"
 #include "rb/menu/storage_reason.hpp"
 #include "rb/sio/sio_line_transport.hpp"
 
 #include "esp_pthread.h"
+#include "esp_tape_deck.hpp"
 #include "tnfs_link.hpp"
 #include "tnfs_loader.hpp"
 #include "udp_tnfs_port.hpp"
@@ -151,11 +154,48 @@ SemaphoreHandle_t g_adcLock = nullptr;  // the SIO task, the console and the boo
 constexpr int64_t kPowerSampleUs = 50000;  // plan §4: the SIO task samples the +5 V every 50 ms, between frames
 
 // Persistent drives (menu-unidades-persistentes). finish() reads the slots once, writes g_plan, creates the
-// queues and rb_drive_save, and only then publishes g_planPublished (release). The SIO task touches g_plan
+// queues and rb_drive_save, and only then publishes the plan (g_startup). The SIO task touches g_plan
 // and the queues only after it has seen that flag (acquire), and the queues only when g_plan allows saving.
 // The SIO task never writes to the microSD.
-rb::host::DriveMemoryPlan g_plan;            // written by finish() before g_planPublished
-std::atomic<bool> g_planPublished{false};
+// The tape deck (menu-cinta T6): finish() starts the cassette and creates the deck, then publishes it
+// BEFORE the plan (g_startup). The SIO task reads both with one g_startup.read() per step, plan first
+// (review of PR #85): with the plan seen the deck is seen too, gives the deck to the controller between
+// two frames and only then applies the plan, so the restore of C: always has it; and pumps it every step.
+const rb::board::BoardProfile* g_board = nullptr;  // start(): the gates come from it
+EspTapeDeck* g_tape = nullptr;                     // finish() creates it; then the SIO task only
+bool g_tapeApplied = false;                        // SIO task only
+rb::host::StartupFlags g_startup;                  // finish(): publishTape(), then publishPlan()
+rb::esp::EspMotorIn* g_motor = nullptr;            // finish(), before publishTape(); reads off without M3a
+
+// Who owns DATA IN (menu-cinta T7, plan §2.3): one arbiter, stepped by the SIO task between two frames.
+// The disk line is the SIO UART. The tape line is not built yet: CassetteService chooses its outputs once,
+// at start(), so it cannot take DATA IN while it runs (T9, after M3a/H4). kTapeOutput keeps the arbiter's
+// gates closed until then: the disk never lets go and the SIO UART is never ended (AC8, rule 4).
+constexpr bool kTapeOutput = false;
+
+class SioDiskLine final : public rb::host::DiskLine {
+public:
+    bool begin() noexcept override { return g_line != nullptr && g_line->begin(); }
+    void end() noexcept override
+    {
+        if (g_line != nullptr) {
+            g_line->end();
+        }
+    }
+};
+
+class PendingTapeLine final : public rb::host::TapeLine {
+public:
+    bool take() noexcept override { return false; }  // T9: never reached while kTapeOutput is false
+    bool release() noexcept override { return true; }
+};
+
+SioDiskLine g_diskLine;
+PendingTapeLine g_tapeLine;
+rb::host::DataInArbiter g_arbiter{g_diskLine, g_tapeLine};  // SIO task only
+bool g_atariOff = false;                                     // SIO task only: SioPowerWatch's last event
+
+rb::host::DriveMemoryPlan g_plan;            // written by finish() before g_startup.publishPlan()
 rb::host::DriveMemoryLink g_link;            // SIO task only (~1 KB: not on its stack)
 rb::host::SlotFileStore* g_store = nullptr;  // finish() reads it once; then rb_drive_save only
 
@@ -310,10 +350,12 @@ private:
 QueueSaver g_saver;  // SIO task only (~1 KB: not on its stack)
 
 // Between two frames: once the plan is published, restores (after the catalog) and handles saves.
-void serviceDriveMemory(rb::host::MenuController& controller, bool& planSeen, bool& restoreLogged)
+// `planPublished`: this step's g_startup.read(), the same read that applied the deck (review of PR #85).
+void serviceDriveMemory(rb::host::MenuController& controller, bool planPublished, bool& planSeen,
+                        bool& restoreLogged)
 {
     if (!planSeen) {
-        planSeen = g_planPublished.load(std::memory_order_acquire);
+        planSeen = planPublished;
         if (!planSeen) {
             return;  // g_plan and the queues are not ready yet
         }
@@ -379,9 +421,24 @@ void sioTask(void*)
             g_sourcesApplied = true;
             ESP_LOGI(kTag, "sources: %u TNFS server(s)", static_cast<unsigned>(g_sources.count()));
         }
-        serviceDriveMemory(g_station->controller(), planSeen, restoreLogged);
+        // One read per step, plan first: if the plan is seen, the deck published before it is seen too.
+        const rb::host::StartupFlags::Seen published = g_startup.read();
+        if (!g_tapeApplied && published.tape) {  // before the drive memory: the restore of C: finds the deck
+            g_station->controller().setTapeDeck(&g_tape->deck());
+            g_tapeApplied = true;
+            ESP_LOGI(kTag, "cas: deck en el menu (puertas %s)", g_tape->deck().gatesOpen() ? "abiertas" : "cerradas");
+            if (!g_tape->deck().gatesOpen()) {
+                ESP_LOGW(kTag, "cas: sin M3a/H4, la cinta no se reproduce; DATA IN queda para el disco");
+            } else if (!kTapeOutput) {
+                ESP_LOGW(kTag, "cas: la cinta aun no toma DATA IN (T9); DATA IN queda para el disco");
+            }
+        }
+        serviceDriveMemory(g_station->controller(), published.plan, planSeen, restoreLogged);
 
         const rb::sio::StepOutcome stepped = g_station->step();
+        if (g_tapeApplied) {
+            g_tape->deck().pump();  // takes `cas` replies and sends what waits; never blocks
+        }
 
         const bool down = gpio_get_level(kButtonA) == 0;
         const int64_t now = esp_timer_get_time();
@@ -396,17 +453,37 @@ void sioTask(void*)
                 case rb::host::SioPowerWatch::Event::PoweredOff:
                     g_station->returnToMenu();  // ready before the next power-on reads D1; drives kept
                     poweredOnUs = 0;
+                    g_atariOff = true;  // the arbiter gives DATA IN back to the disk (rule 3)
                     ESP_LOGI(kTag, "65XE off at %lld ms (SIO +5V %d mV): D1 back to the menu, D1-D8 kept",
                              msOf(now), sioMv);
                     break;
                 case rb::host::SioPowerWatch::Event::PoweredOn:
                     poweredOnUs = now;
+                    g_atariOff = false;
                     framesAtPowerOn = framesSoFar();
                     ESP_LOGI(kTag, "65XE on at %lld ms (SIO +5V %d mV)", msOf(now), sioMv);
                     break;
                 case rb::host::SioPowerWatch::Event::None:
                     break;
                 }
+            }
+        }
+        if (g_tapeApplied) {
+            // DATA IN between two frames (T7). Inert until T9: the gates stay closed (kTapeOutput).
+            rb::host::DataInReadings readings;
+            readings.gatesOpen = g_tape->deck().gatesOpen();
+            readings.tapeOutput = kTapeOutput;
+            readings.motorOn = g_motor != nullptr && g_motor->on();
+            readings.commandHigh = g_line->commandHigh();
+            readings.tapeOnC = g_tape->deck().loaded()[0] != '\0';
+            readings.atariOff = g_atariOff;
+            const rb::host::DataInChange change =
+                g_arbiter.step(rb::host::dataInInputs(readings), static_cast<uint64_t>(now));
+            if (change != rb::host::DataInChange::None) {
+                ESP_LOGW(kTag, "DATA IN: cambio %d, ahora %s", static_cast<int>(change),
+                         g_arbiter.owner() == rb::host::DataInOwner::Disk   ? "disco"
+                         : g_arbiter.owner() == rb::host::DataInOwner::Tape ? "cinta"
+                                                                            : "NADIE (reintento cada 100 ms)");
             }
         }
         if (poweredOnUs != 0 && framesSoFar() != framesAtPowerOn) {
@@ -602,6 +679,7 @@ bool start(const rb::board::BoardProfile& board)
         ESP_LOGE(kTag, "board profile has no SIO pins: menu not served");
         return false;
     }
+    g_board = &board;
     (void)gpio_set_direction(kButtonA, GPIO_MODE_INPUT);
     (void)gpio_pullup_en(kButtonA);
     if (!startAdc()) {
@@ -676,7 +754,43 @@ bool start(const rb::board::BoardProfile& board)
     return true;
 }
 
-void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot)
+// The cassette (menu-cinta T6, plan §4 and R3): started after D1, with the free PSRAM logged before and
+// after its bank is reserved. The deck is created even if the cassette cannot start: it then answers
+// "no memory". Without the microSD there are no tapes: no deck, and C: says the cassette is missing.
+static void startCassette(bool sdMounted, rb::esp::CassetteService& cassette, rb::esp::EspMotorIn& motor)
+{
+    g_motor = &motor;  // before publishTape(): the SIO task reads it only after it sees the deck
+    if (!sdMounted || g_board == nullptr) {
+        ESP_LOGW(kTag, "cas: sin microSD, la casetera no arranca");
+        return;
+    }
+    const std::size_t freeBefore = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    const std::size_t largestBefore = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+    ESP_LOGI(kTag, "PSRAM libre antes de la casetera: %u B (bloque mayor %u B)", static_cast<unsigned>(freeBefore),
+             static_cast<unsigned>(largestBefore));
+    const bool started = cassette.start();
+    ESP_LOGI(kTag, "PSRAM libre despues de la casetera: %u B (bloque mayor %u B); RAM interna libre %u B",
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)),
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)));
+    g_tape = createOnce<EspTapeDeck>(cassette, *g_board);
+    if (g_tape == nullptr) {
+        ESP_LOGE(kTag, "cas: sin memoria para el deck; C: dice CASETERA NO DISPONIBLE");
+        return;
+    }
+    if (!started) {
+        ESP_LOGW(kTag, "cas: no arranca (falta PSRAM para el banco de %u B); montar una cinta dice SIN MEMORIA",
+                 static_cast<unsigned>(rb::esp::CassetteService::kBankBytes));
+    } else if (!g_tape->start()) {
+        ESP_LOGW(kTag, "cas: tarea tape_cmd no creada; montar una cinta dice SIN MEMORIA");
+    } else {
+        ESP_LOGI(kTag, "cas: listo (puertas %s)", g_tape->deck().gatesOpen() ? "abiertas" : "cerradas");
+    }
+    g_startup.publishTape();  // before the plan: the SIO task applies it before the restore
+}
+
+void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot, rb::esp::CassetteService& cassette,
+            rb::esp::EspMotorIn& motor)
 {
     g_boot = boot;
     if (g_station == nullptr) {
@@ -738,9 +852,12 @@ void finish(bool sdMounted, const rb::hwdiag::BootRecord& boot)
             }
         }
     }
-    // rb_drive_save touches the store only after g_planPublished, so *loaded is still this read.
+    // menu-cinta T6: the deck is published before the plan, so the restore of C: finds it.
+    startCassette(sdMounted, cassette, motor);
+
+    // rb_drive_save touches the store only after the plan is published, so *loaded is still this read.
     rb::host::planDriveMemory(failure, failureError, loaded, saverReady, g_plan);
-    g_planPublished.store(true, std::memory_order_release);  // after g_plan, the queues and the task
+    g_startup.publishPlan();  // after the deck, g_plan, the queues and the task
 
     if (sdMounted && xTaskCreatePinnedToCore(netTask, "rb_net", kNetTaskStack, nullptr, tskIDLE_PRIORITY + 2, nullptr,
                                              0) != pdPASS) {

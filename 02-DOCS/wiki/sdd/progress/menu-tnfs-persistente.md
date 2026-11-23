@@ -177,6 +177,18 @@ aprobar).
   | `dropRestore` sin cancelar en el loader | 3 |
 - Host: 95/95. `retrobridge_host.exe` compila.
 
+T7 fusionada en main con el PR #96 (`5b9cfc1`), tras revisión independiente.
+
+## T8 — preparación documental del banco (2026-11-23)
+
+- Guion en `02-DOCS/raw/2026-11-23-banco-menu-tnfs-persistente-t8.md`: aprobaciones por paso (incluido el montaje
+  USB + SIO, que el plan pide para este banco), paquete, instalación, consola esperada, casos AC1–AC7, AC8-USB, AC9
+  y la medida de R2, y cierre.
+- Hallazgo: en el paquete `menu-sio`, los eventos `menu_restore` salen en nivel DEBUG y la imagen restaurada no emite
+  `menu_mount`. La restauración de red no deja rastro en la consola. Decisión O1 del guion: aceptar evidencia [P] o
+  un PR previo que los imprima en nivel INFO (recomendado).
+- Nada ejecutado: sin flasheo, COM3 ni conexión física. AC8 solo por SIO sigue bloqueado por T1a/T1b.
+
 ## Siguiente
 
-T8 (banco físico) necesita autorización. T9 sigue bloqueado.
+El responsable decide O1 y aprueba los pasos del banco uno a uno. T9 sigue bloqueado.

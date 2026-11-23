@@ -268,6 +268,11 @@ void MenuController::collect()
             } else if (fromNet) {
                 // T6: what was remembered is what is mounted now: no new version.
                 (void)netQueue_.done(number);
+                // Bench T8 (O1): the restored image is mounted on D2..D8, not only fetched. Once per
+                // mount, from the bay's reply; a refused mount goes through the error branch above.
+                char applied[24];
+                std::snprintf(applied, sizeof applied, "D%c net applied", static_cast<char>('0' + number));
+                event("menu_restore", applied);
             } else {
                 dropRestore(number);  // T7: the user's choice wins over the remembered image
                 changed();  // a mount or an unmount the menu asked for: remember it

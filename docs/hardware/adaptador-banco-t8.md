@@ -62,7 +62,12 @@ la FujiNet. No se modifica la FujiNet ni el cable original: el adaptador se reti
 ```
 
 - **Un solo adaptador para tres usos:** banco con USB (J10 abierto), uso normal o AC5 tras T1a/T1b (J10 cerrado), y
-  la medición de corriente de T1b (amperímetro en los dos espadines de J10).
+  el punto de medida de corriente de T1b (el instrumento en los dos espadines de J10).
+- **J10 solo se cambia con los dos equipos sin energía:** 65XE apagado, USB desconectado. Nunca se abre, se cierra ni
+  se sustituye por un instrumento con algo encendido.
+- **Un amperímetro convencional no basta para aprobar T1b.** El plan `menu-sio-wifi-tnfs` (§6, T1a/T1b) pide la
+  corriente media **y los picos** de cada fase; los picos necesitan osciloscopio con una resistencia de medida en
+  serie. Con solo un amperímetro, el resultado de T1b es **preliminar**.
 - **Rótulo visible:** «SIN PIN 8 · J10 = PIN 10 · J2 LIBRE». Y junto a J10: «ABIERTO = SOLO USB».
 - **Topología:** la de `mitigacion-c-motor-pin8.md` §3. La FujiNet va al final y J2 queda libre.
 
@@ -98,7 +103,8 @@ modelo del multímetro y fotos.
 | Pin 10 de extremo a extremo, **J10 abierto** | Abierto | Continuidad |
 | Pin 10 de extremo a extremo, **J10 cerrado** | Continuidad | Abierto |
 | Pin 10 contra los otros 12, en cada extremo, con J10 en las dos posiciones | Abierto | Cualquier continuidad |
-| Cortocircuitos entre pines distintos (78 pares) en un extremo | Abierto | Cualquier corto |
+| Cortocircuitos en un extremo: cada pin contra los demás (78 pares), **salvo el par 4–6** | Abierto en los 77 pares | Cualquier corto |
+| Pines 4 y 6 (las dos masas) entre sí, en cada extremo | Registrar. Si el cable las une, se documenta y se acepta solo si coincide con un cable SIO estándar (`mitigacion-c-motor-pin8.md` §5.2) | Unión no explicada |
 
 **Identificación eléctrica** (paso aparte, con autorización): adaptador conectado a la FujiNet **sin energía** (sin
 USB, sin Atari, S5 apagado). Desde el extremo libre: pines 4 y 6 con continuidad a la masa de la placa; pin 8 abierto
@@ -129,8 +135,8 @@ Así se descarta la confusión de vistas del conector (espejo), que es como el p
 
 ## 9. Incertidumbres
 
-- El reparto real de corriente entre USB y pin 10 con las dos fuentes conectadas [P]: lo mide T1b, con este mismo
-  adaptador.
+- El reparto real de corriente entre USB y pin 10 con las dos fuentes conectadas [P]: J10 es el punto de medida de
+  T1b; medias y picos según el plan (amperímetro y osciloscopio con resistencia de medida).
 - El nivel real de MOTOR del 65XE [P].
 - Disponibilidad de conectores SIO macho y hembra para fabricarlo [P].
 - La disposición física de los contactos: se resuelve eléctricamente (§5), nunca solo a la vista.

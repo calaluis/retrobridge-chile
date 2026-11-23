@@ -148,8 +148,9 @@ en cada fase. Hoy no hay registro de T1a ni de T1b en `02-DOCS/raw/`. Por eso:
 ## 6. Desviaciones del montaje previsto
 
 - **El pin 10 no estuvo aislado durante las pruebas.** [C] Al arrancar, con el 65XE apagado: `SIO +5V (pin 10) 0 mV`.
-  Al encender el 65XE: `65XE on at 220827 ms (SIO +5V 4780 mV)`. El USB y el +5 V del Atari alimentaron la placa a
-  la vez, contra §2 paso 6 (debía pararse). No estuvieron unidos directamente: según el esquema 1.3, cada uno llega
+  Al encender el 65XE: `65XE on at 220827 ms (SIO +5V 4780 mV)`. El USB y el +5 V del Atari estuvieron conectados a
+  la vez a las entradas de alimentación de la placa, contra §2 paso 6 (debía pararse). Si los dos entregaron
+  corriente no está demostrado. No estuvieron unidos directamente: según el esquema 1.3, cada uno llega
   a VCC por su diodo Schottky (USB → D4, pin 10 → D5) [E]; el reparto de corriente no está medido. [C] Sin efecto
   visible: `brownout=0`, `panic=0`, un solo arranque en la captura; eso no prueba que el montaje sea seguro. Es la
   misma desviación que en la demo E2.

@@ -1977,7 +1977,9 @@ const char* MenuController::netState(unsigned number) const noexcept
     static char line[kMenuLineWidth + 1];  // menu thread only, read at once by render()
     const NetRestoreQueue::State state = netQueue_.state(number);
     if (state == NetRestoreQueue::State::Pending || state == NetRestoreQueue::State::Loading) {
-        std::snprintf(line, sizeof line, "CARGANDO %s", shown_[number - 1].name);
+        // "CARGANDO " (9) + the name cut to what is left of the 40 columns.
+        std::snprintf(line, sizeof line, "CARGANDO %.*s", static_cast<int>(kMenuLineWidth - 9),
+                      shown_[number - 1].name);
         return line;
     }
     if (state == NetRestoreQueue::State::Failed) {
@@ -2102,13 +2104,18 @@ void MenuController::netRestored(unsigned number, const LoaderStatus& status)
 
 void MenuController::netFailed(unsigned number, NetRestoreQueue::Reason why, const char* detail)
 {
+    // 40 columns: " Dn: " is 5 (drive 1..8, one digit); the rest is cut to what is left.
     char line[kMenuLineWidth + 1];
+    const char digit = static_cast<char>('0' + number);
     if (why == NetRestoreQueue::Reason::Falta) {
-        std::snprintf(line, sizeof line, " D%u: FALTA %s", number, shown_[number - 1].name);
+        std::snprintf(line, sizeof line, " D%c: FALTA %.*s", digit, static_cast<int>(kMenuLineWidth - 11),
+                      shown_[number - 1].name);
     } else if (why == NetRestoreQueue::Reason::Invalida) {
-        std::snprintf(line, sizeof line, " D%u: INVALIDA %s", number, detail);
+        std::snprintf(line, sizeof line, " D%c: INVALIDA %.*s", digit, static_cast<int>(kMenuLineWidth - 14),
+                      detail);
     } else {
-        std::snprintf(line, sizeof line, " D%u: %s", number, netReasonText(why));
+        std::snprintf(line, sizeof line, " D%c: %.*s", digit, static_cast<int>(kMenuLineWidth - 5),
+                      netReasonText(why));
     }
     if (view_ == View::Main && job_ == Job::None) {
         say("%s", line);  // a list on screen keeps its own message; the drive line says it anyway

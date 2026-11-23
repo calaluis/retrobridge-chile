@@ -220,6 +220,41 @@ void test_a_silent_server_for_30_s_says_sin_red_and_stays_remembered()
     TEST_ASSERT_NULL(rig.controller->driveName(2));
 }
 
+// AC4, plan §5 (integrated): one block every 20 s for 2 min keeps the restore alive, though the
+// integer percent hardly moves (180 READs: about half a point a block); only the bytes count.
+// Then 29 s without data: still loading; past 30 s without data: SIN RED, still remembered.
+void test_slow_progress_never_expires_but_30_s_without_data_does()
+{
+    Rig rig;
+    HandClock clock;
+    rig.gated.gate(tnfs::cmd::kRead);
+    powerUp(rig, clock, *logoOn(2));
+    rig.step();             // the restore asks the server at 0 s
+    rig.gated.awaitHeld();  // the first READ is held
+    for (int block = 1; block <= 6; ++block) {
+        clock.now += 20000000;   // 20 s later, one block arrives
+        rig.gated.permit(1);
+        rig.gated.awaitHeld();   // its data is in: the next READ is held
+        rig.step();              // the controller sees the bytes grow at this time
+        assert_line(rig.press(kRedraw), driveLine(2), "D2: CARGANDO ATARI LOGO.ATR");
+    }
+    TEST_ASSERT_TRUE(clock.now >= 120000000u);  // 2 min: far past any single 30 s deadline
+    clock.now += 29000000;
+    rig.step();
+    assert_line(rig.press(kRedraw), driveLine(2), "D2: CARGANDO ATARI LOGO.ATR");
+    clock.now += 2000000;  // 31 s since the last data
+    rig.step();
+    assert_line(rig.press(kRedraw), driveLine(2), "D2: SIN RED");
+    TEST_ASSERT_TRUE(failedWith(rig, "D2 net failed: no network (deadline)"));
+    assertRemembered(rig, 2);
+    rig.gated.open();
+    for (int i = 0; i < 200; ++i) {
+        rig.step();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    TEST_ASSERT_EQUAL_STRING("", rig.mounted(2));  // the cancelled download changes nothing
+}
+
 // AC4: the remembered name does not resolve: SERVIDOR NO ENCONTRADO, still remembered; and the
 // next power-up, with the server back, restores it.
 void test_an_unresolved_server_says_so_and_the_next_power_up_restores_it()
@@ -317,6 +352,7 @@ int main(void)
     RUN_TEST(test_a_local_d1_boots_while_d2_is_still_loading);
     RUN_TEST(test_without_wifi_for_30_s_d2_says_sin_red_and_stays_remembered);
     RUN_TEST(test_a_silent_server_for_30_s_says_sin_red_and_stays_remembered);
+    RUN_TEST(test_slow_progress_never_expires_but_30_s_without_data_does);
     RUN_TEST(test_an_unresolved_server_says_so_and_the_next_power_up_restores_it);
     RUN_TEST(test_a_missing_image_says_falta_and_is_forgotten);
     RUN_TEST(test_an_invalid_image_says_invalida_and_is_forgotten);

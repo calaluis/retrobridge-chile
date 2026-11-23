@@ -122,6 +122,13 @@ aprobar).
   restauración en el encendido siguiente), AC5 (`FALTA` e `INVALIDA` olvidan; EACCES y `NO CABE` no), AC9.
 - Mutaciones: sin la espera de D1 (1 fallo), sin olvidar (2), sin escribir la recordada (4), sin plazos (2).
 - Host: **94/94** tres veces seguidas; `retrobridge_host` compila.
+- Revisión del PR #94 (CI 45273381900 roja): `-Werror=format-truncation` en `netState` y `netFailed` (GCC de
+  Linux y de ESP-IDF; el GCC 16 de MSYS2 no lo da). Corregido con precisiones explícitas: `CARGANDO %.31s`,
+  ` D<n>: FALTA %.29s`, ` D<n>: INVALIDA %.26s`, ` D<n>: %.35s`; el número de unidad es un dígito. Cada línea
+  cabe en 40 columnas.
+- Prueba integrada añadida: un bloque cada 20 s durante 2 min no vence (el porcentaje apenas se mueve; cuentan
+  los bytes); 29 s sin datos sigue cargando; 31 s → `SIN RED`, recordada. Mutación: sin `progressed` (1 fallo).
+  `test_menu_tnfs_restaura` 11/11 cinco veces seguidas; host 94/94.
 
 ## Siguiente
 

@@ -236,8 +236,14 @@ bool decode(const uint8_t* data, std::size_t size, DriveMemorySlot& out) noexcep
     out.memory.clear();
     for (unsigned drive = 1; drive <= DriveMemory::kDrives; ++drive) {
         const char* name = reinterpret_cast<const char*>(data + kNamesOffset + (drive - 1) * kNameField);
+        // Versions 1 and 2 end before kNetOffset: no pointer into the network fields is formed for
+        // them (it would point past the slot; review of af5974c). Their named drives are Local.
+        if (version != kVersion) {
+            (void)out.memory.set(drive, name);  // "" leaves it Empty
+            continue;
+        }
         const uint8_t* field = data + kNetOffset + (drive - 1) * kNetField;
-        const auto origin = version == kVersion ? static_cast<DriveMemory::Origin>(field[0]) : DriveMemory::Origin::Local;
+        const auto origin = static_cast<DriveMemory::Origin>(field[0]);
         if (origin == DriveMemory::Origin::NetAtr || origin == DriveMemory::Origin::NetXex) {
             (void)out.memory.setNet(drive, origin, reinterpret_cast<const char*>(field + 1),
                                     reinterpret_cast<const char*>(field + 1 + DriveMemory::kMaxServer + 1), name);

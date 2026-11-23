@@ -24,8 +24,12 @@ void NetRestoreQueue::begin(const DriveMemory& memory, uint64_t nowMs) noexcept
 
 unsigned NetRestoreQueue::next(bool networkReady, uint64_t nowMs) noexcept
 {
-    (void)nowMs;
     if (!networkReady) {
+        return 0;
+    }
+    // Ready after its 30 s is too late: the waiting drives are expired()'s (SIN RED), even if
+    // next() is asked first (review of af5974c).
+    if (!networkSeen_ && wifiLate(nowMs)) {
         return 0;
     }
     networkSeen_ = true;
@@ -107,13 +111,12 @@ bool NetRestoreQueue::requeue(unsigned drive) noexcept
 
 uint8_t NetRestoreQueue::expired(uint64_t nowMs) noexcept
 {
-    const bool wifiLate = !networkSeen_ && elapsed(beginMs_, nowMs) >= kWifiMs;
+    const bool late = !networkSeen_ && wifiLate(nowMs);
     uint8_t mask = 0;
     for (unsigned drive = 1; drive <= kDrives; ++drive) {
         Entry& entry = drives_[drive - 1];
-        const bool late = (entry.state == State::Pending && wifiLate) ||
-                          (entry.state == State::Loading && elapsed(entry.lastMs, nowMs) >= kSilenceMs);
-        if (late) {
+        if ((entry.state == State::Pending && late) ||
+            (entry.state == State::Loading && elapsed(entry.lastMs, nowMs) >= kSilenceMs)) {
             entry.state = State::Failed;
             entry.reason = Reason::SinRed;  // the job stays: the caller cancels it with jobOf()
             mask = static_cast<uint8_t>(mask | (1u << (drive - 1)));
@@ -121,6 +124,8 @@ uint8_t NetRestoreQueue::expired(uint64_t nowMs) noexcept
     }
     return mask;
 }
+
+bool NetRestoreQueue::wifiLate(uint64_t nowMs) const noexcept { return elapsed(beginMs_, nowMs) >= kWifiMs; }
 
 NetRestoreQueue::State NetRestoreQueue::state(unsigned drive) const noexcept
 {

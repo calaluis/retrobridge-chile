@@ -36,7 +36,8 @@ public:
     void begin(const DriveMemory& memory, uint64_t nowMs) noexcept;
 
     // The Pending drive to ask the loader for now (the lowest one), or 0: none Pending, one
-    // already Loading, or the network is not Ready.
+    // already Loading, the network is not Ready, or it was never Ready in the 30 s after begin()
+    // (then expired() fails the waiting drives, whichever of the two is called first).
     unsigned next(bool networkReady, uint64_t nowMs) noexcept;
 
     // Pending -> Loading with loader job `job` (never 0). False, and nothing changes, otherwise.
@@ -74,6 +75,7 @@ private:
         uint64_t lastMs = 0;  // started(), or the last time the bytes grew
     };
     static bool valid(unsigned drive) noexcept { return drive >= 1 && drive <= kDrives; }
+    bool wifiLate(uint64_t nowMs) const noexcept;
     std::array<Entry, kDrives> drives_{};
     uint64_t beginMs_ = 0;
     bool networkSeen_ = false;

@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 
 #include "rb/menu/drive_memory.hpp"
 #include "rb/menu/sio_write_log.hpp"
@@ -431,12 +432,38 @@ static void test_a_version_3_slot_with_inconsistent_network_fields_is_rejected(v
     TEST_ASSERT_TRUE(codec::decode(good.data(), good.size(), slot));
 }
 
+// Review of af5974c: decode() of a version 1 or 2 slot touches nothing past its size. The bytes
+// are copied into a heap block of exactly that size, so a read past it is a heap overflow for
+// ASan (the sanitizer job of the CI); the network fields are not read for those versions.
+static void test_old_slots_decode_from_a_buffer_of_exactly_their_size(void)
+{
+    const auto one = versionOne(sample(), 30);
+    const auto two = versionTwo(sample(), 31);
+    const std::unique_ptr<uint8_t[]> exactOne(new uint8_t[one.size()]);
+    const std::unique_ptr<uint8_t[]> exactTwo(new uint8_t[two.size()]);
+    std::memcpy(exactOne.get(), one.data(), one.size());
+    std::memcpy(exactTwo.get(), two.data(), two.size());
+    static DriveMemorySlot slot{};  // ~3.5 KB: not on the stack
+    TEST_ASSERT_TRUE(codec::decode(exactOne.get(), one.size(), slot));
+    TEST_ASSERT_TRUE(slot.memory == sample());
+    TEST_ASSERT_TRUE(codec::decode(exactTwo.get(), two.size(), slot));
+    TEST_ASSERT_EQUAL_UINT32(31, slot.seq);
+    for (unsigned drive = 1; drive <= DriveMemory::kDrives; ++drive) {
+        const bool named = sample().name(drive)[0] != '\0';
+        TEST_ASSERT_TRUE(slot.memory.origin(drive) ==
+                         (named ? DriveMemory::Origin::Local : DriveMemory::Origin::Empty));
+        TEST_ASSERT_EQUAL_STRING("", slot.memory.server(drive));
+        TEST_ASSERT_EQUAL_STRING("", slot.memory.path(drive));
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_the_tape_is_empty_by_default_and_takes_only_valid_names);
     RUN_TEST(test_a_version_3_slot_round_trips_the_tape);
     RUN_TEST(test_a_version_2_slot_is_read_as_local_drives);
+    RUN_TEST(test_old_slots_decode_from_a_buffer_of_exactly_their_size);
     RUN_TEST(test_a_network_drive_is_set_checked_and_replaced);
     RUN_TEST(test_a_version_3_slot_round_trips_network_drives);
     RUN_TEST(test_a_version_3_slot_with_inconsistent_network_fields_is_rejected);

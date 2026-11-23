@@ -105,6 +105,32 @@ static void test_no_wifi_in_30_s_fails_the_pending_drives(void)
     TEST_ASSERT_EQUAL_UINT(0, q.next(true, kBoot + 60000));
 }
 
+// Review of af5974c: the network turns Ready only after 30 s. Both orders of next() and expired()
+// end the same way: SIN RED, nothing asked for.
+static void test_wifi_ready_too_late_fails_in_either_order(void)
+{
+    NetRestoreQueue first;  // next() first
+    first.begin(memory(), kBoot);
+    TEST_ASSERT_EQUAL_UINT(0, first.next(true, kBoot + 30000));
+    TEST_ASSERT_EQUAL(State::Pending, first.state(2));  // not started
+    TEST_ASSERT_EQUAL_HEX8(0x0A, first.expired(kBoot + 30000));
+    TEST_ASSERT_EQUAL(Reason::SinRed, first.reason(2));
+    TEST_ASSERT_EQUAL_UINT(0, first.next(true, kBoot + 30001));
+
+    NetRestoreQueue second;  // expired() first
+    second.begin(memory(), kBoot);
+    TEST_ASSERT_EQUAL_HEX8(0x0A, second.expired(kBoot + 45000));
+    TEST_ASSERT_EQUAL_UINT(0, second.next(true, kBoot + 45000));
+    TEST_ASSERT_EQUAL(Reason::SinRed, second.reason(4));
+
+    NetRestoreQueue inTime;  // Ready 1 ms before the deadline: it goes on, with no Wi-Fi deadline
+    inTime.begin(memory(), kBoot);
+    TEST_ASSERT_EQUAL_UINT(2, inTime.next(true, kBoot + 29999));
+    TEST_ASSERT_EQUAL_HEX8(0, inTime.expired(kBoot + 29999));
+    TEST_ASSERT_TRUE(inTime.started(2, 7, kBoot + 29999));
+    TEST_ASSERT_EQUAL_HEX8(0, inTime.expired(kBoot + 31000));  // D4 waits: no deadline any more
+}
+
 // Once the network was Ready, a drive waiting behind another (or behind the user) has no deadline.
 static void test_after_the_network_was_ready_waiting_is_not_a_failure(void)
 {
@@ -237,6 +263,7 @@ int main(void)
     RUN_TEST(test_begin_takes_only_the_network_drives);
     RUN_TEST(test_one_drive_at_a_time_and_only_with_the_network);
     RUN_TEST(test_no_wifi_in_30_s_fails_the_pending_drives);
+    RUN_TEST(test_wifi_ready_too_late_fails_in_either_order);
     RUN_TEST(test_after_the_network_was_ready_waiting_is_not_a_failure);
     RUN_TEST(test_no_first_response_in_30_s);
     RUN_TEST(test_slow_progress_does_not_expire);

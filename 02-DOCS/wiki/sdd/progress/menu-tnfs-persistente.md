@@ -58,6 +58,16 @@ aprobar).
 - `ctest --test-dir build/host`: **92/92** verdes (MSYS2 UCRT64, Ninja, `-DRB_SANITIZE=OFF`).
 - No ejecutado: compilación ESP-IDF (la dirá la CI; riesgo R3 de memoria), ASan, pruebas físicas.
 
+## Revisión de af5974c (PR #89, 2026-11-23)
+
+- **`decode()`:** para v1/v2 se formaba un puntero a los campos de red, fuera del búfer (sin leerlo, pero es
+  comportamiento indefinido). Ahora solo se forma para v3. Prueba: v1 y v2 decodificadas desde un bloque del
+  montón de su tamaño exacto. Límite: sin lectura, ninguna prueba ni sanitizador ve el puntero; la prueba vigila
+  que nunca llegue a leerse (ASan de la CI).
+- **`next()`:** con la red `Ready` después de 30 s, `next()` ya no la da por vista; los dos órdenes de
+  `next()`/`expired()` terminan en `SIN RED`. Prueba nueva; la mutación que quita la guarda la hace fallar.
+- Host: **92/92**.
+
 ## Siguiente
 
 T4 (spike de sesión TNFS propia + `startFetchAt`/`startXexAt`), luego T5–T7.

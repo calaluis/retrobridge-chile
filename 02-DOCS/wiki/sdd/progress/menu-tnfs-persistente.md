@@ -68,6 +68,20 @@ aprobar).
   `next()`/`expired()` terminan en `SIN RED`. Prueba nueva; la mutación que quita la guarda la hace fallar.
 - Host: **92/92**.
 
+## T4 — sesión TNFS de restauración, `startFetchAt` y `startXexAt` (2026-11-23)
+
+- Rama `feat/menu-tnfs-persistente-t4` desde `main` 51833f8 (PR #89 fusionado).
+- `MenuLoader` añade `startFetchAt(server, path, length)` y `startXexAt(...)`. `TnfsLoader`: sesión `kRestore` con
+  enlace propio, renombrado al servidor de cada trabajo; editar una fuente con `E` no la toca (AC9).
+- Cableado: `main/menu_sio.cpp` y `host/src/main.cpp` crean el enlace de restauración. Inerte hasta T6: nada llama
+  aún a `startFetchAt`, así que no se abre ningún socket nuevo.
+- Spike: nota en el plan §2.4 (cabe; ~1,4 KB más en el loader; 8 sockets como máximo).
+- Pruebas (`test_tnfs_loader`, 37): AC9 con dos servidores falsos (srv-b no recibe nada; la fuente 2 sigue a `E`
+  sin usarse), sesión conservada para el mismo servidor y movida con un UMOUNT, `.xex` por servidor, servidor nulo,
+  vacío, largo o que no resuelve y loader sin enlace → `NoEncontrado`, ENOENT → `NoExiste`.
+- Mutaciones: mandar la restauración por la fuente 2 (3 fallos) y no renombrar el enlace (4 fallos).
+- Host: **92/92**; `retrobridge_host` compila.
+
 ## Siguiente
 
-T4 (spike de sesión TNFS propia + `startFetchAt`/`startXexAt`), luego T5–T7.
+T5–T7 (controlador: recordar el origen al montar, restaurar con la cola, estados y cancelación).

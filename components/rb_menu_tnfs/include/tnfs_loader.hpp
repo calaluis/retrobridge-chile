@@ -88,13 +88,18 @@ protected:
 class TnfsLoader final : public MenuLoader {
 public:
     static constexpr unsigned kMaxSource = 8;  // sources 2..8 are TNFS; 0 and 1 are not
+    // menu-tnfs-persistente T4: the session of startFetchAt / startXexAt, after the sources.
+    static constexpr unsigned kRestore = kMaxSource + 1;
 
     // links[n] is source n, or null when it has no server. The store, the clock,
     // the memory and the links must outlive the loader. `imagesFolder` (menu-xex) is the
     // --images folder a local .xex is read from (startXex with source 1); it must outlive
-    // the loader too. nullptr: a local .xex cannot be opened.
+    // the loader too. nullptr: a local .xex cannot be opened. `restoreLink` (menu-tnfs-persistente
+    // T4) is the link of startFetchAt / startXexAt; the loader renames it to each job's server.
+    // nullptr: those jobs give NoEncontrado. It must outlive the loader too.
     TnfsLoader(TnfsLink* const (&links)[kMaxSource + 1], MemoryImageStore& store, rb::net_tnfs::TnfsClock& clock,
-               ImageMemory& memory, LoaderHooks* hooks = nullptr, const char* imagesFolder = nullptr);
+               ImageMemory& memory, LoaderHooks* hooks = nullptr, const char* imagesFolder = nullptr,
+               TnfsLink* restoreLink = nullptr);
     ~TnfsLoader();
     TnfsLoader(const TnfsLoader&) = delete;
     TnfsLoader& operator=(const TnfsLoader&) = delete;
@@ -106,6 +111,8 @@ public:
     uint32_t startList(unsigned source, const char* path, std::size_t length) noexcept override;
     uint32_t startFetch(unsigned source, const char* path, std::size_t length) noexcept override;
     uint32_t startXex(unsigned source, const char* path, std::size_t length) noexcept override;
+    uint32_t startFetchAt(const char* server, const char* path, std::size_t length) noexcept override;
+    uint32_t startXexAt(const char* server, const char* path, std::size_t length) noexcept override;
 
     // The state of job `job`. A finished result is handed over once: a Folder is
     // swapped into `folder` (whose old content the loader frees later on its own
@@ -137,6 +144,8 @@ private:
         std::size_t length = 0;
         bool tooLong = false;
         char path[rb::net_tnfs::kMaxPath + 1] = {};
+        bool badServer = false;              // kRestore: no usable server name
+        char server[kMaxServer + 1] = {};    // kRestore: the server to ask
     };
     struct Outcome {
         LoaderStatus status;
@@ -146,7 +155,9 @@ private:
     class Lister;
     class Sink;
 
-    uint32_t start(Kind kind, unsigned source, const char* path, std::size_t length) noexcept;
+    uint32_t start(Kind kind, unsigned source, const char* path, std::size_t length,
+                   const char* server = nullptr) noexcept;
+    bool useServer(const Job& job);
     void run();
     void execute(const Job& job, Outcome& out);
     void list(const Job& job, rb::net_tnfs::TnfsClient& client, Outcome& out);
@@ -159,9 +170,11 @@ private:
     bool cancelled(uint32_t number) const noexcept;
     void progress(uint32_t number, uint8_t percent, uint32_t received = 0) noexcept;
 
-    TnfsLink* links_[kMaxSource + 1] = {};
-    bool opened_[kMaxSource + 1] = {};
-    std::optional<rb::net_tnfs::TnfsClient> clients_[kMaxSource + 1];
+    // Indexed by source 2..8, and kRestore for the restore session.
+    TnfsLink* links_[kRestore + 1] = {};
+    bool opened_[kRestore + 1] = {};
+    std::optional<rb::net_tnfs::TnfsClient> clients_[kRestore + 1];
+    char restoreServer_[kMaxServer + 1] = {};  // the server links_[kRestore] names; loader thread only
     MemoryImageStore& store_;
     ImageMemory& memory_;
     LoaderHooks* hooks_;

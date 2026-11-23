@@ -170,9 +170,13 @@ private:
 
 TnfsLoader::TnfsLoader(TnfsLink* const (&links)[kMaxSource + 1], MemoryImageStore& store,
                        rb::net_tnfs::TnfsClock& clock, ImageMemory& memory, LoaderHooks* hooks,
-                       const char* imagesFolder)
+                       const char* imagesFolder, TnfsLink* restoreLink)
     : store_(store), memory_(memory), hooks_(hooks), imagesFolder_(imagesFolder)
 {
+    links_[kRestore] = restoreLink;
+    if (restoreLink != nullptr) {
+        clients_[kRestore].emplace(restoreLink->port(), clock);
+    }
     for (unsigned n = 2; n <= kMaxSource; ++n) {
         links_[n] = links[n];
         if (links_[n] != nullptr) {
@@ -219,7 +223,18 @@ uint32_t TnfsLoader::startXex(unsigned source, const char* path, std::size_t len
     return start(Kind::Xex, source, path, length);
 }
 
-uint32_t TnfsLoader::start(Kind kind, unsigned source, const char* path, std::size_t length) noexcept
+uint32_t TnfsLoader::startFetchAt(const char* server, const char* path, std::size_t length) noexcept
+{
+    return start(Kind::Fetch, kRestore, path, length, server != nullptr ? server : "");
+}
+
+uint32_t TnfsLoader::startXexAt(const char* server, const char* path, std::size_t length) noexcept
+{
+    return start(Kind::Xex, kRestore, path, length, server != nullptr ? server : "");
+}
+
+uint32_t TnfsLoader::start(Kind kind, unsigned source, const char* path, std::size_t length,
+                           const char* server) noexcept
 {
     uint32_t number = 0;
     {
@@ -238,6 +253,13 @@ uint32_t TnfsLoader::start(Kind kind, unsigned source, const char* path, std::si
             std::memcpy(job.path, path, length);
         }
         job.path[job.tooLong ? 0 : length] = '\0';
+        // The server is copied here, on the menu thread, without allocating; a sources job has none.
+        const std::size_t serverLength = server != nullptr ? std::strlen(server) : 0;
+        job.badServer = server != nullptr && (serverLength == 0 || serverLength > kMaxServer);
+        std::memset(job.server, 0, sizeof job.server);
+        if (server != nullptr && !job.badServer) {
+            std::memcpy(job.server, server, serverLength);
+        }
         if (state_ == State::Done) {
             discard_ = true;  // the previous result was never taken
         }
@@ -451,7 +473,11 @@ void TnfsLoader::execute(const Job& job, Outcome& out)
         readLocal(job, out);
         return;
     }
-    if (source < 2 || source > kMaxSource || links_[source] == nullptr) {
+    if (source == kRestore && !useServer(job)) {
+        setError(status, LoaderError::NoEncontrado, "restauracion sin enlace o sin servidor");
+        return;
+    }
+    if (source < 2 || source > kRestore || links_[source] == nullptr) {
         setError(status, LoaderError::NoEncontrado, "fuente %u sin servidor", source);
         return;
     }
@@ -488,6 +514,25 @@ void TnfsLoader::execute(const Job& job, Outcome& out)
         }
         opened_[source] = false;
     }
+}
+
+// Loader thread: points the restore session at `job.server`. Another server than the last one
+// ends that session first (one UMOUNT, without waiting, as for a renamed source) and the link
+// takes the new name; the same server keeps its session. False without a link or a server.
+bool TnfsLoader::useServer(const Job& job)
+{
+    if (links_[kRestore] == nullptr || job.badServer) {
+        return false;
+    }
+    if (std::strcmp(restoreServer_, job.server) != 0) {
+        if (opened_[kRestore]) {
+            clients_[kRestore]->umountWithoutWaiting();
+            opened_[kRestore] = false;
+        }
+        links_[kRestore]->rename(job.server);
+        std::memcpy(restoreServer_, job.server, sizeof restoreServer_);
+    }
+    return true;
 }
 
 void TnfsLoader::list(const Job& job, TnfsClient& client, Outcome& out)

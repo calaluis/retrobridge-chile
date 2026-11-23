@@ -1,7 +1,6 @@
 # Banco T8 de menu-cinta: AC1–AC8 en el 65XE (guion, 2026-11-23)
 
-> Estado: **guion listo, banco sin hacer.** Este archivo se rellena durante el ensayo: cada fila lleva ✅ o ❌
-> y su fuente. Nada aquí está comprobado todavía.
+> Estado: **primera sesión hecha el 2026-11-23, T8 parcial** (§7). Cada fila lleva ✅, ❓ o ⏸ y su fuente.
 > Alcance: AC1–AC8 de `02-DOCS/wiki/sdd/specs/menu-cinta.md`. AC9–AC12 son T9 (tras M3a y H4, PR aparte).
 
 **Convención:**
@@ -32,15 +31,24 @@ en la microSD no se borra nada (lo que sobre se renombra a `.off`); un solo `ret
 
 | Dato | Valor |
 |---|---|
-| Firmware | *(SHA del commit cuyo paquete se flashea; se anota al descargar el ZIP)* |
-| ZIP | `retrobridge-fw-menu-sio-fujinet-atari-v1x-<sha7>`, ejecución de CI *(número)* |
-| SHA-256 del ZIP | *(calcular tras descargar)* |
-| Comprobaciones del paquete | *(n OK; entre ellas «sin nvs_*» y la pila de `app_main` y `rb_drive_save`)* |
-| Tamaño de la app | *(B de 4 MB)* |
+| Firmware | `bea39e1dfaeffd31b54b56da3d46c33e541aa378` (rama `spec/menu-cinta`, PR #85); `esp_app_desc='bea39e1'` |
+| ZIP | `retrobridge-fw-menu-sio-fujinet-atari-v1x-bea39e1` (5 962 497 B), ejecución de CI `45113237250`, 6 de 6 trabajos en verde |
+| SHA-256 del ZIP | `b9fbe7db80a6d137116cc24a6c38467d7d5030a46e415b4a33da5203baeee662` |
+| Comprobaciones del paquete | 35 OK, entre ellas «sin nvs_* en main/ ni components/», «puertas H4 y M3a sin aprobar» (perfil y registro) y la pila de `app_main` (1872/3584) y `rb_drive_save` (1808/6144) |
+| Tamaño de la app | 1 155 120 B de 4 MB (72,5 % libre); antes 1 125 456 B |
 
 Antes de descargar: CI de esa cabeza en verde en los cuatro trabajos (host, layering, `menu-sio`, build ESP-IDF).
 
 ## 2. Instalación
+
+**Hecho el 2026-11-23** (SIO desconectado):
+- [H] NVS antes: `d8a04e883160efe379c45f9b317884c043eedd81f710366f818bd2b1d7a55c1d` (leída dos veces, en el paso B y
+  en el script de flasheo).
+- [H] `write_flash` en 0x1000, 0x8000 y 0x10000, «Hash of data verified» en las tres; `verify_flash`: 3 de 3
+  «verify OK (digest matched)».
+- [H] NVS después: `d8a04e883160efe379c45f9b317884c043eedd81f710366f818bd2b1d7a55c1d`, igual.
+
+Procedimiento:
 
 1. [H] SHA-256 de la NVS antes del flasheo. Valor esperado, el de los bancos anteriores:
    `d8a04e883160efe379c45f9b317884c043eedd81f710366f818bd2b1d7a55c1d`.
@@ -89,19 +97,19 @@ lo que **no** debe aparecer.
 
 | AC | Montaje | Teclas | Pantalla esperada [P] | Consola esperada [C] | Resultado |
 |---|---|---|---|---|---|
-| **AC1** | microSD con `international_karate.cas` | `1` (fuente 1, microSD) | La lista muestra `INTERNATIONAL_KARATE.CAS` con su letra, junto a las `.ATR` y `.XEX` | — | |
-| **AC2** | Lista de la fuente 1 abierta | letra de la cinta, luego `C` | Principal: `C: INTERNATIONAL_KARATE.CAS` (o recortado); mensaje `CINTA EN C:, AUN NO PUEDE CARGARSE`; D1–D8 sin cambio | ningún `menu_mount` (D1–D8 no cambian) | |
-| **AC3a** | Lista abierta | letra de la cinta, luego `1` | `UNA CINTA VA EN C:`; ninguna unidad cambia | ningún `menu_mount` | |
-| **AC3b** | Lista abierta | letra de una `.ATR`, luego `C` | `UN DISCO NO VA EN C:`; `C:` sin cambio | ningún `menu_mount` | |
-| **AC4** | Cinta en `C:` | `U`, luego `C` | Tras `U`: `DESMONTAR: PULSA 1-8 O C, ESC CANCELA`; tras `C`: línea `C: SIN CINTA` | — | |
-| **AC5-USB** | Volver a montar la cinta (AC2). USB conectado, pin 10 aislado | Apagar el 65XE; pulsar el reset de la FujiNet; esperar `D1 ready`; encender el 65XE | El menú sigue mostrando `C: INTERNATIONAL_KARATE.CAS`; D1–D8 iguales | `unidades restauradas …`; `D1 ready at …` | |
-| **AC5** | *(bloqueado, ver abajo)* FujiNet solo por SIO, USB desconectado | Apagar el 65XE, esperar 5 s, encenderlo | Igual que AC5-USB | — (sin USB no hay consola) | |
-| **AC6** | `mala.cas` en la raíz (paso D) y la cinta buena en `C:` | letra de `MALA.CAS`, luego `C` | `CINTA NO VALIDA`; `C:` sigue mostrando la cinta anterior | — | |
-| **AC7** | Cinta en `C:`, sin START | Encender el 65XE con el USB conectado | El menú sale en D1 como siempre | `D1 ready at N ms` con **N ≤ 280 ms** (hoy ~230 + 50) | |
-| **AC7b** | Igual | Fuente 1: una `.ATR` a D1, `A` | El juego ATR corre | `menu_mount …` | |
-| **AC7c** | Igual | Fuente 1: una `.XEX` a D1, `A` | El programa corre | `menu_mount …` | |
-| **AC7d** | Igual, Wi-Fi ya conectado | Fuente 2 (TNFS): una `.ATR` a D1, `A` | El juego corre | `Wi-Fi connected in … ms`, `sources: 1 TNFS server(s)` | |
-| **AC8** | Todo el ensayo | — | AC2 dijo `AUN NO PUEDE CARGARSE` | `cas: sin M3a/H4 …` al arrancar; **ninguna** línea `DATA IN: cambio` en todo el ensayo; ningún `uart_driver_delete` | |
+| **AC1** | microSD con `international_karate.cas` | `1` (fuente 1, microSD) | La lista muestra `INTERNATIONAL_KARATE.CAS` con su letra, junto a las `.ATR` y `.XEX` | — || ✅ [P] la cinta se eligió desde la lista de la fuente 1 (AC2 y AC6 lo suponen) |
+| **AC2** | Lista de la fuente 1 abierta | letra de la cinta, luego `C` | Principal: `C: INTERNATIONAL_KARATE.CAS` (o recortado); mensaje `CINTA EN C:, AUN NO PUEDE CARGARSE`; D1–D8 sin cambio | ningún `menu_mount` (D1–D8 no cambian) || ✅ [P] foto: `C: INTERNATIONAL_KARATE.CAS`, D1–D8 `SIN DISCO` sin cambio; [C] ningún `menu_mount`. El mensaje de montaje no quedó en la foto |
+| **AC3a** | Lista abierta | letra de la cinta, luego `1` | `UNA CINTA VA EN C:`; ninguna unidad cambia | ningún `menu_mount` || ✅ [P] el dueño vio `UNA CINTA VA EN C:` |
+| **AC3b** | Lista abierta | letra de una `.ATR`, luego `C` | `UN DISCO NO VA EN C:`; `C:` sin cambio | ningún `menu_mount` || ✅ [P] el dueño vio `UN DISCO NO VA EN C:` |
+| **AC4** | Cinta en `C:` | `U`, luego `C` | Tras `U`: `DESMONTAR: PULSA 1-8 O C, ESC CANCELA`; tras `C`: línea `C: SIN CINTA` | — || ✅ [P] el dueño vio `C: SIN CINTA` |
+| **AC5-USB** | Volver a montar la cinta (AC2). USB conectado, pin 10 aislado | Apagar el 65XE; pulsar el reset de la FujiNet; esperar `D1 ready`; encender el 65XE | El menú sigue mostrando `C: INTERNATIONAL_KARATE.CAS`; D1–D8 iguales | `unidades restauradas …`; `D1 ready at …` || ❓ sin rastro en la consola (un solo arranque); repetir |
+| **AC5** | *(bloqueado, ver abajo)* FujiNet solo por SIO, USB desconectado | Apagar el 65XE, esperar 5 s, encenderlo | Igual que AC5-USB | — (sin USB no hay consola) || ⏸ bloqueado por T1a/T1b |
+| **AC6** | `mala.cas` en la raíz (paso D) y la cinta buena en `C:` | letra de `MALA.CAS`, luego `C` | `CINTA NO VALIDA`; `C:` sigue mostrando la cinta anterior | — || ✅ [P] el dueño: «reconoce archivos .cas válidos e inválidos» |
+| **AC7** | Cinta en `C:`, sin START | Encender el 65XE con el USB conectado | El menú sale en D1 como siempre | `D1 ready at N ms` con **N ≤ 280 ms** (hoy ~230 + 50) || ✅ [C] `D1 ready at 232 ms`; registro `listo_ms=232` |
+| **AC7b** | Igual | Fuente 1: una `.ATR` a D1, `A` | El juego ATR corre | `menu_mount …` || ❓ ningún `menu_mount` en la consola; repetir |
+| **AC7c** | Igual | Fuente 1: una `.XEX` a D1, `A` | El programa corre | `menu_mount …` || ❓ ningún `menu_mount` en la consola; repetir |
+| **AC7d** | Igual, Wi-Fi ya conectado | Fuente 2 (TNFS): una `.ATR` a D1, `A` | El juego corre | `Wi-Fi connected in … ms`, `sources: 1 TNFS server(s)` || ❓ ningún `menu_mount` en la consola; repetir |
+| **AC8** | Todo el ensayo | — | AC2 dijo `AUN NO PUEDE CARGARSE` | `cas: sin M3a/H4 …` al arrancar; **ninguna** línea `DATA IN: cambio` en todo el ensayo; ningún `uart_driver_delete` || ✅ [C] `cas: sin M3a/H4 …` al arrancar; 0 líneas `DATA IN: cambio`, 0 `uart_driver_delete`, 0 `panic` en toda la captura |
 
 **Cómo crear `mala.cas` (paso D):** un archivo de texto con una línea cualquiera, por ejemplo `NO ES UNA CINTA`,
 guardado como `mala.cas`. No empieza con un bloque `FUJI`, así que la casetera la rechaza. Al terminar el banco se
@@ -138,9 +146,20 @@ en cada fase. Hoy no hay registro de T1a ni de T1b en `02-DOCS/raw/`. Por eso:
 
 ## 6. Desviaciones del montaje previsto
 
-*(rellenar: pin 10, cambios de orden, repeticiones)*
+- **El pin 10 no estuvo aislado durante las pruebas.** [C] Al arrancar, con el 65XE apagado: `SIO +5V (pin 10) 0 mV`.
+  Al encender el 65XE: `65XE on at 220827 ms (SIO +5V 4780 mV)`. El USB y el +5 V del Atari estuvieron unidos,
+  contra §2 paso 6 (debía pararse). [C] Sin efecto visible: `brownout=0`, `panic=0`, un solo arranque en la captura.
+  Hay que revisar el cable antes de otro ensayo con USB. Es la misma desviación que en la demo E2.
+- **Sin rastro en la consola de AC5-USB ni de AC7b–d:** un solo arranque del ESP32 y ningún `menu_mount` de una
+  imagen. La memoria de unidades se guardó tres veces (versiones 1–3), lo que cuadra con montar, desmontar y
+  volver a montar `C:`.
+- **Arrancar la cinta:** el dueño observó que con un `.cas` en `C:` no hay forma de arrancarlo. Es lo esperado en
+  T8 (AC8, `kTapeOutput = false`); arrancar es AC9, en T9. La línea de ayuda del menú tampoco nombra la tecla `C`.
 
 ## 7. Veredicto
 
-*(rellenar: T8 cumplida solo si AC1–AC8 tienen ✅ con su fuente, la NVS no cambió y el registro dice
-`brownout=0`, `panic=0`. Con AC5 bloqueado, el veredicto es «T8 parcial: AC5 pendiente de T1a/T1b»)*
+**T8 parcial (primera sesión, 2026-11-23).**
+- ✅ AC1, AC2, AC3, AC4, AC6, AC7 (tiempo de D1) y AC8. NVS igual antes y después; registro `brownout=0`, `panic=0`.
+- ❓ AC5-USB y AC7b–d: sin evidencia en la consola. Se repiten en una segunda sesión.
+- ⏸ AC5: bloqueado por T1a/T1b.
+- ⚠️ El pin 10 no estuvo aislado (§6). La segunda sesión empieza con el cable revisado y medido sin tensión.

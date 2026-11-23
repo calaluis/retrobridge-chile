@@ -492,6 +492,104 @@ void test_status_holds_knows_when_it_cannot_tell()
     TEST_ASSERT_TRUE(rb::host::statusHolds(other.c_str(), (head + "1.CAS").c_str()) == StatusHolds::No);
 }
 
+// Review 3 of PR #85, 1: putting back an old tape with a long name, no reply in time, and the
+// status shows its first 63 bytes. It may well be back: unconfirmed is not failed, never eject.
+void test_an_unconfirmed_restore_of_a_long_name_is_not_ejected()
+{
+    const std::string head(70, 'A');
+    const std::string old = head + "1.CAS";
+    FakeChannel channel;
+    CasTapeDeck deck(channel, true);
+    deck.mount(old.c_str());
+    channel.replies.push_back("mounted " + head.substr(0, 63) + ": 1 data, 0 fsk");
+    deck.poll();
+    deck.mount("NEW.CAS");
+    deck.cancel();
+    channel.replies.push_back("mounted NEW.CAS: 1 data, 0 fsk");
+    deck.pump();
+    channel.replies.push_back("");
+    deck.pump();
+    channel.replies.push_back(head.substr(0, 63) + ": segment 1/1, gap 0 ms, motor off");
+    deck.pump();
+    deck.pump();
+    TEST_ASSERT_EQUAL_STRING(old.c_str(), deck.loaded());
+    assertSent(channel, {("mount " + old).c_str(), "mount NEW.CAS", ("mount " + old).c_str(), "status"});
+}
+
+// Review 3, 1: a restore whose status never answers is not confirmed either way: never eject.
+void test_a_restore_whose_status_never_answers_is_not_ejected()
+{
+    FakeChannel channel;
+    CasTapeDeck deck(channel, true);
+    deck.mount("OLD.CAS");
+    channel.replies.push_back("mounted OLD.CAS: 1 data, 0 fsk");
+    deck.poll();
+    deck.mount("NEW.CAS");
+    deck.cancel();
+    channel.replies.push_back("mounted NEW.CAS: 1 data, 0 fsk");
+    deck.pump();
+    for (int i = 0; i < 20; ++i) {
+        channel.replies.push_back("");
+        deck.pump();
+    }
+    for (const std::string& line : channel.sent) {
+        TEST_ASSERT_TRUE_MESSAGE(line != "eject", "an unconfirmed restore must not eject");
+    }
+    TEST_ASSERT_FALSE(channel.inFlight);  // the status retries end
+}
+
+// Review 3, 2: eject while the old tape is being put back and the cassette says "busy". The
+// restore is dropped (never "mount " with no name) and the eject goes next.
+void test_an_eject_during_a_busy_restore_sends_the_eject_not_an_empty_mount()
+{
+    FakeChannel channel;
+    CasTapeDeck deck(channel, true);
+    deck.mount("OLD.CAS");
+    channel.replies.push_back("mounted OLD.CAS: 1 data, 0 fsk");
+    deck.poll();
+    deck.mount("NEW.CAS");
+    deck.cancel();
+    channel.replies.push_back("mounted NEW.CAS: 1 data, 0 fsk");
+    deck.pump();  // "mount OLD.CAS" in flight
+    deck.eject();
+    channel.replies.push_back("busy: the last tape is still closing");
+    deck.pump();
+    assertSent(channel, {"mount OLD.CAS", "mount NEW.CAS", "mount OLD.CAS", "eject"});
+    TEST_ASSERT_EQUAL_STRING("", deck.loaded());
+}
+
+// Review 3, 2: the same with the restore answered "mounted" after the eject: the eject still goes.
+void test_an_eject_during_a_restore_that_succeeds_still_ejects()
+{
+    FakeChannel channel;
+    CasTapeDeck deck(channel, true);
+    deck.mount("OLD.CAS");
+    channel.replies.push_back("mounted OLD.CAS: 1 data, 0 fsk");
+    deck.poll();
+    deck.mount("NEW.CAS");
+    deck.cancel();
+    channel.replies.push_back("mounted NEW.CAS: 1 data, 0 fsk");
+    deck.pump();
+    deck.eject();
+    channel.replies.push_back("mounted OLD.CAS: 1 data, 0 fsk");
+    deck.pump();
+    assertSent(channel, {"mount OLD.CAS", "mount NEW.CAS", "mount OLD.CAS", "eject"});
+    TEST_ASSERT_EQUAL_STRING("", deck.loaded());
+}
+
+// A "busy" to a load that was already cancelled: the cassette did not change; nothing more is sent.
+void test_a_busy_reply_to_a_cancelled_load_is_not_sent_again()
+{
+    FakeChannel channel;
+    CasTapeDeck deck(channel, true);
+    deck.mount("A.CAS");
+    deck.cancel();
+    channel.replies.push_back("busy: the last tape is still closing");
+    deck.pump();
+    deck.pump();
+    assertSent(channel, {"mount A.CAS"});
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -523,5 +621,10 @@ int main(void)
     RUN_TEST(test_an_eject_after_an_unread_ready_drops_it);
     RUN_TEST(test_a_status_that_cannot_tell_two_long_names_apart_is_not_ready);
     RUN_TEST(test_status_holds_knows_when_it_cannot_tell);
+    RUN_TEST(test_an_unconfirmed_restore_of_a_long_name_is_not_ejected);
+    RUN_TEST(test_a_restore_whose_status_never_answers_is_not_ejected);
+    RUN_TEST(test_an_eject_during_a_busy_restore_sends_the_eject_not_an_empty_mount);
+    RUN_TEST(test_an_eject_during_a_restore_that_succeeds_still_ejects);
+    RUN_TEST(test_a_busy_reply_to_a_cancelled_load_is_not_sent_again);
     return UNITY_END();
 }

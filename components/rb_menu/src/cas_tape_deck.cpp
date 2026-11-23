@@ -152,7 +152,8 @@ void CasTapeDeck::onReply(const char* reply) noexcept
     const CasMountReply kind = classifyMountReply(reply);
     switch (done) {
     case Op::Mount:
-        if (kind == CasMountReply::Busy && busyLeft_ > 0) {
+        // A cancelled load that got "busy": the cassette did not change; nothing to retry or undo.
+        if (kind == CasMountReply::Busy && busyLeft_ > 0 && !cancelled_) {
             --busyLeft_;
             (void)post(Op::Mount, "mount", asked_);
             return;
@@ -182,6 +183,9 @@ void CasTapeDeck::onReply(const char* reply) noexcept
         return;
     }
     case Op::Restore:
+        if (ejectWaiting_) {
+            return;  // review 3 of PR #85, 2: an eject was asked; the restore is dropped, the eject goes
+        }
         if (kind == CasMountReply::Busy && busyLeft_ > 0) {
             --busyLeft_;
             (void)post(Op::Restore, "mount", previous_);
@@ -191,16 +195,27 @@ void CasTapeDeck::onReply(const char* reply) noexcept
             (void)post(Op::RestoreStatus, "status", nullptr);
             return;
         }
-        restoreDone(kind == CasMountReply::Mounted);
+        restoreDone(kind == CasMountReply::Mounted ? Outcome::Taken : Outcome::NotTaken);
         return;
-    case Op::RestoreStatus:
-        if (kind == CasMountReply::NoReply && statusLeft_ > 0) {
-            --statusLeft_;
-            (void)post(Op::RestoreStatus, "status", nullptr);
+    case Op::RestoreStatus: {
+        if (ejectWaiting_) {
             return;
         }
-        restoreDone(statusHolds(reply, previous_) == StatusHolds::Yes);
+        if (kind == CasMountReply::NoReply) {
+            if (statusLeft_ > 0) {
+                --statusLeft_;
+                (void)post(Op::RestoreStatus, "status", nullptr);
+                return;
+            }
+            restoreDone(Outcome::Unknown);  // review 3, 1: not confirmed is not failed
+            return;
+        }
+        const StatusHolds holds = statusHolds(reply, previous_);
+        restoreDone(holds == StatusHolds::Yes ? Outcome::Taken
+                    : holds == StatusHolds::No ? Outcome::NotTaken
+                                               : Outcome::Unknown);
         return;
+    }
     case Op::Eject:
         if ((kind == CasMountReply::Busy || kind == CasMountReply::NoReply) && busyLeft_ > 0) {
             --busyLeft_;
@@ -234,9 +249,11 @@ void CasTapeDeck::mountDone(Outcome outcome, CasMountReply kind) noexcept
     report_ = kind == CasMountReply::TooBig ? TapeState::NoMemory : TapeState::Invalid;
 }
 
-void CasTapeDeck::restoreDone(bool taken) noexcept
+void CasTapeDeck::restoreDone(Outcome outcome) noexcept
 {
-    if (taken) {
+    if (outcome != Outcome::NotTaken) {
+        // Taken, or not confirmed either way (review 3 of PR #85, 1): the old tape may well be
+        // back, so it is what the deck believes; ejecting it would break the cancel's promise.
         copyName(loaded_, previous_);
         return;
     }

@@ -84,7 +84,7 @@ private:
     bool post(Op op, const char* verb, const char* name) noexcept;
     void onReply(const char* reply) noexcept;
     void mountDone(Outcome outcome, CasMountReply kind) noexcept;
-    void restoreDone(bool taken) noexcept;
+    void restoreDone(Outcome outcome) noexcept;
     void undo() noexcept;  // the cassette holds asked_, the menu does not want it
     void sendWaiting() noexcept;
 

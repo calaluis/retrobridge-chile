@@ -181,6 +181,7 @@ memoria.
 | AC6 | Host, **determinista** | El usuario cambia o desmonta D2 en `Cargando`; luego el loader entrega la imagen; D2 y la memoria no cambian; la ranura se recicla | Loader falso controlado paso a paso |
 | AC7 | Unidad (`drive_memory`) | Ranuras v1 y v2 de prueba se leen sin pérdida; v3 ida y vuelta | — |
 | AC7 | Integración (`SlotFileStore` real en un directorio temporal) | Ranura A v2 (1 168 B) y B v3 (3 488 B), de tamaños distintos: gana la de mayor secuencia; CRC malo y escritura cortada (archivo truncado) se rechazan y gana la otra; el primer guardado v3 tras leer v2 escribe la ranura que no tiene la más nueva y la v2 sigue válida; D1–D8 y `C:` se conservan en cada paso | Archivos en disco del PC |
+| R5 | Integración (`SlotFileStore` + codec v2 de prueba) | Retroceso: ranura A v2 (seq 4) y B v3 (seq 5). Un lector solo v2 rechaza B y restaura A (asignaciones anteriores, sin red). Un guardado v2 escribe B (seq 5 para él), A sigue válida. Al volver al firmware nuevo, gana la de mayor secuencia válida y D1–D8 y `C:` coinciden con lo último guardado | Lector v2 de prueba en host |
 | AC8 | Banco con USB (autorización específica, §0) | `listo_ms` ≤ hoy + 50 ms con unidades de red recordadas | — |
 | AC9 | Host | D2 recordada de `srv-a`; `E` cambia la fuente 2 a `srv-b`; al encender se pide a `srv-a` | Dos servidores falsos |
 
@@ -191,7 +192,7 @@ literales en la pantalla renderizada.
 
 | # | Tarea | AC | Riesgo | Depende | Paralela | Done-check |
 |---|---|---|---|---|---|---|
-| T1 | `DriveMemory` v3 + codec; lectura v1/v2; integración con `SlotFileStore` | AC7 | 1 | — | sí | `ctest -R "drive_memory\|drive_slot_store"` verde con los casos de integración de §5 |
+| T1 | `DriveMemory` v3 + codec; lectura v1/v2; integración con `SlotFileStore` | AC7 | 1 | — | sí | `ctest -R "drive_memory\|drive_slot_store"` verde con los casos de integración y de retroceso (R5) de §5 |
 | T2 | `NetRestoreQueue` (pura) con plazos por bytes y reloj monotónico, `cancel`, `requeue` | AC4, AC6 | 1 | — | sí | `ctest -R net_restore` verde con progreso lento, pausa de 31 s y servidor detenido |
 | T3 | `NoExiste` solo por estado ENOENT; `NoCabe`; `bytes` en `InProgress` | AC4, AC5 | 1 | — | sí | `ctest -R "tnfs_client\|tnfs_loader"` verde con ENOENT, EACCES, otro estado, sin memoria y `bytes` creciente |
 | T4 | Spike + `startFetchAt`/`startXexAt` con sesión interna | AC9 | 2 | T3 | no | `ctest -R tnfs_loader` verde; nota del spike en el plan |
@@ -209,7 +210,7 @@ literales en la pantalla renderizada.
 | R2 | Una restauración larga compite con el usuario | Usuario navega TNFS al encender | Descargas repetidas | Prioridad al usuario + `requeue` (§2.3); medir en T8 |
 | R3 | `DriveMemory` v3 (~3.5 KB) presiona pilas | Una copia en pila | Desbordamiento | Siempre miembro; revisar `snapshot()` y el guardado; prueba ASan |
 | R4 | Los plazos del cliente TNFS no coinciden con 30 s | T6 | `SIN RED` antes o después de lo pactado | `NetRestoreQueue` mide sus 30 s con su reloj y cancela; no depende de los reintentos del cliente |
-| R5 | Una v3 escrita no se puede leer con un firmware anterior | Volver a un paquete viejo | Unidades vacías | Aceptado: el firmware viejo ve la ranura como no válida y arranca vacío (no rompe) |
+| R5 | Un firmware anterior (v2) no lee la ranura v3 | Volver a un paquete viejo tras el primer guardado v3 | Si la otra ranura aún es v2 válida, el firmware viejo la toma y restaura **asignaciones anteriores** (las del último guardado v2), no las más nuevas; si ninguna es v2 válida, arranca vacío. Las unidades de red no existen en v2: vuelven vacías | Aceptado y documentado. No rompe la recuperación A/B: el firmware viejo guarda en la ranura que no tiene la más nueva válida **para él**, es decir, sobre la v3. Prueba de retroceso en §5 |
 | R6 | `NoCabe` recordada para siempre | Imagen demasiado grande | `NO CABE` en cada encendido | Aceptado en la revisión: se mantiene; el usuario la cambia. Prueba de recuperación en §5 |
 | R7 | El valor del estado ENOENT de TNFS | T3 | `FALTA` en el caso equivocado borraría una asignación | [P] Confirmar el código en la documentación pública del protocolo TNFS (no en código de FujiNet); prueba con el servidor falso. Ante cualquier duda, `NoSePudoAbrir`, que no borra |
 

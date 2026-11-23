@@ -200,6 +200,12 @@ private:
         std::size_t slot = 0;                          // Tnfs
         char name[TnfsFolder::kDisplayWidth + 1] = {};  // Tnfs: display name
         bool locked = true;                            // read-only: " SL" on the main screen
+        // menu-tnfs-persistente T5: where a Tnfs image came from, as snapshot() remembers it (NetAtr,
+        // or NetXex when `xex`): the server its source named when it was chosen, and the absolute
+        // path. server[0] == '\0': nothing to remember (a local .xex, source 1).
+        bool xex = false;
+        char server[DriveMemory::kMaxServer + 1] = {};
+        char path[kTnfsMaxPath + 1] = {};
     };
 
     void collect();
@@ -332,6 +338,7 @@ private:
     Job job_ = Job::None;
     uint32_t jobNumber_ = 0;
     unsigned jobSource_ = 0;
+    char jobServer_[MenuSources::kMaxName + 1] = {};  // T5: source 2..8's server when the job started
     char jobPath_[kTnfsMaxPath + 1] = {};
     std::size_t jobPathLength_ = 0;
     unsigned jobDrive_ = 0;

@@ -82,6 +82,24 @@ aprobar).
 - Mutaciones: mandar la restauración por la fuente 2 (3 fallos) y no renombrar el enlace (4 fallos).
 - Host: **92/92**; `retrobridge_host` compila.
 
+## T5 — el controlador recuerda el origen; `snapshot()` v3 (2026-11-23)
+
+- Rama `feat/menu-tnfs-persistente-t5` desde `main` d016a5c (PR #90 y #91 fusionados).
+- `Shown` guarda, para una imagen TNFS, el servidor que nombraba su fuente al elegirla, la ruta absoluta y si es
+  `.xex`. El servidor se copia al empezar el trabajo (`jobServer_`), así que `E` después no lo cambia (AC9).
+- `snapshot()` escribe `NetAtr`/`NetXex` con `setNet`; si lo rechaza, la unidad queda vacía, como un nombre local.
+  Un `.xex` local (fuente 1) sigue sin recordarse.
+- `restore()` no busca una unidad de red en el catálogo local (una imagen local con el mismo nombre es otra): la
+  deja vacía y anota `D<n> net not restored`. Restaurarla por la red es T6. **Hasta T6**, el siguiente guardado
+  la olvida; no se publica firmware entre T5 y T6.
+- `Shown` crece ~290 B (servidor 33 + ruta 256); diez copias miembro ≈ 2,9 KB más en el controlador. Las copias
+  en pila (`fetched`, `assignD1`) son de un solo `Shown` (R3).
+- Pruebas: `test_menu_unidades_red` (7): ATR TNFS en D2 y en D1, `.xex` TNFS en D1 (`NetXex`), servidor fijado al
+  elegir aunque `E` cambie la fuente 2, regresión local (`Local`, `.xex` local vacío, local reemplaza a TNFS),
+  ida y vuelta por el codec v3, y `restore()` que no confunde una unidad de red con una local del mismo nombre.
+- Mutaciones: sin la rama `NetAtr`/`NetXex` de `snapshot()` (5 fallos); `restore()` sin el filtro de red (1 fallo).
+- Host: **93/93**; `retrobridge_host` compila.
+
 ## Siguiente
 
-T5–T7 (controlador: recordar el origen al montar, restaurar con la cola, estados y cancelación).
+T6 tras revisar T5 (restauración de red en segundo plano con la cola), luego T7.

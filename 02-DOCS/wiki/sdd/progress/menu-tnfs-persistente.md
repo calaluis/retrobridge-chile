@@ -100,6 +100,47 @@ aprobar).
 - Mutaciones: sin la rama `NetAtr`/`NetXex` de `snapshot()` (5 fallos); `restore()` sin el filtro de red (1 fallo).
 - Host: **93/93**; `retrobridge_host` compila.
 
+## T6 — restauración de red en segundo plano (2026-11-23)
+
+- Rama `feat/menu-tnfs-persistente-t6` desde `main` 9c90a95 (PR #92 fusionado).
+- `restore()` deja cada unidad de red **recordada** (`Shown` vacío con servidor, ruta y nombre) y arranca
+  `NetRestoreQueue`. Tras lo local, `service()` pide una unidad a la vez con `startFetchAt`/`startXexAt` cuando
+  el loader está libre, no hay trabajo del usuario y la red está `Ready`.
+- Pantalla: `Dn: CARGANDO <nombre>` en la línea de la unidad; al fallar, la línea y el mensaje dicen el motivo
+  (`SIN RED`, `SERVIDOR NO ENCONTRADO`, `FALTA <nombre>`, `INVALIDA <motivo>`, `NO CABE`, `NO SE PUDO ABRIR`).
+  En el menú principal la respuesta es «espera» mientras la cola trabaja, para que el Atari sondee.
+- Plazos de 30 s con el reloj monotónico del controlador (`setClock`; `esp_timer` en el FujiNet, `HostClock` en el
+  PC): Wi-Fi desde el arranque, primera respuesta y entre datos. Al vencer, el trabajo se cancela.
+- Regla del plan §3: `FALTA` e `INVALIDA` olvidan la unidad (versión nueva); el resto la deja recordada.
+- `A` con D1 de red en carga: `D1 CARGANDO, ESPERA`.
+- Defensas mínimas, sin adelantar T7: un trabajo del usuario que quita el loader devuelve la unidad a la cola, y
+  un resultado para una unidad que el usuario ya cambió se descarta. La cancelación al cambiar o desmontar una
+  unidad en carga y su prueba determinista (AC6) siguen en T7.
+- Cableado: `menu_sio.cpp` fija la puerta Wi-Fi y el reloj antes de crear la tarea SIO; `host/src/main.cpp`, el reloj.
+- Pruebas: `test_menu_tnfs_restaura` (10): AC1 (CARGANDO → montada, sin versión nueva), AC2 (`A` espera y luego
+  arranca el `.xex`), AC3 (D1 local arranca con D2 en carga), AC4 (sin Wi-Fi 30 s, servidor mudo 30 s, DNS y
+  restauración en el encendido siguiente), AC5 (`FALTA` e `INVALIDA` olvidan; EACCES y `NO CABE` no), AC9.
+- Mutaciones: sin la espera de D1 (1 fallo), sin olvidar (2), sin escribir la recordada (4), sin plazos (2).
+- Host: **94/94** tres veces seguidas; `retrobridge_host` compila.
+- Revisión del PR #94 (CI 45273381900 roja): `-Werror=format-truncation` en `netState` y `netFailed` (GCC de
+  Linux y de ESP-IDF; el GCC 16 de MSYS2 no lo da). Corregido con precisiones explícitas: `CARGANDO %.31s`,
+  ` D<n>: FALTA %.29s`, ` D<n>: INVALIDA %.26s`, ` D<n>: %.35s`; el número de unidad es un dígito. Cada línea
+  cabe en 40 columnas.
+- Prueba integrada añadida: un bloque cada 20 s durante 2 min no vence (el porcentaje apenas se mueve; cuentan
+  los bytes); 29 s sin datos sigue cargando; 31 s → `SIN RED`, recordada. Mutación: sin `progressed` (1 fallo).
+  `test_menu_tnfs_restaura` 11/11 cinco veces seguidas; host 94/94.
+- Revisión de 2e9b677 (bloqueante): los errores al abrir o montar la imagen restaurada se tomaban todos como
+  `INVALIDA`, que olvida la unidad. Ahora `mountReasonOf()` clasifica según el plan §3: ATR realmente inválida
+  (cabecera, tamaño de sector, disposición, muy pequeña, más sectores de los posibles, geometría, disco
+  inválido) → `INVALIDA`; `NoFreeSlot` → `NO CABE`; cualquier otro error (E/S, ocupado, no encontrado, en uso…)
+  → `NO SE PUDO ABRIR`. Solo `INVALIDA` y `FALTA` olvidan. Vale para D1 (`checkImage`), D2..D8 (`mount_.execute`)
+  y la respuesta del montaje (`collect`). La cola marca la unidad `Montada` solo cuando el montaje se aplicó.
+- Prueba nueva: un repositorio que falla a propósito al abrir la ranura restaurada, con `NoFreeSlot` e `IoError`,
+  en D2 y en D1: `NO CABE` / `NO SE PUDO ABRIR`, sin versión nueva, y `snapshot()` conserva servidor, ruta y
+  nombre; la ranura vuelve al loader. Mutación «todo error es INVALIDA»: 1 fallo. **Sin cubrir por prueba:** el
+  error en la respuesta del montaje (`collect`), que el banco no puede provocar; usa la misma clasificación.
+  `test_menu_tnfs_restaura` 12/12; host 94/94 tres veces.
+
 ## Siguiente
 
-T6 tras revisar T5 (restauración de red en segundo plano con la cola), luego T7.
+T7 tras revisar T6 (cancelación al cambiar o desmontar una unidad en carga; respuesta tardía; AC6).

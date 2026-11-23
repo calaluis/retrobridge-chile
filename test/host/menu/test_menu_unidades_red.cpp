@@ -183,7 +183,7 @@ void test_a_mixed_snapshot_round_trips_through_the_v3_codec()
 }
 
 // restore(): a remembered TNFS drive is not looked up in the local catalog, even when a local
-// image has the same name; the local drives are restored as before and nothing says FALTA.
+// image has the same name: it waits for the network (T6) and the local drives are restored as before.
 void test_restore_leaves_a_tnfs_drive_to_the_network_and_restores_the_local_ones()
 {
     Rig rig;
@@ -197,10 +197,10 @@ void test_restore_leaves_a_tnfs_drive_to_the_network_and_restores_the_local_ones
         rig.step();
     }
     TEST_ASSERT_FALSE(rig.controller->restoring());
-    TEST_ASSERT_EQUAL_STRING("", rig.mounted(2));
+    rig.step();  // T6: the network part starts after the local one
+    TEST_ASSERT_TRUE(std::strcmp("DISCO.ATR", rig.mounted(2)) != 0);  // never the local image
     TEST_ASSERT_EQUAL_STRING("DISCO.ATR", rig.mounted(3));
-    TEST_ASSERT_TRUE(rig.events.has("D2 net not restored"));
-    TEST_ASSERT_FALSE(rig.events.has("FALTA"));
+    TEST_ASSERT_TRUE(rig.events.has("D2 net start server=pulgarcito path=/DISCO.ATR"));
 }
 
 int main(void)

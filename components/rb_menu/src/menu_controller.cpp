@@ -117,6 +117,9 @@ const char* reason(ErrorCode error) noexcept
 
 DriveNumber drive(unsigned number) { return DriveNumber::from(static_cast<uint8_t>(number)).value(); }
 
+// menu-tnfs-persistente T6: how a restored image's open or mount error ends (defined below).
+rb::host::NetRestoreQueue::Reason mountReasonOf(ErrorCode error) noexcept;
+
 const char* loaderText(LoaderError error) noexcept
 {
     switch (error) {
@@ -234,7 +237,9 @@ void MenuController::collect()
     const unsigned number = outcome->drive.value();
     char detail[64];
     const bool restoring = restoreDrive_ == number && inFlight_ == InFlight::Mount;
+    const bool fromNet = netDrive_ == number && inFlight_ == InFlight::Mount;  // T6
     restoreDrive_ = 0;
+    netDrive_ = 0;
     if (outcome->error) {
         std::snprintf(detail, sizeof detail, "D%u not applied: error %u", number,
                       static_cast<unsigned>(*outcome->error));
@@ -245,6 +250,11 @@ void MenuController::collect()
             shown_[number - 1] = previous_;
             recycle(incoming_);  // its source was closed with the reply (ADR-014)
             say(" ERROR: D%u NO CAMBIO", number);
+            if (fromNet) {
+                const NetRestoreQueue::Reason why = mountReasonOf(*outcome->error);
+                (void)netQueue_.failed(number, why);
+                netFailed(number, why, reason(*outcome->error));
+            }
         } else if (inFlight_ == InFlight::Boot) {
             say(" ERROR: D1 NO SE PUDO MONTAR");
         }
@@ -255,6 +265,9 @@ void MenuController::collect()
             recycle(previous_);  // the displaced source was closed with the reply
             if (restoring) {
                 ++restored_;
+            } else if (fromNet) {
+                // T6: what was remembered is what is mounted now: no new version.
+                (void)netQueue_.done(number);
             } else {
                 changed();  // a mount or an unmount the menu asked for: remember it
             }
@@ -292,6 +305,7 @@ void MenuController::service()
         restoreNext();  // after the menu: D1 comes first
     } else {
         serviceRestoredTape();
+        serviceNetRestore();  // T6: after the local drives
     }
 }
 
@@ -957,6 +971,13 @@ void MenuController::emptyDrive(unsigned number)
 bool MenuController::boot()
 {
     const Shown& d1 = shown_[0];
+    const NetRestoreQueue::State d1State = netQueue_.state(1);
+    if (remembered(d1) &&
+        (d1State == NetRestoreQueue::State::Pending || d1State == NetRestoreQueue::State::Loading)) {
+        say(" D1 CARGANDO, ESPERA");  // T6 (AC2): never boots an image still on its way
+        event("menu_boot", "D1 refused: still loading");
+        return false;
+    }
     if (d1.kind == Shown::Kind::None) {
         say(" D1 SIN DISCO: ABRE LA FUENTE 1");
         return false;
@@ -985,7 +1006,7 @@ bool MenuController::boot()
 
 MenuReply MenuController::render(uint8_t action) const noexcept
 {
-    if (action == kMenuActionShow && view_ == View::Main && (restoring_ || saving())) {
+    if (action == kMenuActionShow && view_ == View::Main && (restoring_ || saving() || netQueue_.busy())) {
         action = kMenuActionWait;  // the Atari polls: the restore or the save result shows up by itself
     }
     if (editing() && action == kMenuActionShow) {
@@ -1044,7 +1065,9 @@ MenuReply MenuController::render(uint8_t action) const noexcept
     }
     for (unsigned n = 1; n <= kDrives; ++n) {
         const char* name = driveName(n);
-        if (name != nullptr && shown_[n - 1].locked) {
+        if (name == nullptr && remembered(shown_[n - 1])) {
+            std::snprintf(text, sizeof text, "D%u: %.*s", n, static_cast<int>(kLabelColumns - 1), netState(n));
+        } else if (name != nullptr && shown_[n - 1].locked) {
             std::snprintf(text, sizeof text, "D%u %-*.*s%s", n, static_cast<int>(kLockedColumns),
                           static_cast<int>(kLockedColumns), name, kLockedMark);
         } else {
@@ -1692,11 +1715,15 @@ void MenuController::restore(const DriveMemory& memory)
     for (unsigned number = 1; number <= kDrives; ++number) {
         const DriveMemory::Origin origin = memory.origin(number);
         if (origin == DriveMemory::Origin::NetAtr || origin == DriveMemory::Origin::NetXex) {
-            // T5: a TNFS drive is never looked up in the local catalog (a local image of the same
-            // name is another one). Restoring it over the network is T6; until then it stays empty.
-            char detail[48];
-            std::snprintf(detail, sizeof detail, "D%u net not restored", number);
-            event("menu_restore", detail);
+            // A TNFS drive is never looked up in the local catalog (a local image of the same name
+            // is another one). T6: it is remembered and comes back over the network after the local
+            // drives; until then it shows CARGANDO.
+            Shown& kept = shown_[number - 1];
+            kept = Shown{};
+            kept.xex = origin == DriveMemory::Origin::NetXex;
+            std::snprintf(kept.server, sizeof kept.server, "%s", memory.server(number));
+            std::snprintf(kept.path, sizeof kept.path, "%s", memory.path(number));
+            std::snprintf(kept.name, sizeof kept.name, "%s", memory.name(number));
             continue;
         }
         const char* name = memory.name(number);
@@ -1717,6 +1744,7 @@ void MenuController::restore(const DriveMemory& memory)
     if (memory.tape()[0] != '\0') {
         restoreTape(memory.tape());
     }
+    netQueue_.begin(memory, nowMs());  // T6: the Wi-Fi deadline starts here; nothing asked yet
     restoreLoaded_ = true;
     restoreNext();
 }
@@ -1797,7 +1825,7 @@ uint32_t MenuController::snapshot(DriveMemory& out) noexcept
         const Shown& shown = shown_[number - 1];
         if (shown.kind == Shown::Kind::Local) {
             (void)out.set(number, catalog_.name(shown.entry));  // a name it refuses is remembered empty
-        } else if (shown.kind == Shown::Kind::Tnfs && shown.server[0] != '\0') {
+        } else if ((shown.kind == Shown::Kind::Tnfs || remembered(shown)) && shown.server[0] != '\0') {
             // menu-tnfs-persistente T5: one setNet refuses (a name, server or path it cannot keep)
             // leaves the drive empty, as for a local name.
             (void)out.setNet(number, shown.xex ? DriveMemory::Origin::NetXex : DriveMemory::Origin::NetAtr,
@@ -1860,6 +1888,280 @@ void MenuController::saveResult(uint32_t version, bool ok, int error) noexcept
     event("menu_save", detail);
 }
 
+std::optional<ErrorCode> MenuController::checkImage(const rb::app::ImageLocation& location)
+{
+    std::optional<ErrorCode> error;
+    const auto opened = repository_.open(location);
+    if (!opened.ok()) {
+        return opened.error();
+    }
+    {
+        const auto disk = rb::domain::DiskImage::open(*opened.value());  // detaches when it goes
+        if (!disk.ok()) {
+            error = disk.error();
+        }
+    }
+    repository_.close(opened.value());
+    return error;
+}
+
+// ---------------------------------------------------------------------------
+// Network restore (menu-tnfs-persistente T6, plan §2.2, §3, §4).
+
+namespace {
+
+const char* netReasonText(NetRestoreQueue::Reason why) noexcept
+{
+    switch (why) {
+    case NetRestoreQueue::Reason::SinRed:
+        return "SIN RED";
+    case NetRestoreQueue::Reason::ServidorNoEncontrado:
+        return "SERVIDOR NO ENCONTRADO";
+    case NetRestoreQueue::Reason::Falta:
+        return "FALTA";
+    case NetRestoreQueue::Reason::Invalida:
+        return "INVALIDA";
+    case NetRestoreQueue::Reason::NoCabe:
+        return "NO CABE";
+    case NetRestoreQueue::Reason::NoSePudoAbrir:
+    case NetRestoreQueue::Reason::None:
+        break;
+    }
+    return "NO SE PUDO ABRIR";
+}
+
+const char* netReasonName(NetRestoreQueue::Reason why) noexcept
+{
+    switch (why) {
+    case NetRestoreQueue::Reason::SinRed:
+        return "no network";
+    case NetRestoreQueue::Reason::ServidorNoEncontrado:
+        return "server not found";
+    case NetRestoreQueue::Reason::Falta:
+        return "missing";
+    case NetRestoreQueue::Reason::Invalida:
+        return "invalid";
+    case NetRestoreQueue::Reason::NoCabe:
+        return "no room";
+    case NetRestoreQueue::Reason::NoSePudoAbrir:
+    case NetRestoreQueue::Reason::None:
+        break;
+    }
+    return "could not open";
+}
+
+// The loader's error, as a reason of the plan §3 table.
+NetRestoreQueue::Reason netReasonOf(LoaderError error) noexcept
+{
+    switch (error) {
+    case LoaderError::NoResponde:
+        return NetRestoreQueue::Reason::SinRed;
+    case LoaderError::NoEncontrado:
+        return NetRestoreQueue::Reason::ServidorNoEncontrado;
+    case LoaderError::NoExiste:
+        return NetRestoreQueue::Reason::Falta;
+    case LoaderError::XexNoValido:
+    case LoaderError::XexNoCompatible:
+        return NetRestoreQueue::Reason::Invalida;
+    case LoaderError::NoCabe:
+        return NetRestoreQueue::Reason::NoCabe;
+    case LoaderError::NoSePudoAbrir:
+        break;
+    }
+    return NetRestoreQueue::Reason::NoSePudoAbrir;  // ambiguous: never forgets the drive
+}
+
+// An error opening or mounting a restored image (plan §3, review of PR #94): only a disk that
+// is really not valid is INVALIDA, which forgets the drive. No free slot is NO CABE, and every
+// other error (I/O, busy, not found, in use...) is ambiguous: the drive stays remembered.
+NetRestoreQueue::Reason mountReasonOf(ErrorCode error) noexcept
+{
+    switch (error) {
+    case ErrorCode::InvalidAtrHeader:
+    case ErrorCode::UnsupportedSectorSize:
+    case ErrorCode::UnsupportedAtrLayout:
+    case ErrorCode::ImageTooSmall:
+    case ErrorCode::ImageTooLarge:  // more sectors than an ATR can have
+    case ErrorCode::InvalidGeometry:
+    case ErrorCode::InvalidDiskImage:
+        return NetRestoreQueue::Reason::Invalida;
+    case ErrorCode::NoFreeSlot:
+        return NetRestoreQueue::Reason::NoCabe;
+    default:
+        break;
+    }
+    return NetRestoreQueue::Reason::NoSePudoAbrir;
+}
+
+}  // namespace
+
+uint64_t MenuController::nowMs() const noexcept
+{
+    return clock_ != nullptr ? clock_->nowMicros() / 1000u : 0u;
+}
+
+const char* MenuController::netState(unsigned number) const noexcept
+{
+    static char line[kMenuLineWidth + 1];  // menu thread only, read at once by render()
+    const NetRestoreQueue::State state = netQueue_.state(number);
+    if (state == NetRestoreQueue::State::Pending || state == NetRestoreQueue::State::Loading) {
+        // "CARGANDO " (9) + the name cut to what is left of the 40 columns.
+        std::snprintf(line, sizeof line, "CARGANDO %.*s", static_cast<int>(kMenuLineWidth - 9),
+                      shown_[number - 1].name);
+        return line;
+    }
+    if (state == NetRestoreQueue::State::Failed) {
+        return netReasonText(netQueue_.reason(number));
+    }
+    return "SIN DISCO";
+}
+
+void MenuController::serviceNetRestore()
+{
+    if (loader_ == nullptr || !netQueue_.busy()) {
+        return;
+    }
+    const uint64_t now = nowMs();
+    const uint8_t late = netQueue_.expired(now);
+    for (unsigned number = 1; number <= kDrives; ++number) {
+        if ((late & (1u << (number - 1))) == 0) {
+            continue;
+        }
+        if (netJob_ != 0 && netQueue_.jobOf(number) == netJob_) {
+            loader_->cancel(netJob_);  // a late result is dropped and its slot freed by the loader
+            netJob_ = 0;
+        }
+        netFailed(number, NetRestoreQueue::Reason::SinRed, "deadline");
+    }
+    // A result is taken only when it can be applied at once (a mount needs the mailbox).
+    if (inFlight_ != InFlight::None || !mailbox_.idle()) {
+        return;
+    }
+    if (netJob_ != 0) {
+        const uint32_t job = netJob_;
+        const LoaderStatus status = loader_->poll(job, folder_);  // a fetch never touches the folder
+        const unsigned number = netQueue_.driveOf(job);
+        switch (status.kind) {
+        case LoaderStatus::Kind::InProgress:
+            netQueue_.progressed(number, status.bytes, now);
+            return;
+        case LoaderStatus::Kind::Image:
+            netJob_ = 0;
+            if (number == 0 || !remembered(shown_[number - 1])) {
+                loader_->recycle(status.slot);  // nobody waits for it any more
+                netQueue_.cancel(number);
+                return;
+            }
+            netRestored(number, status);  // ends the drive in the queue (D2..D8: when applied)
+            return;
+        case LoaderStatus::Kind::Error: {
+            netJob_ = 0;
+            if (number == 0) {
+                return;
+            }
+            const NetRestoreQueue::Reason why = netReasonOf(status.error);
+            (void)netQueue_.failed(number, why);
+            netFailed(number, why, status.cause);
+            return;
+        }
+        case LoaderStatus::Kind::Folder:
+        case LoaderStatus::Kind::Unknown:
+            netJob_ = 0;  // a user's job took the loader: asked again once it is free
+            (void)netQueue_.requeue(number);
+            return;
+        }
+        return;
+    }
+    if (job_ != Job::None) {
+        return;  // the user's job has the loader
+    }
+    const bool ready = network_ == nullptr || network_->state() == NetworkState::Ready;
+    const unsigned number = netQueue_.next(ready, now);
+    if (number == 0) {
+        return;
+    }
+    const Shown& kept = shown_[number - 1];
+    if (!remembered(kept)) {
+        netQueue_.cancel(number);  // the user put something else there
+        return;
+    }
+    const std::size_t length = std::strlen(kept.path);
+    const uint32_t job = kept.xex ? loader_->startXexAt(kept.server, kept.path, length)
+                                  : loader_->startFetchAt(kept.server, kept.path, length);
+    (void)netQueue_.started(number, job, now);
+    netJob_ = job;
+    char detail[kTnfsMaxPath + MenuSources::kMaxName + 48];
+    std::snprintf(detail, sizeof detail, "D%u net start server=%s path=%s xex=%u", number, kept.server, kept.path,
+                  kept.xex ? 1u : 0u);
+    event("menu_restore", detail);
+}
+
+void MenuController::netRestored(unsigned number, const LoaderStatus& status)
+{
+    Shown image = shown_[number - 1];  // keeps its server, path, name and kind of file
+    image.kind = Shown::Kind::Tnfs;
+    image.slot = status.slot;
+    image.locked = true;
+    const rb::app::ImageLocation location = tnfsLocation(image.slot);
+    char detail[TnfsFolder::kDisplayWidth + 64];
+    if (number == 1) {
+        if (const auto error = checkImage(location)) {
+            recycle(image);
+            const NetRestoreQueue::Reason why = mountReasonOf(*error);
+            (void)netQueue_.failed(1, why);
+            netFailed(1, why, reason(*error));
+            return;
+        }
+        shown_[0] = image;  // assigned: A boots it
+        (void)netQueue_.done(1);
+    } else {
+        const rb::core::Result<rb::app::MountReport> mounted = mount_.execute(drive(number), location);
+        if (!mounted.ok()) {
+            recycle(image);
+            const NetRestoreQueue::Reason why = mountReasonOf(mounted.error());
+            (void)netQueue_.failed(number, why);
+            netFailed(number, why, reason(mounted.error()));
+            return;
+        }
+        // Still Loading in the queue until collect() sees the mount applied (or refused).
+        previous_ = shown_[number - 1];
+        incoming_ = image;
+        shown_[number - 1] = image;
+        inFlight_ = InFlight::Mount;
+        netDrive_ = number;  // collect() keeps the version: this is what was remembered
+    }
+    std::snprintf(detail, sizeof detail, "D%u net restored name=%s bytes=%lu xex=%u", number, image.name,
+                  static_cast<unsigned long>(status.bytes), status.xex ? 1u : 0u);
+    event("menu_restore", detail);
+}
+
+void MenuController::netFailed(unsigned number, NetRestoreQueue::Reason why, const char* detail)
+{
+    // 40 columns: " Dn: " is 5 (drive 1..8, one digit); the rest is cut to what is left.
+    char line[kMenuLineWidth + 1];
+    const char digit = static_cast<char>('0' + number);
+    if (why == NetRestoreQueue::Reason::Falta) {
+        std::snprintf(line, sizeof line, " D%c: FALTA %.*s", digit, static_cast<int>(kMenuLineWidth - 11),
+                      shown_[number - 1].name);
+    } else if (why == NetRestoreQueue::Reason::Invalida) {
+        std::snprintf(line, sizeof line, " D%c: INVALIDA %.*s", digit, static_cast<int>(kMenuLineWidth - 14),
+                      detail);
+    } else {
+        std::snprintf(line, sizeof line, " D%c: %.*s", digit, static_cast<int>(kMenuLineWidth - 5),
+                      netReasonText(why));
+    }
+    if (view_ == View::Main && job_ == Job::None) {
+        say("%s", line);  // a list on screen keeps its own message; the drive line says it anyway
+    }
+    char log[kMenuLineWidth + LoaderStatus::kCauseSize + 48];
+    std::snprintf(log, sizeof log, "D%u net failed: %s (%s)", number, netReasonName(why), detail);
+    event("menu_restore", log);
+    if (why == NetRestoreQueue::Reason::Falta || why == NetRestoreQueue::Reason::Invalida) {
+        shown_[number - 1] = Shown{};  // AC5: forgotten, and saved without it
+        changed();
+    }
+}
+
 // An image that came over TNFS: validated like a local one, then assigned to
 // D1 or mounted on D2..D8. Refused, its slot goes back to the loader.
 void MenuController::place(unsigned number, const Shown& image, const LoaderStatus* xex)
@@ -1868,18 +2170,7 @@ void MenuController::place(unsigned number, const Shown& image, const LoaderStat
     std::optional<ErrorCode> error;
     const char* verb = "assigned";
     if (number == 1) {
-        const auto opened = repository_.open(location);
-        if (!opened.ok()) {
-            error = opened.error();
-        } else {
-            {
-                const auto disk = rb::domain::DiskImage::open(*opened.value());  // detaches when it goes
-                if (!disk.ok()) {
-                    error = disk.error();
-                }
-            }
-            repository_.close(opened.value());
-        }
+        error = checkImage(location);
         if (!error) {
             recycle(shown_[0]);
             shown_[0] = image;

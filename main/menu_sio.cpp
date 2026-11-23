@@ -743,6 +743,10 @@ bool start(const rb::board::BoardProfile& board)
     }
     g_station->start();  // D1 = menu: the next boot of the Atari loads it
     g_station->controller().beginRestore();  // RESTAURANDO UNIDADES until finish() has read the microSD
+    // menu-tnfs-persistente T6: the network restore asks the Wi-Fi before its first job and measures
+    // its deadlines with the monotonic clock. Set before the SIO task exists.
+    g_station->controller().setNetworkGate(&g_wifiGate);
+    g_station->controller().setClock(&g_clock);
     transport.releaseDataLine();
 
     g_readyUs = esp_timer_get_time();  // set before the SIO task exists: it reads it without a lock

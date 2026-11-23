@@ -74,6 +74,8 @@
 #include "rb/menu/network_gate.hpp"
 #include "rb/menu/tape_deck.hpp"
 #include "rb/menu/menu_sources.hpp"
+#include "rb/menu/net_restore_queue.hpp"
+#include "rb/app/ports/clock.hpp"
 #include "rb/app/inline_drive_mailbox.hpp"
 #include "rb/app/ports/image_repository.hpp"
 #include "rb/app/usecases/collect_drive_reply.hpp"
@@ -129,6 +131,9 @@ public:
     void setNetworkGate(const NetworkGate* gate) noexcept { network_ = gate; }
     // The cassette C: puts tapes on (menu-cinta); nullptr: C says there is no cassette.
     void setTapeDeck(TapeDeck* deck) noexcept { tape_ = deck; }
+    // The monotonic clock of the network restore's deadlines (menu-tnfs-persistente T6, plan §0);
+    // nullptr: time stands still and no deadline passes (a drive waits for its result).
+    void setClock(const rb::app::Clock* clock) noexcept { clock_ = clock; }
     // The --images folder and its catalog (the one given to the constructor), where N
     // creates a blank ATR (menu-formatear-disco); not set: N says there is none.
     void setImagesFolder(const char* folder, MenuCatalog& catalog) noexcept
@@ -296,6 +301,20 @@ private:
     void askRestoredTape();
     void serviceRestoredTape();
     void finishRestore() noexcept;
+    // menu-tnfs-persistente T6: the drives remembered from a TNFS server come back in the background,
+    // one at a time, after the local ones (plan §2.2). A drive waiting for its image is `remembered`:
+    // Kind::None with its server, path and name kept, so snapshot() still writes it.
+    static bool remembered(const Shown& shown) noexcept { return shown.kind == Shown::Kind::None && shown.server[0] != '\0'; }
+    uint64_t nowMs() const noexcept;
+    void serviceNetRestore();
+    void netRestored(unsigned drive, const LoaderStatus& status);
+    // The drive's restore ended without its image: the message row says why, and FALTA or
+    // INVALIDA forget it (a new version without it, AC5); every other reason keeps it remembered.
+    void netFailed(unsigned drive, NetRestoreQueue::Reason why, const char* detail);
+    // The drive line of a remembered drive: "CARGANDO <name>", or why it failed.
+    const char* netState(unsigned drive) const noexcept;
+    // nullopt if the image at `location` opens as a disk (D1 is assigned, not mounted).
+    std::optional<rb::core::ErrorCode> checkImage(const rb::app::ImageLocation& location);
     Cursor popPosition() noexcept;
 
     const MenuCatalog& catalog_;
@@ -308,6 +327,7 @@ private:
     MenuEvents* events_;
     MenuLoader* loader_;
     const NetworkGate* network_ = nullptr;
+    const rb::app::Clock* clock_ = nullptr;
     TapeDeck* tape_ = nullptr;
 
     View view_ = View::Main;
@@ -387,6 +407,11 @@ private:
     unsigned restored_ = 0;
     unsigned problems_ = 0;
     std::array<char, kMenuLineWidth + 1> problem_{};  // the first one, for the message row
+    // T6: the network restore. netJob_: its loader job (0: none); netDrive_: the drive whose
+    // restored image is being mounted (0: none).
+    NetRestoreQueue netQueue_;
+    uint32_t netJob_ = 0;
+    unsigned netDrive_ = 0;
 };
 
 }  // namespace rb::host

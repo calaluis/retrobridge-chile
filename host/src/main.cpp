@@ -456,6 +456,7 @@ int runMenu(const Options& options)
     rb::host::MenuController& controller = station.controller();
     controller.setSourcesFile(options.sources);
     controller.setImagesFolder(options.images, catalog);  // N creates a blank ATR there
+    controller.setClock(&clock);  // menu-tnfs-persistente T6: the network restore's deadlines
     if (!loader->ready() || !controller.ready()) {
         loader.reset();  // its thread is joined before the log closes
         std::fclose(logFile);

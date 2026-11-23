@@ -151,12 +151,14 @@ public:
         if (end <= buffer.size() && bytes.size() != 0) {  // the client never passes more than STAT said
             std::memcpy(buffer.data() + offset, bytes.data(), bytes.size());
         }
-        loader_.progress(job_, percentOf(end, buffer.size()));
+        received += static_cast<uint32_t>(bytes.size());
+        loader_.progress(job_, percentOf(end, buffer.size()), received);
     }
 
     ImageBuffer buffer;
     bool noMemory = false;
     uint32_t asked = 0;
+    uint32_t received = 0;  // every byte that arrived, a re-read after a reconnection too
 
 private:
     TnfsLoader& loader_;
@@ -243,6 +245,7 @@ uint32_t TnfsLoader::start(Kind kind, unsigned source, const char* path, std::si
         state_ = State::Pending;
         pendingReady_ = true;
         percent_ = 0;
+        received_ = 0;
     }
     wake_.notify_all();
     return number;
@@ -258,6 +261,7 @@ LoaderStatus TnfsLoader::poll(uint32_t job, TnfsFolder& folder) noexcept
     if (state_ == State::Pending || state_ == State::Running) {
         status.kind = LoaderStatus::Kind::InProgress;
         status.percent = percent_;
+        status.bytes = received_;
         return status;
     }
     // Done: hand the result over, once.
@@ -379,11 +383,17 @@ bool TnfsLoader::cancelled(uint32_t job) const noexcept
     return stop_ || current_ != job;
 }
 
-void TnfsLoader::progress(uint32_t job, uint8_t percent) noexcept
+void TnfsLoader::progress(uint32_t job, uint8_t percent, uint32_t received) noexcept
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (job == current_ && job == running_ && percent > percent_) {
+    if (job != current_ || job != running_) {
+        return;
+    }
+    if (percent > percent_) {
         percent_ = percent;  // never goes down, also after a restart from offset 0
+    }
+    if (received > received_) {
+        received_ = received;
     }
 }
 
@@ -526,7 +536,7 @@ void TnfsLoader::fetch(const Job& job, TnfsClient& client, Outcome& out)
     Sink sink(*this, job.number, memory_);
     const TnfsResult read = client.readWholeReadOnly(job.path, sink);
     if (sink.noMemory) {
-        setError(status, LoaderError::NoSePudoAbrir, "sin memoria: la reserva de %lu bytes para %s fallo",
+        setError(status, LoaderError::NoCabe, "sin memoria: la reserva de %lu bytes para %s fallo",
                  static_cast<unsigned long>(sink.asked), job.path);
         return;
     }
@@ -534,8 +544,11 @@ void TnfsLoader::fetch(const Job& job, TnfsClient& client, Outcome& out)
         return;
     }
     if (read != TnfsResult::Ok) {
-        setError(status, errorOf(read), "traer %s: %s (estado 0x%02X)", job.path, resultName(read),
-                 client.lastStatus());
+        // Only a confirmed ENOENT says the file is gone; any other refusal is ambiguous (plan R7).
+        const LoaderError error = read == TnfsResult::NotOpened && client.lastNotFound() ? LoaderError::NoExiste
+                                                                                       : errorOf(read);
+        setError(status, error, "traer %s: %s (estado 0x%02X de la orden 0x%02X)", job.path, resultName(read),
+                 client.lastStatus(), client.lastStatusCommand());
         return;
     }
     adopt(job, std::move(sink.buffer), out);
@@ -572,7 +585,7 @@ void TnfsLoader::readLocal(const Job& job, Outcome& out)
         return;
     }
     if (!allocated) {
-        setError(status, LoaderError::NoSePudoAbrir, "sin memoria: la reserva de %ld bytes para %s fallo", size,
+        setError(status, LoaderError::NoCabe, "sin memoria: la reserva de %ld bytes para %s fallo", size,
                  path.c_str());
         return;
     }
@@ -607,18 +620,18 @@ void TnfsLoader::adopt(const Job& job, ImageBuffer&& bytes, Outcome& out)
                      job.path);
             return;
         case XexResult::TooLarge:
-            setError(status, LoaderError::NoSePudoAbrir, "%s: el disco pasaria de %lu sectores", job.path,
+            setError(status, LoaderError::NoCabe, "%s: el disco pasaria de %lu sectores", job.path,
                      static_cast<unsigned long>(XexImage::kMaxSectors));
             return;
         case XexResult::NoMemory:
-            setError(status, LoaderError::NoSePudoAbrir, "sin memoria para envolver %s", job.path);
+            setError(status, LoaderError::NoCabe, "sin memoria para envolver %s", job.path);
             return;
         }
         image = std::move(disk);
     }
     const rb::core::Result<std::size_t> slot = store_.adopt(std::move(image));
     if (!slot.ok()) {
-        setError(status, LoaderError::NoSePudoAbrir, "sin hueco libre para %s (%lu bytes)", job.path,
+        setError(status, LoaderError::NoCabe, "sin hueco libre para %s (%lu bytes)", job.path,
                  static_cast<unsigned long>(status.bytes));
         return;
     }

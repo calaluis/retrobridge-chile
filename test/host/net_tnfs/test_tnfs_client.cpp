@@ -519,16 +519,55 @@ static void test_read_refusals_are_not_opened(void)
     TnfsClient client(server, clk);
     Sink missing;
     TEST_ASSERT_TRUE(client.readWholeReadOnly("/nada.atr", missing) == TnfsResult::NotOpened);
+    TEST_ASSERT_TRUE(client.lastNotFound());  // STAT answered ENOENT
+    TEST_ASSERT_EQUAL_HEX8(0x24, client.lastStatusCommand());
     Sink dir;
     TEST_ASSERT_TRUE(client.readWholeReadOnly("/dir", dir) == TnfsResult::NotOpened);
     TEST_ASSERT_EQUAL_INT(0, dir.begins);
+    TEST_ASSERT_FALSE(client.lastNotFound());  // no status: the ENOENT before is forgotten
+    TEST_ASSERT_EQUAL_HEX8(0, client.lastStatus());
     Sink noMemory;
     noMemory.refuse = true;
     TEST_ASSERT_TRUE(client.readWholeReadOnly("/d.atr", noMemory) == TnfsResult::NotOpened);
     TEST_ASSERT_EQUAL_size_t(0, count(server, 0x29));  // refused before opening
+    TEST_ASSERT_FALSE(client.lastNotFound());
     server.reject(0x29, 0x09);
     Sink denied;
     TEST_ASSERT_TRUE(client.readWholeReadOnly("/d.atr", denied) == TnfsResult::NotOpened);
+    TEST_ASSERT_FALSE(client.lastNotFound());  // EACCES is not ENOENT
+    TEST_ASSERT_EQUAL_HEX8(0x09, client.lastStatus());
+    TEST_ASSERT_EQUAL_HEX8(0x29, client.lastStatusCommand());
+    TEST_ASSERT_EQUAL_size_t(0, server.openHandles());
+    assert_read_only(server);
+}
+
+// menu-tnfs-persistente T3 (plan R7): ENOENT counts only as the answer to STAT or OPEN.
+static void test_only_enoent_to_stat_or_open_is_not_found(void)
+{
+    FakeTnfsServer server(clock_);
+    server.addFile("/d.atr", image(1200));
+    Clock clk;
+    TnfsClient client(server, clk);
+    server.reject(0x29, 0x02);  // OPEN: ENOENT
+    Sink open;
+    TEST_ASSERT_TRUE(client.readWholeReadOnly("/d.atr", open) == TnfsResult::NotOpened);
+    TEST_ASSERT_TRUE(client.lastNotFound());
+    server.reject(0x24, 0x03);  // STAT: EIO
+    Sink io;
+    TEST_ASSERT_TRUE(client.readWholeReadOnly("/d.atr", io) == TnfsResult::NotOpened);
+    TEST_ASSERT_FALSE(client.lastNotFound());
+    server.reject(0x21, 0x02);  // READ: ENOENT is no answer about the path
+    Sink read;
+    TEST_ASSERT_TRUE(client.readWholeReadOnly("/d.atr", read) == TnfsResult::NotOpened);
+    TEST_ASSERT_FALSE(client.lastNotFound());
+    TEST_ASSERT_EQUAL_HEX8(0x21, client.lastStatusCommand());
+    const tnfs::StatResult st = client.stat("/nada.atr");
+    TEST_ASSERT_TRUE(st.result == TnfsResult::NotOpened);
+    TEST_ASSERT_TRUE(client.lastNotFound());
+    Sink good;
+    TEST_ASSERT_TRUE(client.readWholeReadOnly("/d.atr", good) == TnfsResult::Ok);
+    TEST_ASSERT_FALSE(client.lastNotFound());  // a later operation starts over
+    TEST_ASSERT_EQUAL_HEX8(0, client.lastStatus());
     TEST_ASSERT_EQUAL_size_t(0, server.openHandles());
     assert_read_only(server);
 }
@@ -873,6 +912,7 @@ int main(void)
     RUN_TEST(test_read_whole_file_in_blocks_and_close);
     RUN_TEST(test_read_an_empty_file);
     RUN_TEST(test_read_refusals_are_not_opened);
+    RUN_TEST(test_only_enoent_to_stat_or_open_is_not_found);
     RUN_TEST(test_read_cancelled_still_closes);
     RUN_TEST(test_read_failing_half_way_still_closes);
     RUN_TEST(test_ok_reads_without_data_end_in_malformed);

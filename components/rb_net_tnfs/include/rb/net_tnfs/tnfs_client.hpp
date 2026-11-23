@@ -127,7 +127,18 @@ public:
     TnfsResult mount() noexcept;
     bool mounted() const noexcept { return mounted_; }
     MountInfo serverInfo() const noexcept { return info_; }
-    uint8_t lastStatus() const noexcept { return lastStatus_; }  // the last error status received
+    // The error status the server sent during the last operation (mount, listDir, stat,
+    // readWholeReadOnly), and the command it answered; 0 and 0 if it sent none. Each of those
+    // operations starts them over, so a status of an earlier one never shows here.
+    uint8_t lastStatus() const noexcept { return lastStatus_; }
+    uint8_t lastStatusCommand() const noexcept { return lastCommand_; }
+    // menu-tnfs-persistente T3: the last operation ended because STAT or OPEN of the path was
+    // answered ENOENT (0x02, "No such file or directory" in the protocol's list of return codes).
+    // Only this says the file is not there; any other refusal is ambiguous.
+    bool lastNotFound() const noexcept
+    {
+        return lastStatus_ == status::kNoEntry && (lastCommand_ == cmd::kStat || lastCommand_ == cmd::kOpen);
+    }
 
     // `path` is absolute, UTF-8, 1 to kMaxPath bytes.
     TnfsResult listDir(const char* path, DirVisitor& visitor) noexcept;
@@ -184,7 +195,14 @@ private:
     MountInfo info_{};
     bool mounted_ = false;
     uint8_t sequence_ = 0;
+    void refused(uint8_t command, uint8_t code) noexcept
+    {
+        lastCommand_ = command;
+        lastStatus_ = code;
+    }
+    void forgetStatus() noexcept { refused(0, 0); }
     uint8_t lastStatus_ = 0;
+    uint8_t lastCommand_ = 0;
     std::array<uint8_t, kMaxRequest> request_{};
     std::array<uint8_t, kMaxDatagram> received_{};
 };

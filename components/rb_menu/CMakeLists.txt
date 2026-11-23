@@ -16,6 +16,7 @@ set(rb_srcs
     "src/menu_image.cpp"
     "src/menu_sio_transport.cpp"
     "src/menu_sources.cpp"
+    "src/net_restore_queue.cpp"
     "src/sha256.cpp"
     "src/tnfs_folder.cpp"
     "src/wifi_config.cpp"

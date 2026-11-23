@@ -123,6 +123,8 @@ const char* loaderText(LoaderError error) noexcept
     case LoaderError::NoEncontrado:
         return " ERROR: SERVIDOR NO ENCONTRADO";
     case LoaderError::NoSePudoAbrir:
+    case LoaderError::NoExiste:  // menu-tnfs-persistente: FALTA and NO CABE are restore texts (T5)
+    case LoaderError::NoCabe:
         return " ERROR: NO SE PUDO ABRIR";
     case LoaderError::XexNoValido:
         return " XEX NO VALIDO";
@@ -141,6 +143,10 @@ const char* loaderName(LoaderError error) noexcept
         return "not found";
     case LoaderError::NoSePudoAbrir:
         return "could not open";
+    case LoaderError::NoExiste:
+        return "missing";
+    case LoaderError::NoCabe:
+        return "no room";
     case LoaderError::XexNoValido:
         return "invalid";
     case LoaderError::XexNoCompatible:

@@ -227,6 +227,14 @@ uint8_t percentNow(TnfsLoader& loader, uint32_t job)
     return status.percent;
 }
 
+uint32_t bytesNow(TnfsLoader& loader, uint32_t job)
+{
+    TnfsFolder unused;
+    const LoaderStatus status = loader.poll(job, unused);
+    TEST_ASSERT_TRUE(status.kind == Kind::InProgress);
+    return status.bytes;
+}
+
 uint32_t list(TnfsLoader& loader, const char* path, unsigned source = 2)
 {
     return loader.startList(source, path, std::strlen(path));
@@ -404,9 +412,12 @@ static void test_fetch_percentage_follows_the_bytes_and_stops_at_99(void)
     TnfsLoader loader(rig.links, rig.store, rig.clock, rig.memory, &rig.hooks);
     const uint32_t job = fetch(loader, "/x.atr");
     const uint8_t expected[] = {0, 25, 50, 75};
+    uint32_t bytes = 0;
     for (uint8_t percent : expected) {
         rig.gated.awaitHeld();
         TEST_ASSERT_EQUAL_UINT8(percent, percentNow(loader, job));
+        TEST_ASSERT_EQUAL_UINT32(bytes, bytesNow(loader, job));  // menu-tnfs-persistente T3
+        bytes += 512;
         rig.gated.permit();
     }
     rig.gated.open();
@@ -607,20 +618,22 @@ static void test_a_source_without_server_gives_no_encontrado(void)
     }
 }
 
-static void test_a_missing_file_or_folder_gives_no_se_pudo_abrir(void)
+// menu-tnfs-persistente T3: a missing file is NoExiste (STAT answered ENOENT); a missing folder
+// of a listing stays NoSePudoAbrir (the listing is no assignment to forget).
+static void test_a_missing_file_gives_no_existe_and_a_missing_folder_no_se_pudo_abrir(void)
 {
     Rig rig;
     TnfsLoader loader(rig.links, rig.store, rig.clock, rig.memory, &rig.hooks);
     TnfsFolder folder;
     LoaderStatus status = awaitResult(loader, fetch(loader, "/nada.atr"), folder);
     TEST_ASSERT_TRUE(status.kind == Kind::Error);
-    TEST_ASSERT_TRUE(status.error == LoaderError::NoSePudoAbrir);
+    TEST_ASSERT_TRUE(status.error == LoaderError::NoExiste);
     status = awaitResult(loader, list(loader, "/nada"), folder);
     TEST_ASSERT_TRUE(status.error == LoaderError::NoSePudoAbrir);
     TEST_ASSERT_EQUAL_size_t(0, slotsInUse(rig.store));
 }
 
-static void test_no_memory_gives_no_se_pudo_abrir_with_the_cause(void)
+static void test_no_memory_gives_no_cabe_with_the_cause(void)
 {
     Rig rig;
     rig.server.addFile("/grande.atr", image(70000));
@@ -629,13 +642,13 @@ static void test_no_memory_gives_no_se_pudo_abrir_with_the_cause(void)
     TnfsFolder folder;
     const LoaderStatus status = awaitResult(loader, fetch(loader, "/grande.atr"), folder);
     TEST_ASSERT_TRUE(status.kind == Kind::Error);
-    TEST_ASSERT_TRUE(status.error == LoaderError::NoSePudoAbrir);
+    TEST_ASSERT_TRUE(status.error == LoaderError::NoCabe);
     TEST_ASSERT_NOT_NULL(std::strstr(status.cause, "70000"));
     TEST_ASSERT_EQUAL_size_t(0, slotsInUse(rig.store));
     TEST_ASSERT_EQUAL_size_t(0, rig.server.openHandles());
 }
 
-static void test_no_free_slot_gives_no_se_pudo_abrir(void)
+static void test_no_free_slot_gives_no_cabe(void)
 {
     Rig rig;
     rig.server.addFile("/x.atr", image(100));
@@ -646,8 +659,44 @@ static void test_no_free_slot_gives_no_se_pudo_abrir(void)
     TnfsFolder folder;
     const LoaderStatus status = awaitResult(loader, fetch(loader, "/x.atr"), folder);
     TEST_ASSERT_TRUE(status.kind == Kind::Error);
-    TEST_ASSERT_TRUE(status.error == LoaderError::NoSePudoAbrir);
+    TEST_ASSERT_TRUE(status.error == LoaderError::NoCabe);
     TEST_ASSERT_TRUE(std::strlen(status.cause) > 0);
+}
+
+// menu-tnfs-persistente T3 (AC5, plan R7): ENOENT to OPEN gives NoExiste too; EACCES, another
+// status, a folder or ENOENT to READ stay NoSePudoAbrir, which never forgets an assignment.
+static void test_only_a_confirmed_enoent_gives_no_existe(void)
+{
+    Rig rig;
+    rig.server.addFile("/x.atr", image(1200));
+    rig.server.addDirectory("/dir");
+    TnfsLoader loader(rig.links, rig.store, rig.clock, rig.memory, &rig.hooks);
+    TnfsFolder folder;
+    struct Case {
+        uint8_t command;
+        uint8_t code;
+        LoaderError error;
+    };
+    const Case cases[] = {
+        {tnfs::cmd::kOpen, 0x02, LoaderError::NoExiste},       // ENOENT to OPEN
+        {tnfs::cmd::kOpen, 0x09, LoaderError::NoSePudoAbrir},  // EACCES
+        {tnfs::cmd::kStat, 0x09, LoaderError::NoSePudoAbrir},  // EACCES to STAT
+        {tnfs::cmd::kStat, 0x03, LoaderError::NoSePudoAbrir},  // EIO: another status
+        {tnfs::cmd::kRead, 0x02, LoaderError::NoSePudoAbrir},  // ENOENT to READ: not about the path
+    };
+    for (const Case& c : cases) {
+        rig.server.reject(c.command, c.code);
+        const LoaderStatus status = awaitResult(loader, fetch(loader, "/x.atr"), folder);
+        TEST_ASSERT_TRUE(status.kind == Kind::Error);
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(c.error), static_cast<int>(status.error));
+    }
+    // A folder after an ENOENT: no status this time, so no NoExiste left over.
+    LoaderStatus status = awaitResult(loader, fetch(loader, "/nada.atr"), folder);
+    TEST_ASSERT_TRUE(status.error == LoaderError::NoExiste);
+    status = awaitResult(loader, fetch(loader, "/dir"), folder);
+    TEST_ASSERT_TRUE(status.error == LoaderError::NoSePudoAbrir);
+    TEST_ASSERT_TRUE(awaitResult(loader, fetch(loader, "/x.atr"), folder).kind == Kind::Image);
+    TEST_ASSERT_EQUAL_size_t(0, rig.server.openHandles());
 }
 
 static void test_a_path_too_long_gives_no_se_pudo_abrir(void)
@@ -711,6 +760,7 @@ static void test_the_percentage_never_goes_down_after_a_reconnection(void)
     rig.gated.permit();
     rig.gated.awaitHeld();  // third READ held: two blocks read
     TEST_ASSERT_EQUAL_UINT8(50, percentNow(loader, job));
+    TEST_ASSERT_EQUAL_UINT32(1024, bytesNow(loader, job));
     rig.server.forgetSession();  // the loader thread is held in the gate, not in the server
     rig.gated.permit();
     rig.gated.awaitHeld();  // first READ of the second pass
@@ -718,6 +768,9 @@ static void test_the_percentage_never_goes_down_after_a_reconnection(void)
     rig.gated.permit();
     rig.gated.awaitHeld();  // one block of the second pass: 25 would be lower
     TEST_ASSERT_EQUAL_UINT8(50, percentNow(loader, job));
+    // The bytes received count what arrives: the re-read block too (T3). They never stand still
+    // while data comes, so the restore queue's 30 s of silence cannot start here.
+    TEST_ASSERT_EQUAL_UINT32(1536, bytesNow(loader, job));
     rig.gated.open();
     TnfsFolder folder;
     const LoaderStatus status = awaitResult(loader, job, folder);
@@ -889,9 +942,10 @@ int main(void)
     RUN_TEST(test_a_silent_server_is_opened_again_by_the_next_job);
     RUN_TEST(test_a_link_that_cannot_open_gives_no_responde);
     RUN_TEST(test_a_source_without_server_gives_no_encontrado);
-    RUN_TEST(test_a_missing_file_or_folder_gives_no_se_pudo_abrir);
-    RUN_TEST(test_no_memory_gives_no_se_pudo_abrir_with_the_cause);
-    RUN_TEST(test_no_free_slot_gives_no_se_pudo_abrir);
+    RUN_TEST(test_a_missing_file_gives_no_existe_and_a_missing_folder_no_se_pudo_abrir);
+    RUN_TEST(test_only_a_confirmed_enoent_gives_no_existe);
+    RUN_TEST(test_no_memory_gives_no_cabe_with_the_cause);
+    RUN_TEST(test_no_free_slot_gives_no_cabe);
     RUN_TEST(test_a_path_too_long_gives_no_se_pudo_abrir);
     RUN_TEST(test_start_poll_and_cancel_answer_while_a_request_is_held);
     RUN_TEST(test_the_loader_stops_with_a_job_in_progress);

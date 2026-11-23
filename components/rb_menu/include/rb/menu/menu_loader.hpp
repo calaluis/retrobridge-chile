@@ -22,9 +22,13 @@ constexpr std::size_t kTnfsMaxPath = 255;
 enum class LoaderError : uint8_t {
     NoResponde,     // no answer, a malformed answer, or the link failed
     NoEncontrado,   // the server name does not resolve, or the source has no server
-    NoSePudoAbrir,  // the server refused, no memory, no free slot, path too long
+    NoSePudoAbrir,  // ambiguous: the server refused with another status (permission, not a file...),
+                    // the local file failed, path too long
     XexNoValido,    // menu-xex: the file is no valid .xex (AC8)
     XexNoCompatible,  // menu-xex: a segment touches the loader or page 1 (AC9)
+    // menu-tnfs-persistente T3. Appended: the values above keep their numbers.
+    NoExiste,       // only when the server answered STAT or OPEN of the path with ENOENT
+    NoCabe,         // the image does not fit: no memory, no free slot, too large for a disk
 };
 
 struct LoaderStatus {
@@ -34,7 +38,9 @@ struct LoaderStatus {
     Kind kind = Kind::Unknown;
     uint8_t percent = 0;                    // InProgress
     std::size_t slot = 0;                   // Image: the caller now owns this slot
-    uint32_t bytes = 0;                     // Image
+    // Image: the size of the image. InProgress: bytes received so far by the job; it only grows,
+    // also when a reconnection reads again from offset 0 (it counts what arrives, not the offset).
+    uint32_t bytes = 0;
     Sha256Digest sha256{};                  // Image (of the bytes read)
     bool xex = false;                       // Image or Error of startXex
     uint32_t segments = 0;                  // xex: segments of the file

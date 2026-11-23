@@ -157,7 +157,7 @@ private:
     void freeRecycled();
     void applyRenames();
     bool cancelled(uint32_t number) const noexcept;
-    void progress(uint32_t number, uint8_t percent) noexcept;
+    void progress(uint32_t number, uint8_t percent, uint32_t received = 0) noexcept;
 
     TnfsLink* links_[kMaxSource + 1] = {};
     bool opened_[kMaxSource + 1] = {};
@@ -183,6 +183,7 @@ private:
     bool pendingReady_ = false;
     Job pending_;
     uint8_t percent_ = 0;
+    uint32_t received_ = 0;  // LoaderStatus::bytes of InProgress
     // The published result of current_ (state_ Done), or one to discard.
     LoaderStatus doneStatus_;
     TnfsFolder doneFolder_;

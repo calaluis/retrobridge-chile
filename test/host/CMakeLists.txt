@@ -236,6 +236,10 @@ target_compile_definitions(test_wifi_config PRIVATE RB_TEST_WIFI_DIR="${CMAKE_CU
 rb_add_host_test(test_sio_power_watch menu/test_sio_power_watch.cpp)
 target_include_directories(test_sio_power_watch PRIVATE ${rb_root}/components/rb_menu/include)
 target_link_libraries(test_sio_power_watch PRIVATE rb_menu)
+# The network drives at power-up: one at a time, deadlines by bytes received (menu-tnfs-persistente T2).
+rb_add_host_test(test_net_restore_queue menu/test_net_restore_queue.cpp ${rb_root}/components/rb_menu/src/net_restore_queue.cpp
+                 ${rb_root}/components/rb_menu/src/drive_memory.cpp)
+target_include_directories(test_net_restore_queue PRIVATE ${rb_root}/components/rb_menu/include)
 rb_add_host_test(test_drive_slot_store menu/test_drive_slot_store.cpp ${rb_root}/components/rb_menu/src/drive_slot_store.cpp
                  ${rb_root}/components/rb_menu/src/drive_memory.cpp)
 target_include_directories(test_drive_slot_store PRIVATE ${rb_root}/components/rb_menu/include)

@@ -128,6 +128,7 @@ TnfsClient::Exchange TnfsClient::exchange(std::size_t length, uint8_t command, u
 
 TnfsResult TnfsClient::mount() noexcept
 {
+    forgetStatus();
     umount();  // a second session would be left open on the server
     const uint8_t sequence = nextSequence();
     auto length = encodeMount(sequence, "/", Span<uint8_t>(request_));
@@ -140,7 +141,7 @@ TnfsResult TnfsClient::mount() noexcept
         return ex == Exchange::Malformed ? TnfsResult::Malformed : TnfsResult::NoResponse;
     }
     if (reply.status != status::kOk) {
-        lastStatus_ = reply.status;
+        refused(cmd::kMount, reply.status);
         return TnfsResult::Rejected;
     }
     auto info = decodeMount(reply);
@@ -199,7 +200,7 @@ TnfsClient::Op TnfsClient::listOnce(const char* path, DirVisitor& visitor) noexc
         return failed(opened);
     }
     if (reply.status != status::kOk) {
-        lastStatus_ = reply.status;
+        refused(cmd::kOpenDir, reply.status);
         return sessionLost(reply.status) ? Op::SessionLost : Op::NotOpened;
     }
     auto handle = decodeHandle(reply);
@@ -228,7 +229,7 @@ TnfsClient::Op TnfsClient::listOnce(const char* path, DirVisitor& visitor) noexc
             break;
         }
         if (reply.status != status::kOk) {
-            lastStatus_ = reply.status;
+            refused(cmd::kReadDir, reply.status);
             result = sessionLost(reply.status) ? Op::SessionLost : Op::NotOpened;
             break;
         }
@@ -250,6 +251,7 @@ TnfsClient::Op TnfsClient::listOnce(const char* path, DirVisitor& visitor) noexc
 
 TnfsResult TnfsClient::listDir(const char* path, DirVisitor& visitor) noexcept
 {
+    forgetStatus();
     TnfsResult mounted = ensureMounted();
     if (mounted != TnfsResult::Ok) {
         return mounted;
@@ -284,7 +286,7 @@ TnfsClient::Op TnfsClient::statOnce(const char* path, StatResult& out, CancelChe
         return failed(ex);
     }
     if (reply.status != status::kOk) {
-        lastStatus_ = reply.status;
+        refused(cmd::kStat, reply.status);
         return sessionLost(reply.status) ? Op::SessionLost : Op::NotOpened;
     }
     auto info = decodeStat(reply);
@@ -298,6 +300,7 @@ TnfsClient::Op TnfsClient::statOnce(const char* path, StatResult& out, CancelChe
 
 StatResult TnfsClient::stat(const char* path, CancelCheck* cancel) noexcept
 {
+    forgetStatus();
     StatResult out;
     out.result = ensureMounted();
     if (out.result != TnfsResult::Ok) {
@@ -346,7 +349,7 @@ TnfsClient::Op TnfsClient::readOnce(const char* path, ReadSink& sink) noexcept
         return failed(opened);
     }
     if (reply.status != status::kOk) {
-        lastStatus_ = reply.status;
+        refused(cmd::kOpen, reply.status);
         return sessionLost(reply.status) ? Op::SessionLost : Op::NotOpened;
     }
     auto handle = decodeHandle(reply);
@@ -380,7 +383,7 @@ TnfsClient::Op TnfsClient::readOnce(const char* path, ReadSink& sink) noexcept
             break;
         }
         if (reply.status != status::kOk) {
-            lastStatus_ = reply.status;
+            refused(cmd::kRead, reply.status);
             result = sessionLost(reply.status) ? Op::SessionLost : Op::NotOpened;
             break;
         }
@@ -408,6 +411,7 @@ TnfsClient::Op TnfsClient::readOnce(const char* path, ReadSink& sink) noexcept
 
 TnfsResult TnfsClient::readWholeReadOnly(const char* path, ReadSink& sink) noexcept
 {
+    forgetStatus();
     TnfsResult mounted = ensureMounted();
     if (mounted != TnfsResult::Ok) {
         return mounted;

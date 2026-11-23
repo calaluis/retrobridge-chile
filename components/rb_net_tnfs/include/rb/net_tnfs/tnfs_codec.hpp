@@ -52,6 +52,7 @@ constexpr uint8_t kOpen = 0x29;
 // Status codes this client acts on (the document's "List of Valid Return Codes").
 namespace status {
 constexpr uint8_t kOk = 0x00;
+constexpr uint8_t kNoEntry = 0x02;       // ENOENT, "No such file or directory"
 constexpr uint8_t kEagain = 0x07;         // followed by a 16-bit back-off in ms
 constexpr uint8_t kStale = 0x20;          // ESTALE, "Stale TNFS handle"
 constexpr uint8_t kEof = 0x21;

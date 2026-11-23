@@ -15,7 +15,7 @@ status: approved
 > Slug: `menu-tnfs-persistente` · Estado: **aprobada** por el responsable el 2026-11-23 («Apruebo, commit y push») · Creada: 2026-11-23
 > Rama: `spec/menu-tnfs-persistente`, desde `main` (`0a13bfc`).
 > Base: `menu-unidades-persistentes`, `menu-sio-wifi-tnfs`, `menu-tnfs`. Depende del PR #85 (`menu-cinta`), que
-> cambia el mismo formato de la memoria de unidades.
+> cambia el mismo formato de la memoria de unidades. PR #85 fusionado en `main` el 2026-11-23 (`686fe68`).
 
 ## Problema y por qué
 

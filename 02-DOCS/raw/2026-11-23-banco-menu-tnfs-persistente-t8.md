@@ -75,13 +75,25 @@ Se anotan `N` de «D1 ready» y el `t` de «unidades restauradas».
 **Nunca debe aparecer:** `panic`, `Guru Meditation`, `DATA IN: cambio`, `uart_driver_delete`.
 
 **Consola de la restauración (decisión O1, resuelta el 2026-11-23: opción b).** Hasta `5b9cfc1`, los eventos
-`menu_restore` (`net start`, `net restored`, `net failed`, `net dropped`, `net paused`) salían en nivel DEBUG, y
-la imagen restaurada no emite `menu_mount`. La restauración de red no dejaba ninguna línea. El responsable eligió un
-PR previo, solo de firmware, que imprime `menu_restore` en nivel INFO: PR #98. **El paso A usa la cabeza de main
-después de fusionar el PR #98**, no `5b9cfc1`.
+`menu_restore` (`net start`, `net restored`, `net failed`, `net dropped`, `net paused`) salían en nivel DEBUG. El
+responsable eligió un PR previo de firmware, el PR #98:
 
-Al copiar líneas al registro, el servidor de `net start` se escribe como «servidor de la fuente 2»: sin IP ni
-nombre de host.
+- imprime `menu_restore` en nivel INFO;
+- añade `Dn net applied`, que sale una sola vez cuando la bahía aplica el montaje restaurado en D2..D8. Un montaje
+  rechazado no lo emite. Ese mismo montaje también emite `menu_mount Dn=mounted`, que ya salía en INFO.
+- D1 no se monta, se asigna. Por eso D1 nunca emite `net applied` ni `menu_mount`: su prueba es `A` (AC2).
+
+**El paso A usa la cabeza de main después de fusionar el PR #98**, no `5b9cfc1`.
+
+**Una restauración de D2..D8 cuenta como lograda solo si aparecen `Dn net restored` y después `Dn net applied`.**
+`net restored` solo dice que la imagen llegó.
+
+**Anonimización de la evidencia publicada.** Al copiar líneas al registro:
+
+- el servidor de `net start` se escribe «servidor de la fuente 2» (o «servidor original» y «servidor nuevo» en
+  AC9), sin IP ni nombre de host;
+- una ruta que revele datos personales se recorta a su nombre de archivo;
+- las fotos se recortan para que no se vea ni el SSID ni la IP.
 
 ## 4. Casos
 
@@ -90,19 +102,19 @@ La columna de consola vale con el paquete que incluye el PR #98.
 
 | AC | Montaje | Acción | Pantalla esperada [P] | Consola esperada [C] | Resultado |
 |---|---|---|---|---|---|
-| **AC1** | D2 montada desde la fuente 2 (`.ATR` pequeña); servidor encendido | Apagar y encender el 65XE | Línea de D2: `D2: CARGANDO <nombre>`; luego `D2 <nombre>`. El Atari lee D2 (por ejemplo, `DIR` en DOS) | `D2 net start server=… path=…`, luego `D2 net restored name=…` | pendiente |
-| **AC2** | `.XEX` de la fuente 2 asignado a D1 | Encender; esperar a que termine la carga; `A` | Mientras carga, `A` responde `D1 CARGANDO, ESPERA`. Después, `A` arranca el programa | `D1 net restored … xex=1` | pendiente |
+| **AC1** | D2 montada desde la fuente 2 (`.ATR` pequeña); servidor encendido | Apagar y encender el 65XE | Línea de D2: `D2: CARGANDO <nombre>`; luego `D2 <nombre>`. El Atari lee D2 (por ejemplo, `DIR` en DOS) | `D2 net start server=… path=…`, `D2 net restored name=…`, luego `D2 net applied` | pendiente |
+| **AC2** | `.XEX` de la fuente 2 asignado a D1 | Encender; esperar a que termine la carga; `A` | Mientras carga, `A` responde `D1 CARGANDO, ESPERA`. Después, `A` arranca el programa | `D1 net restored … xex=1`; ningún `D1 net applied` (D1 se asigna) | pendiente |
 | **AC3** | D1 de la microSD; D2 de la fuente 2 (`.ATR` grande) | Encender; `A` mientras D2 dice `CARGANDO` | El programa de D1 arranca; D2 sigue cargando | `D1 ready at N ms` con N en el plazo de `menu-unidades-persistentes` | pendiente |
 | **AC4** | D2 de red recordada; **servidor de la fuente 2 apagado** | Encender; esperar 30 s | Línea de D2: `D2: SIN RED`; el menú responde | `D2 net failed: no network` | pendiente |
-| **AC4b** | Igual, después de AC4; servidor encendido | Apagar y encender el 65XE | D2 vuelve como en AC1 | `D2 net restored …` | pendiente |
+| **AC4b** | Igual, después de AC4; servidor encendido | Apagar y encender el 65XE | D2 vuelve como en AC1 | `D2 net restored …`, luego `D2 net applied` | pendiente |
 | **AC5** | D2 de red recordada; en el servidor, su imagen renombrada a `.off` (paso D) | Encender | `D2: FALTA <nombre>`; D2 queda vacía | `D2 net failed: missing` | pendiente |
 | **AC5b** | Después de AC5 | Apagar y encender el 65XE | D2 vacía, sin `CARGANDO` | ningún `D2 net start` | pendiente |
 | **AC6** | D2 de red con la `.ATR` grande, para que dure la carga | Con `D2: CARGANDO`: fuente 1, una `.ATR` local, `2` | D2 muestra la imagen local; nunca la de red | `D2 net dropped: user` | pendiente |
 | **AC6b** | Igual | Con `D2: CARGANDO`: `U`, luego `2` | `D2 DESMONTADA`; D2 vacía | `D2 net dropped: user` | pendiente |
 | **AC6c** | Después de AC6 o AC6b | Apagar y encender el 65XE | D2 sigue con la elección del usuario | ningún `D2 net start` | pendiente |
-| **AC7** | Primer arranque del firmware nuevo (la NVS tiene v2 de `menu-cinta`) | Encender tras el flasheo | D1–D8 y `C:` iguales a la foto de §2 paso 2 | `unidades restauradas …` sin problemas | pendiente |
-| **AC9** | D2 recordada desde la fuente 2 | `E` en la fuente 2: apuntarla a otro nombre de servidor; apagar y encender | D2 vuelve desde el servidor **original** | `D2 net start server=<original> …` | pendiente |
-| **R2** | D2 de red con la `.ATR` grande | Con `D2: CARGANDO`, abrir la fuente 2 y navegar; volver con `Esc` | La lista responde; al volver, D2 sigue cargando y termina | `D2 net paused: user job`, luego `D2 net start` otra vez | pendiente; anotar segundos de descarga repetida |
+| **AC7** | Primer arranque del firmware nuevo (la memoria de unidades está en formato v2, de `menu-cinta`, en las ranuras de la microSD; la NVS no la guarda) | Encender tras el flasheo | D1–D8 y `C:` iguales a la foto de §2 paso 2 | `unidades restauradas …` sin problemas | pendiente |
+| **AC9** | D2 recordada desde la fuente 2 | `E` en la fuente 2: apuntarla a otro nombre de servidor; apagar y encender | D2 vuelve desde el servidor **original** | `D2 net start server=<original> …`, `D2 net restored …`, luego `D2 net applied` | pendiente |
+| **R2** | D2 de red con la `.ATR` grande | Con `D2: CARGANDO`, abrir la fuente 2 y navegar; volver con `Esc` | La lista responde; al volver, D2 sigue cargando y termina | `D2 net paused: user job`, `D2 net start` otra vez, luego `D2 net restored …` y `D2 net applied` | pendiente; anotar segundos de descarga repetida |
 
 **Después de AC9:** devolver la fuente 2 a su servidor original con `E`.
 

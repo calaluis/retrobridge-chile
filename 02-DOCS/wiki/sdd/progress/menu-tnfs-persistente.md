@@ -187,8 +187,10 @@ T7 fusionada en main con el PR #96 (`5b9cfc1`), tras revisión independiente.
 - Hallazgo: en el paquete `menu-sio`, los eventos `menu_restore` salen en nivel DEBUG y la imagen restaurada no emite
   `menu_mount`. La restauración de red no deja rastro en la consola. Decisión O1 del guion: aceptar evidencia [P] o
   un PR previo que los imprima en nivel INFO (recomendado).
-- O1 resuelta por el responsable (2026-11-23): opción b, PR #98 (`menu_restore` en INFO). El banco usa main después
-  de ese PR.
+- O1 resuelta por el responsable (2026-11-23): opción b, PR #98 (`menu_restore` en INFO). La revisión de O1 añadió
+  `Dn net applied`, que se emite una vez en `collect()` cuando el montaje restaurado en D2..D8 se aplica. Una
+  restauración lograda exige `net restored` y después `net applied`. El banco usa main después del PR #98.
+- Corrección del guion: AC7 lee la memoria de unidades v2 de las ranuras de la microSD, no de la NVS.
 - Nada ejecutado: sin flasheo, COM3 ni conexión física. AC8 solo por SIO sigue bloqueado por T1a/T1b.
 
 ## Siguiente

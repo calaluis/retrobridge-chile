@@ -385,6 +385,9 @@ void test_a_remembered_tape_is_back_on_c_after_power_up()
     TEST_ASSERT_EQUAL_STRING("KARATE.CAS", rig.controller->tapeName());
     TEST_ASSERT_EQUAL_INT(1, deck.mounts);
     TEST_ASSERT_EQUAL_STRING("KARATE.CAS", deck.last);
+    // Review of PR #85: "restored" only once the deck says Ready; until then it is remembered.
+    TEST_ASSERT_TRUE(rig.events.has("C: name=KARATE.CAS remembered"));
+    TEST_ASSERT_FALSE(rig.events.has("C: name=KARATE.CAS restored"));
     rig.step();
     rig.step();  // the deck answers Ready in the background
     const MenuReply shown = rig.press(kPoll);
@@ -446,13 +449,16 @@ void test_a_busy_cassette_at_power_up_gets_the_tape_when_it_is_free()
     TEST_ASSERT_EQUAL_INT(0, deck.accepted);
     TEST_ASSERT_TRUE(deck.mounts >= 1);
     TEST_ASSERT_TRUE(rig.events.has("C: name=KARATE.CAS restore waits: cassette busy"));
+    TEST_ASSERT_FALSE(rig.events.has("C: name=KARATE.CAS restored"));
     deck.busy = false;  // the cassette is free: the next service() asks again
     rig.step();
     TEST_ASSERT_EQUAL_INT(1, deck.accepted);
     TEST_ASSERT_EQUAL_STRING("KARATE.CAS", deck.last);
+    TEST_ASSERT_FALSE(rig.events.has("C: name=KARATE.CAS restored"));  // accepted is not Ready
     rig.step();
     rig.step();  // Pending once, then Ready
     TEST_ASSERT_EQUAL_STRING("KARATE.CAS", rig.controller->tapeName());
+    TEST_ASSERT_TRUE(rig.events.has("C: name=KARATE.CAS restored"));
     const int asked = deck.mounts;
     rig.step();
     TEST_ASSERT_EQUAL_INT(asked, deck.mounts);  // Ready ends the restore: no more requests

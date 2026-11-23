@@ -766,8 +766,10 @@ void MenuController::restoreTape(const char* name)
     }
     std::snprintf(tapeName_, sizeof tapeName_, "%s", name);
     ++restored_;
-    char detail[MenuCatalog::kMaxName + 32];
-    std::snprintf(detail, sizeof detail, "C: name=%s restored", name);
+    // "remembered": shown on C: from power-up; "restored" only once the deck says Ready (review of
+    // PR #85), or "remembered, no cassette" when this package has none to ask.
+    char detail[MenuCatalog::kMaxName + 48];
+    std::snprintf(detail, sizeof detail, "C: name=%s remembered%s", name, tape_ != nullptr ? "" : ", no cassette");
     event("menu_restore", detail);
     tapeBusyLogged_ = false;
     tapeRestore_ = tape_ != nullptr ? TapeRestore::Ask : TapeRestore::None;  // no deck: kept, as remembered
@@ -804,6 +806,9 @@ void MenuController::serviceRestoredTape()
     }
     tapeRestore_ = TapeRestore::None;
     if (state == TapeState::Ready) {
+        char done[MenuCatalog::kMaxName + 32];
+        std::snprintf(done, sizeof done, "C: name=%s restored", tapeName_);
+        event("menu_restore", done);
         return;
     }
     char detail[MenuCatalog::kMaxName + 64];

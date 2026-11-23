@@ -1484,6 +1484,8 @@ void MenuController::startJob(Job job, unsigned source, const char* path, std::s
     jobPath_[length > kTnfsMaxPath ? 0 : length] = '\0';
     jobPathLength_ = length > kTnfsMaxPath ? 0 : length;
     jobSource_ = source;
+    const char* server = source >= 2 ? sources_.name(source) : nullptr;
+    std::snprintf(jobServer_, sizeof jobServer_, "%s", server != nullptr ? server : "");
     percent_ = 0;
     const NetworkState network = network_ != nullptr && source >= 2 ? network_->state() : NetworkState::Ready;
     if (network != NetworkState::Ready) {
@@ -1646,6 +1648,11 @@ void MenuController::fetched(const LoaderStatus& status)
     image.kind = Shown::Kind::Tnfs;
     image.slot = status.slot;
     std::snprintf(image.name, sizeof image.name, "%s", jobName_);
+    if (jobSource_ >= 2 && jobPathLength_ > 0) {  // T5: a TNFS image; a local .xex has no server
+        std::snprintf(image.server, sizeof image.server, "%s", jobServer_);
+        std::memcpy(image.path, jobPath_, jobPathLength_ + 1);
+        image.xex = status.xex;
+    }
     place(jobDrive_, image, status.xex ? &status : nullptr);
 }
 
@@ -1683,6 +1690,15 @@ void MenuController::restore(const DriveMemory& memory)
     problem_[0] = '\0';
     pendingRestore_.fill(kNoEntry);
     for (unsigned number = 1; number <= kDrives; ++number) {
+        const DriveMemory::Origin origin = memory.origin(number);
+        if (origin == DriveMemory::Origin::NetAtr || origin == DriveMemory::Origin::NetXex) {
+            // T5: a TNFS drive is never looked up in the local catalog (a local image of the same
+            // name is another one). Restoring it over the network is T6; until then it stays empty.
+            char detail[48];
+            std::snprintf(detail, sizeof detail, "D%u net not restored", number);
+            event("menu_restore", detail);
+            continue;
+        }
         const char* name = memory.name(number);
         if (name[0] == '\0') {
             continue;
@@ -1781,6 +1797,11 @@ uint32_t MenuController::snapshot(DriveMemory& out) noexcept
         const Shown& shown = shown_[number - 1];
         if (shown.kind == Shown::Kind::Local) {
             (void)out.set(number, catalog_.name(shown.entry));  // a name it refuses is remembered empty
+        } else if (shown.kind == Shown::Kind::Tnfs && shown.server[0] != '\0') {
+            // menu-tnfs-persistente T5: one setNet refuses (a name, server or path it cannot keep)
+            // leaves the drive empty, as for a local name.
+            (void)out.setNet(number, shown.xex ? DriveMemory::Origin::NetXex : DriveMemory::Origin::NetAtr,
+                             shown.server, shown.path, shown.name);
         }
     }
     (void)out.setTape(tapeName_);  // menu-cinta T3
@@ -1864,7 +1885,7 @@ void MenuController::place(unsigned number, const Shown& image, const LoaderStat
             shown_[0] = image;
             view_ = View::Main;
             say(" D1: %s (A ARRANCA)", image.name);
-            changed();  // remembered empty: TNFS images are not restored
+            changed();  // T5: a TNFS image is remembered by its server and path
         }
     } else {
         const rb::core::Result<rb::app::MountReport> mounted =

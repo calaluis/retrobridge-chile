@@ -346,6 +346,14 @@ rb_add_host_test(test_menu_xex menu/test_menu_xex.cpp ${rb_root}/components/rb_m
 target_include_directories(test_menu_xex PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu_tnfs/include ${rb_root}/components/rb_menu/include)
 target_compile_definitions(test_menu_xex PRIVATE RB_TEST_MENU_DIR="${CMAKE_CURRENT_BINARY_DIR}/xex-images")
 target_link_libraries(test_menu_xex PRIVATE rb_net_tnfs Threads::Threads)
+# Remembered TNFS drives (menu-tnfs-persistente T5), on the rig of test_menu_tnfs with its own folder.
+rb_add_host_test(test_menu_unidades_red menu/test_menu_unidades_red.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp
+                 ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp
+                 ${rb_root}/components/rb_menu/src/menu_sources.cpp ${rb_root}/components/rb_menu_tnfs/src/tnfs_loader.cpp ${rb_root}/components/rb_menu/src/xex_image.cpp
+                 ${rb_root}/components/rb_menu/src/tnfs_folder.cpp ${rb_root}/components/rb_menu/src/sha256.cpp)
+target_include_directories(test_menu_unidades_red PRIVATE ${rb_root}/host/src ${rb_root}/components/rb_menu_tnfs/include ${rb_root}/components/rb_menu/include)
+target_compile_definitions(test_menu_unidades_red PRIVATE RB_TEST_MENU_DIR="${CMAKE_CURRENT_BINARY_DIR}/unidades-red-images")
+target_link_libraries(test_menu_unidades_red PRIVATE rb_net_tnfs Threads::Threads)
 # menu-cinta T1: .cas files are listed and refused on D1-D8
 rb_add_host_test(test_menu_cinta menu/test_menu_cinta.cpp ${rb_root}/components/rb_menu/src/menu_controller.cpp ${rb_root}/components/rb_menu/src/drive_memory.cpp
                  ${rb_root}/components/rb_menu/src/create_atr.cpp ${rb_root}/components/rb_menu/src/menu_catalog.cpp ${rb_root}/components/rb_menu/src/menu_image.cpp

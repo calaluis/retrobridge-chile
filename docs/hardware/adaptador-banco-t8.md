@@ -4,11 +4,15 @@
 > («No hay nada que construir físicamente…»). Se conserva como referencia (por ejemplo, para T1b). Ver la aceptación
 > del montaje en `02-DOCS/raw/2026-11-23-banco-menu-cinta-t8.md` §2.
 >
+> **Estado vigente:** T8 aceptada por decisión del responsable, con excepción de AC5 y evidencia testimonial (§7
+> del registro). AC5 sigue bloqueado por T1a/T1b; M3a y H4 siguen pendientes. El texto de abajo es la **propuesta
+> archivada** y describe el estado del 2026-11-23 **antes** de descartarla.
+>
 > **PROPUESTA NO APROBADA.** Especificación documental para revisión del responsable. **No autoriza** a fabricar,
 > modificar cables, conectar, energizar, flashear ni abrir COM3. Mientras no se apruebe:
 > - **M3a sigue pendiente** y la mitigación C (`mitigacion-c-motor-pin8.md`) **no está aprobada**;
 > - **H4 no está aprobado**; `sioGateApproved = false`;
-> - T8 de `menu-cinta` sigue **parcial**, AC5 **bloqueado** por T1a/T1b y T9 **separado** hasta M3a/H4.
+> - (estado de entonces) T8 de `menu-cinta` seguía **parcial**, AC5 **bloqueado** por T1a/T1b y T9 **separado** hasta M3a/H4.
 
 **Etiquetas:** [E] esquema oficial FN32ROV-1.3-Q24 (vía `fujinet-atari-v1x.md` y `mitigacion-c-motor-pin8.md`);
 [C] consola USB; [P] pendiente de verificación; [I] inferencia.

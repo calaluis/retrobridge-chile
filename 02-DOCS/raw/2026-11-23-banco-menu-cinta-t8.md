@@ -1,6 +1,6 @@
 # Banco T8 de menu-cinta: AC1–AC8 en el 65XE (guion, 2026-11-23)
 
-> Estado: **T8 cerrada por testimonio del responsable, salvo AC5** (§7), 2026-11-23. Cada fila lleva su fuente.
+> Estado: **T8 aceptada por decisión del responsable, con excepción de AC5 y evidencia testimonial** (§7), 2026-11-23. Cada fila lleva su fuente.
 > Alcance: AC1–AC8 de `02-DOCS/wiki/sdd/specs/menu-cinta.md`. AC9–AC12 son T9 (tras M3a y H4, PR aparte).
 
 **Convención:**
@@ -107,7 +107,7 @@ lo que **no** debe aparecer.
 | **AC3a** | Lista abierta | letra de la cinta, luego `1` | `UNA CINTA VA EN C:`; ninguna unidad cambia | ningún `menu_mount` | ✅ [P] testimonio del dueño: vio `UNA CINTA VA EN C:` |
 | **AC3b** | Lista abierta | letra de una `.ATR`, luego `C` | `UN DISCO NO VA EN C:`; `C:` sin cambio | ningún `menu_mount` | ✅ [P] testimonio del dueño: vio `UN DISCO NO VA EN C:` |
 | **AC4** | Cinta en `C:` | `U`, luego `C` | Tras `U`: `DESMONTAR: PULSA 1-8 O C, ESC CANCELA`; tras `C`: línea `C: SIN CINTA` | — | ✅ [P] testimonio del dueño: vio `C: SIN CINTA` |
-| **AC5-USB** | Volver a montar la cinta (AC2). USB conectado, pin 10 aislado | Apagar el 65XE; pulsar el reset de la FujiNet; esperar `D1 ready`; encender el 65XE | El menú sigue mostrando `C: INTERNATIONAL_KARATE.CAS`; D1–D8 iguales | `unidades restauradas …`; `D1 ready at …` | ✅ [P] testimonio del responsable (2026-11-23): «todo eso ya lo hace»; sin foto ni consola. Antes: ❓ sin rastro en la consola (un solo arranque); repetir |
+| **AC5-USB** | Volver a montar la cinta (AC2). USB conectado; cable SIO de fábrica de 13 pines (montaje aceptado, §2). El guion original pedía el pin 10 aislado; ese montaje no existe | Apagar el 65XE; pulsar el reset de la FujiNet; esperar `D1 ready`; encender el 65XE | El menú sigue mostrando `C: INTERNATIONAL_KARATE.CAS`; D1–D8 iguales | `unidades restauradas …`; `D1 ready at …` | ✅ [P] testimonio del responsable (2026-11-23): «todo eso ya lo hace»; sin foto ni consola. La captura no registra su ejecución (un solo arranque del ESP32). Antes: ❓; repetir |
 | **AC5** | *(bloqueado, ver abajo)* FujiNet solo por SIO, USB desconectado | Apagar el 65XE, esperar 5 s, encenderlo | Igual que AC5-USB | — (sin USB no hay consola) | ⏸ bloqueado por T1a/T1b |
 | **AC6** | `mala.cas` en la raíz (paso D) y la cinta buena en `C:` | letra de `MALA.CAS`, luego `C` | `CINTA NO VALIDA`; `C:` sigue mostrando la cinta anterior | — | ✅ [P] testimonio del responsable (2026-11-23): «todo eso ya lo hace»; sin foto ni consola. Antes: 🟡 parcial, testimonio general: «reconoce archivos .cas válidos e inválidos»; no consta el texto `CINTA NO VALIDA` ni que `C:` conservara la cinta anterior |
 | **AC7** | Cinta en `C:`, sin START | Encender el 65XE con el USB conectado | El menú sale en D1 como siempre | `D1 ready at N ms` con **N ≤ 280 ms** (hoy ~230 + 50) | ✅ [C] solo el tiempo: `D1 ready at 232 ms`; registro `listo_ms=232`. ATR, XEX y TNFS en AC7b–d |
@@ -129,7 +129,8 @@ en cada fase. Hoy no hay registro de T1a ni de T1b en `02-DOCS/raw/`. Por eso:
   1. T1a y T1b están confirmados, con su registro;
   2. el responsable da una autorización escrita para un ensayo limitado solo por SIO, y esa autorización se copia
      aquí con su fecha.
-- **Cambio de montaje, solo con AC5 autorizado.** El cable de AC5-USB tiene el pin 10 aislado: sin USB, la FujiNet
+- **Procedimiento original (anterior a la aceptación del montaje, §2), conservado como registro.** Suponía un cable
+  de AC5-USB con el pin 10 aislado: sin USB, la FujiNet
   queda sin alimentación, así que AC5 no puede hacerse con él. Pasos:
   1. Apagar el 65XE y desconectar el USB. Los dos equipos quedan sin tensión.
   2. Cambiar al cable SIO con el pin 10 conectado. [H] El multímetro da continuidad entre el pin 10 del lado del
@@ -138,6 +139,9 @@ en cada fase. Hoy no hay registro de T1a ni de T1b en `02-DOCS/raw/`. Por eso:
   4. **Para volver a un ensayo con USB:** apagar todo, poner otra vez el cable aislado y repetir el paso 5 de §2
      (circuito abierto en el pin 10, sin tensión) antes de conectar el USB. Nunca conectar el USB con el pin 10
      conectado.
+- **Excepción aceptada para T8 (2026-11-23):** el responsable aceptó el cable de fábrica de 13 pines, con USB y
+  pin 10 conectados a la vez (§2). La regla del paso 4 no se aplicó en T8. La excepción vale solo para este banco:
+  no aprueba la alimentación solo por SIO (AC5), ni resuelve R1 (pin 8), ni M3a/H4.
 - Un ensayo limitado **no aprueba** la alimentación solo por SIO. Su resultado es solo [P]; un arranque posterior
   con USB no lo prueba, porque repite la restauración con otra alimentación.
 
@@ -170,7 +174,8 @@ en cada fase. Hoy no hay registro de T1a ni de T1b en `02-DOCS/raw/`. Por eso:
 
 ## 7. Veredicto
 
-**T8 cerrada por testimonio del responsable, salvo AC5 (2026-11-23).** Decisión del responsable: «A, cierra T8 con mi
+**T8 aceptada por decisión del responsable, con excepción de AC5 y evidencia testimonial (2026-11-23).** No es una
+validación física completa: los criterios de la lista de testimonio no tienen evidencia individual de pantalla. Decisión del responsable: «A, cierra T8 con mi
 testimonio».
 
 - **Evidencia [C] (consola):** tiempo de D1 de AC7 (`D1 ready at 232 ms`, `listo_ms=232`) y AC8 en consola
@@ -185,5 +190,6 @@ testimonio».
   encendido del 65XE, sin pruebas nuevas.
 - ⏸ **AC5** (solo por SIO): bloqueado por T1a/T1b.
 - **Montaje:** el de fábrica, aceptado por el responsable (§2). El pin 10 marcó 4780 mV con el 65XE encendido.
+  Aceptar el montaje no resuelve el riesgo eléctrico R1 (pin 8 → IO36); M3a y H4 siguen pendientes.
 - **Pendiente para T9** (requisitos 3–5 del plan): arrancar `C:` con `A` y OPTION+START. El responsable confirmó que
   hoy no lo hace; es lo esperado sin M3a/H4.

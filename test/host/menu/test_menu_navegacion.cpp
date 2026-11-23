@@ -566,7 +566,7 @@ void test_unmount_with_the_cursor()
     rig.walk({K1, KA, K2});  // demo-dos.atr on D2
     TEST_ASSERT_EQUAL_STRING("demo-dos.atr", rig.mounted(2));
     const MenuReply unmount = rig.settle(KU);
-    assert_line(unmount, kMainMessage, " DESMONTAR: PULSA 1-8, ESC CANCELA");
+    assert_line(unmount, kMainMessage, " DESMONTAR: PULSA 1-8 O C, ESC CANCELA");
     TEST_ASSERT_EQUAL_UINT(1, markedOf(unmount, rb::host::kMainDrives));
     // Esc cancels: nothing emptied, the cursor back on the sources.
     rig.settle(kDown);

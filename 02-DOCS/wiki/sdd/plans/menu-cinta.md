@@ -160,6 +160,8 @@ DataInArbiter.step(motorOn, commandLow, tapeReady, tapeEnded, poweredOff, gates)
 | Cinta no válida (AC6) | `CINTA NO VALIDA` |
 | Sin memoria (AC6) | `SIN MEMORIA PARA LA CINTA` |
 | Casetera ocupada | `CASETERA OCUPADA, REPITE EN UN RATO` |
+| Paquete sin casetera (T2) | `CASETERA NO DISPONIBLE` |
+| Desmontar (vista U) | `DESMONTAR: PULSA 1-8 O C, ESC CANCELA` |
 | Desmontada (AC4) | línea `C: SIN CINTA` |
 
 ## 4. Data model & flow

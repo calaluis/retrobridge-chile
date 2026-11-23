@@ -452,7 +452,7 @@ void test_u_unmounts_the_chosen_drive()
 {
     MenuRig rig;
     rig.keys({K1, KB, K2, K1, KA, K1});
-    assert_line(rig.keys({KU}), rb::host::kMainMessage, line(" DESMONTAR: PULSA 1-8, ESC CANCELA"));
+    assert_line(rig.keys({KU}), rb::host::kMainMessage, line(" DESMONTAR: PULSA 1-8 O C, ESC CANCELA"));
     const MenuReply removed = rig.keys({K2});
     assert_line(removed, driveLine(2), line("D2 SIN DISCO"));
     assert_line(removed, rb::host::kMainMessage, line(" D2 DESMONTADA"));

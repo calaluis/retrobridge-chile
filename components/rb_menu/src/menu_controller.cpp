@@ -31,6 +31,7 @@ constexpr uint8_t kLetterCodes[kListMaxEntries] = {
 constexpr uint8_t kKeyA = 0x3F;
 constexpr uint8_t kKeyE = 0x2A;
 constexpr uint8_t kKeyU = 0x0B;
+constexpr uint8_t kKeyC = 0x12;  // menu-cinta: C, the cassette
 constexpr uint8_t kKeyN = 0x23;
 constexpr uint8_t kKeyS = 0x3E;
 constexpr uint8_t kKeyM = 0x25;
@@ -362,6 +363,11 @@ MenuReply MenuController::key(uint8_t code, uint8_t row)
             view_ = View::List;
             chosen_ = kNoEntry;
             message_[0] = '\0';
+        } else if (key == kKeyC) {
+            const EntryIndex entry = chosen_;
+            chosen_ = kNoEntry;
+            view_ = View::Main;
+            chooseTape(entry);
         } else if (!moveLine(driveLine_, key) && driveDigit(key, digit) != 0) {
             onPick(driveDigit(key, digit));
         }
@@ -370,6 +376,9 @@ MenuReply MenuController::key(uint8_t code, uint8_t row)
         if (key == kKeyEsc) {
             view_ = View::Main;
             message_[0] = '\0';
+        } else if (key == kKeyC) {
+            view_ = View::Main;
+            ejectTape();
         } else if (!moveLine(driveLine_, key) && driveDigit(key, digit) != 0) {
             onUnmount(driveDigit(key, digit));
         }
@@ -452,7 +461,7 @@ void MenuController::onMain(int digit, uint8_t key)
     } else if (key == kKeyU) {
         view_ = View::Unmount;
         driveLine_ = 0;
-        say(" DESMONTAR: PULSA 1-8, ESC CANCELA");
+        say(" DESMONTAR: PULSA 1-8 O C, ESC CANCELA");
     } else if (key == kKeyN) {
         startCreate();
     }
@@ -666,6 +675,77 @@ void MenuController::onUnmount(int digit)
 {
     view_ = View::Main;
     emptyDrive(static_cast<unsigned>(digit));
+}
+
+// menu-cinta (AC2, AC3, AC6): C puts the chosen tape on C:. The deck reads it elsewhere;
+// the menu polls it as a job (key() never waits), and C: changes only when it is Ready.
+void MenuController::chooseTape(EntryIndex entry)
+{
+    const char* name = catalog_.name(entry);
+    char detail[MenuCatalog::kMaxName + 64];
+    if (!hasCasExtension(name)) {
+        say(" UN DISCO NO VA EN C:");
+        std::snprintf(detail, sizeof detail, "C: name=%s refused: a disk does not go on C:", name);
+        event("menu_select", detail);
+        return;
+    }
+    if (tape_ == nullptr) {
+        say(" CASETERA NO DISPONIBLE");
+        std::snprintf(detail, sizeof detail, "C: name=%s refused: no cassette", name);
+        event("menu_select", detail);
+        return;
+    }
+    if (!tape_->mount(name)) {
+        say(" CASETERA OCUPADA, REPITE EN UN RATO");
+        std::snprintf(detail, sizeof detail, "C: name=%s refused: cassette busy", name);
+        event("menu_select", detail);
+        return;
+    }
+    std::snprintf(tapeIncoming_, sizeof tapeIncoming_, "%s", name);
+    message_[0] = '\0';
+    job_ = Job::Tape;
+}
+
+void MenuController::tapeDone(TapeState state)
+{
+    job_ = Job::None;
+    char detail[MenuCatalog::kMaxName + 64];
+    switch (state) {
+    case TapeState::Ready: {
+        std::memcpy(tapeName_, tapeIncoming_, sizeof tapeName_);
+        const bool gates = tape_->gatesOpen();
+        say(gates ? " CINTA EN C:, ENCIENDE CON START" : " CINTA EN C:, AUN NO PUEDE CARGARSE");
+        std::snprintf(detail, sizeof detail, "C: name=%s mounted gates=%d", tapeName_, gates ? 1 : 0);
+        break;
+    }
+    case TapeState::NoMemory:
+        say(" SIN MEMORIA PARA LA CINTA");
+        std::snprintf(detail, sizeof detail, "C: name=%s refused: no memory", tapeIncoming_);
+        break;
+    case TapeState::Invalid:
+    default:  // Idle: the deck lost the load; the tape on C: stays, as with Invalid
+        say(" CINTA NO VALIDA");
+        std::snprintf(detail, sizeof detail, "C: name=%s refused: invalid", tapeIncoming_);
+        break;
+    }
+    tapeIncoming_[0] = '\0';
+    event("menu_select", detail);
+}
+
+void MenuController::ejectTape()
+{
+    if (tapeName_[0] == '\0') {
+        message_[0] = '\0';
+        return;
+    }
+    if (tape_ != nullptr) {
+        tape_->eject();
+    }
+    char detail[MenuCatalog::kMaxName + 32];
+    std::snprintf(detail, sizeof detail, "C: name=%s unmounted", tapeName_);
+    tapeName_[0] = '\0';
+    message_[0] = '\0';
+    event("menu_select", detail);
 }
 
 std::optional<ErrorCode> MenuController::assignD1(EntryIndex entry)
@@ -882,7 +962,9 @@ MenuReply MenuController::render(uint8_t action) const noexcept
         }
         put(screen, kMainDrives + (n - 1) * kMenuLineWidth, kMenuLineWidth, text, true);
     }
-    put(screen, kMainTape, kMenuLineWidth, "C: SIN CINTA", true);
+    std::snprintf(text, sizeof text, "C: %.*s", static_cast<int>(kMenuLineWidth - 3),
+                  tapeName_[0] != '\0' ? tapeName_ : "SIN CINTA");
+    put(screen, kMainTape, kMenuLineWidth, text, true);
     const bool local = action == kMenuActionShow && job_ == Job::None;  // the 6502 moves the bar (N007)
     if (view_ == View::Edit) {
         // No bar: the 6502 shows its own cursor in the field (after "n  ").
@@ -907,7 +989,9 @@ MenuReply MenuController::render(uint8_t action) const noexcept
         invert(screen, kMainDrives + driveLine_ * kMenuLineWidth);
         cursorBlock(screen, kMainDrives, local ? kDrives : 0, driveLine_, 0);
     }
-    if (job_ != Job::None) {
+    if (job_ == Job::Tape) {
+        put(screen, kMainMessage, kMenuLineWidth, " LEYENDO CINTA...", true);
+    } else if (job_ != Job::None) {
         std::snprintf(text, sizeof text, " CARGANDO %u%%", static_cast<unsigned>(percent_));
         put(screen, kMainMessage, kMenuLineWidth, text, true);
     } else if (editing() && view_ == View::Create) {
@@ -1269,6 +1353,13 @@ void MenuController::onFolderPick(uint8_t key, int digit)
         message_[0] = '\0';
         return;
     }
+    if (key == kKeyC) {
+        // menu-cinta (AC3): a TNFS folder lists disks only; none goes on C:.
+        chosen_ = kNoEntry;
+        view_ = View::Folder;
+        say(" UN DISCO NO VA EN C:");
+        return;
+    }
     if (digit == 0) {
         return;
     }
@@ -1324,7 +1415,11 @@ void MenuController::startJob(Job job, unsigned source, const char* path, std::s
 
 void MenuController::cancelJob() noexcept
 {
-    if (job_ != Job::None) {
+    if (job_ == Job::Tape) {
+        tape_->cancel();  // the tape on C: stays
+        tapeIncoming_[0] = '\0';
+        job_ = Job::None;
+    } else if (job_ != Job::None) {
         loader_->cancel(jobNumber_);  // a late result is dropped and its slot freed by the loader
         job_ = Job::None;
         jobNumber_ = 0;
@@ -1362,6 +1457,14 @@ MenuReply MenuController::advance()
 {
     if (job_ == Job::None) {
         return render(kMenuActionShow);  // the job did not start (T5: no network)
+    }
+    if (job_ == Job::Tape) {
+        const TapeState state = tape_->poll();
+        if (state == TapeState::Pending) {
+            return render(kMenuActionWait);
+        }
+        tapeDone(state);
+        return render(kMenuActionShow);
     }
     loader_->await(jobNumber_, kLoadWaitMicros);
     const LoaderStatus status = loader_->poll(jobNumber_, folder_);

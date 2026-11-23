@@ -291,6 +291,66 @@ void test_an_unresolved_name_says_not_found_and_an_unlinked_source_too()
     assert_line(rig.settle(K5), kMainMessage, " FUENTE 5 SIN CONFIGURAR");
 }
 
+// --- No network (menu-sio-wifi-tnfs T5, C7) -----------------------------------------
+
+struct FakeGate final : rb::host::NetworkGate {
+    rb::host::NetworkState now = rb::host::NetworkState::Connecting;
+    rb::host::NetworkState state() const noexcept override { return now; }
+};
+
+void test_without_a_network_a_tnfs_source_says_why_and_the_microsd_still_works()
+{
+    using rb::host::NetworkState;
+    Rig rig;
+    rig.start();
+    FakeGate gate;
+    rig.controller->setNetworkGate(&gate);
+    const struct {
+        NetworkState state;
+        const char* text;
+    } cases[] = {
+        {NetworkState::Connecting, " WI-FI CONECTANDO, REPITE EN UN RATO"},
+        {NetworkState::NoFile, " SIN WI-FI: FALTA RETROBRIDGE-WIFI.TXT"},
+        {NetworkState::BadFile, " SIN WI-FI: ARCHIVO WI-FI NO VALIDO"},
+        {NetworkState::NoNetwork, " SIN WI-FI: RED NO ENCONTRADA"},
+        {NetworkState::BadKey, " SIN WI-FI: CLAVE INCORRECTA"},
+        {NetworkState::Failed, " SIN WI-FI: EL WI-FI NO ARRANCO"},
+    };
+    for (const auto& c : cases) {
+        gate.now = c.state;
+        const MenuReply refused = rig.settle(K2);
+        TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutMain, refused.layout());
+        TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, refused.action());
+        assert_line(refused, kMainMessage, c.text);
+    }
+    TEST_ASSERT_TRUE(rig.events.has("source=2 path=/ not started: wifi connecting"));
+    TEST_ASSERT_TRUE(rig.events.has("not started: key refused"));
+    // Source 1 never asks: its list opens and an image goes to D1.
+    const MenuReply list = rig.press(K1);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutList, list.layout());
+    assert_title(list, " FUENTE 1: SD");
+    rig.press(KA);
+    assert_line(rig.press(K1), driveLine(1), "D1 DEMO-DOS.ATR");
+    rig.press(KESC);
+    // With the network back, source 2 opens as before.
+    gate.now = NetworkState::Ready;
+    assert_title(rig.settle(K2), " FUENTE 2: /");
+}
+
+void test_a_network_lost_inside_a_folder_keeps_the_folder_and_says_why()
+{
+    Rig rig;
+    rig.start();
+    FakeGate gate;
+    gate.now = rb::host::NetworkState::Ready;
+    rig.controller->setNetworkGate(&gate);
+    assert_title(rig.settle(K2), " FUENTE 2: /");
+    gate.now = rb::host::NetworkState::Connecting;
+    const MenuReply refused = rig.settle(KC);
+    assert_title(refused, " FUENTE 2: /");
+    assert_line(refused, kListMessage, " WI-FI CONECTANDO, REPITE EN UN RATO");
+}
+
 void test_a_refused_folder_keeps_the_view_where_it_was()
 {
     Rig rig;
@@ -568,6 +628,8 @@ int main()
     RUN_TEST(test_an_invalid_atr_is_refused_for_d3_and_its_slot_is_freed);
     RUN_TEST(test_a_silent_server_says_so_and_d1_keeps_its_image);
     RUN_TEST(test_an_unresolved_name_says_not_found_and_an_unlinked_source_too);
+    RUN_TEST(test_without_a_network_a_tnfs_source_says_why_and_the_microsd_still_works);
+    RUN_TEST(test_a_network_lost_inside_a_folder_keeps_the_folder_and_says_why);
     RUN_TEST(test_a_refused_folder_keeps_the_view_where_it_was);
     RUN_TEST(test_malformed_replies_read_as_a_silent_server_and_the_drives_go_on);
     RUN_TEST(test_a_server_that_dies_while_loading_changes_no_drive);

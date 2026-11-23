@@ -204,6 +204,139 @@ void test_a_file_that_cannot_be_rewritten_is_left_as_it_was()
     TEST_ASSERT_FALSE(rb::host::writeSourcesFile(RB_TEST_MENU_DIR "/no/such/file", 0, "x", error, sizeof error));
 }
 
+void test_a_missing_file_is_created_by_the_first_source_saved()
+{
+    constexpr const char* file = RB_TEST_MENU_DIR "/sources-created.txt";
+    std::remove(file);
+    char error[96];
+    TEST_ASSERT_TRUE(rb::host::writeSourcesFile(file, 0, "tnfs.calaluis.cl", error, sizeof error));
+    TEST_ASSERT_EQUAL_STRING("tnfs.calaluis.cl\n", readFile(file).c_str());
+    std::remove(file);
+    // Only source 2 can be the first: a gap or a deletion leaves no file behind.
+    TEST_ASSERT_FALSE(rb::host::writeSourcesFile(file, 1, "x", error, sizeof error));
+    TEST_ASSERT_FALSE(rb::host::writeSourcesFile(file, 0, nullptr, error, sizeof error));
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(file).c_str());
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(RB_TEST_MENU_DIR "/sources-created.txt.tmp").c_str());
+}
+
+constexpr const char* kTmp = RB_TEST_MENU_DIR "/sources-edit.txt.tmp";
+constexpr const char* kBak = RB_TEST_MENU_DIR "/sources-edit.txt.bak";
+
+int recovered() { return static_cast<int>(rb::host::recoverSourcesFile(kFile)); }
+int as(rb::host::SourcesRecovery r) { return static_cast<int>(r); }
+
+// T5 review: a save cut by a power loss leaves .tmp and/or .bak; the next start never trusts a
+// .tmp and never loses the last whole file.
+void test_a_cut_save_never_loses_the_last_whole_file()
+{
+    using rb::host::SourcesRecovery;
+    std::remove(kTmp);
+    std::remove(kBak);
+    writeFile(kFile, kOriginal);
+    TEST_ASSERT_EQUAL_INT(as(SourcesRecovery::Nothing), recovered());
+    // Cut while the .tmp was written: the file stays, the .tmp goes.
+    writeFile(kTmp, "a medio escr");
+    TEST_ASSERT_EQUAL_INT(as(SourcesRecovery::Discarded), recovered());
+    TEST_ASSERT_EQUAL_STRING(kOriginal, readFile(kFile).c_str());
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(kTmp).c_str());
+    // Cut after the old file became .bak: the old file comes back, the .tmp is not trusted.
+    std::rename(kFile, kBak);
+    writeFile(kTmp, "nuevo.cl\n");
+    TEST_ASSERT_EQUAL_INT(as(SourcesRecovery::Restored), recovered());
+    TEST_ASSERT_EQUAL_STRING(kOriginal, readFile(kFile).c_str());
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(kTmp).c_str());
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(kBak).c_str());
+    // Cut after the new file got its name: it stays, the stale .bak goes.
+    writeFile(kBak, "viejo.cl\n");
+    TEST_ASSERT_EQUAL_INT(as(SourcesRecovery::Discarded), recovered());
+    TEST_ASSERT_EQUAL_STRING(kOriginal, readFile(kFile).c_str());
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(kBak).c_str());
+    // A first save cut short (no file before): its .tmp, maybe cut, is not made the file.
+    std::remove(kFile);
+    writeFile(kTmp, "primer");
+    TEST_ASSERT_EQUAL_INT(as(SourcesRecovery::Discarded), recovered());
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(kFile).c_str());
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(kTmp).c_str());
+}
+
+// T5 review: a rename that fails at any step of a save leaves the old file, and only it.
+const char* g_failFrom = nullptr;
+int failingRename(const char* from, const char* to)
+{
+    const std::size_t length = std::strlen(from);
+    const std::size_t suffix = std::strlen(g_failFrom);
+    if (length >= suffix && std::strcmp(from + length - suffix, g_failFrom) == 0) {
+        return -1;
+    }
+    return std::rename(from, to);
+}
+
+void test_a_failed_rename_keeps_the_old_file_and_leaves_nothing_else()
+{
+    std::remove(kTmp);
+    std::remove(kBak);
+    const char* steps[] = {".txt", ".tmp"};  // moving the old file aside; naming the new one
+    for (const char* step : steps) {
+        writeFile(kFile, kOriginal);
+        g_failFrom = step;
+        rb::host::sourcesFileRename = failingRename;
+        char error[96] = {};
+        const bool saved = rb::host::writeSourcesFile(kFile, 0, "otro.cl", error, sizeof error);
+        rb::host::sourcesFileRename = [](const char* from, const char* to) { return std::rename(from, to); };
+        TEST_ASSERT_FALSE_MESSAGE(saved, step);
+        TEST_ASSERT_TRUE(std::strlen(error) > 0);
+        TEST_ASSERT_EQUAL_STRING_MESSAGE(kOriginal, readFile(kFile).c_str(), step);
+        TEST_ASSERT_EQUAL_STRING_MESSAGE("<none>", readFile(kTmp).c_str(), step);
+        TEST_ASSERT_EQUAL_STRING_MESSAGE("<none>", readFile(kBak).c_str(), step);
+    }
+}
+
+// T5 review (a081114): both renames fail, so only the .bak holds the sources. A retry with E
+// must not read the missing file as empty: it puts the .bak back first, or saves nothing.
+void test_a_retry_after_a_failed_restore_keeps_every_source()
+{
+    std::remove(kTmp);
+    std::remove(kBak);
+    writeFile(kFile, "uno.cl\ndos.cl\n");
+    char error[96] = {};
+    rb::host::sourcesFileRename = [](const char* from, const char* to) {
+        const std::size_t length = std::strlen(from);
+        return length >= 4 && (std::strcmp(from + length - 4, ".tmp") == 0 || std::strcmp(from + length - 4, ".bak") == 0)
+                   ? -1
+                   : std::rename(from, to);
+    };
+    TEST_ASSERT_FALSE(rb::host::writeSourcesFile(kFile, 0, "tres.cl", error, sizeof error));
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(kFile).c_str());
+    TEST_ASSERT_EQUAL_STRING("uno.cl\ndos.cl\n", readFile(kBak).c_str());
+    // The .bak still cannot come back: the retry saves nothing and the .bak stays.
+    TEST_ASSERT_FALSE(rb::host::writeSourcesFile(kFile, 0, "tres.cl", error, sizeof error));
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(kFile).c_str());
+    TEST_ASSERT_EQUAL_STRING("uno.cl\ndos.cl\n", readFile(kBak).c_str());
+    // Renames work again: the retry restores the .bak, then edits source 2 and keeps source 3.
+    rb::host::sourcesFileRename = [](const char* from, const char* to) { return std::rename(from, to); };
+    TEST_ASSERT_TRUE(rb::host::writeSourcesFile(kFile, 0, "tres.cl", error, sizeof error));
+    TEST_ASSERT_EQUAL_STRING("tres.cl\ndos.cl\n", readFile(kFile).c_str());
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(kBak).c_str());
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(kTmp).c_str());
+}
+
+// T5 review: on the FujiNet the second save replaces a file that exists; both saves stick.
+void test_two_saves_in_a_row_both_reach_the_file()
+{
+    constexpr const char* file = RB_TEST_MENU_DIR "/sources-created.txt";
+    std::remove(file);
+    EditRig rig{file, ""};
+    rig.pressE(1);
+    assert_line(rig.type("primero.cl"), rb::host::kMainMessage, line(" FUENTE 2 GUARDADA"));
+    rig.pressE(1);
+    assert_line(rig.type("segundo.cl"), rb::host::kMainMessage, line(" FUENTE 2 GUARDADA"));
+    TEST_ASSERT_EQUAL_STRING("segundo.cl", rig.sources.name(2));
+    TEST_ASSERT_EQUAL_STRING("segundo.cl\n", readFile(file).c_str());
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(RB_TEST_MENU_DIR "/sources-created.txt.bak").c_str());
+    TEST_ASSERT_EQUAL_STRING("<none>", readFile(RB_TEST_MENU_DIR "/sources-created.txt.tmp").c_str());
+    std::remove(file);
+}
+
 // --- E on the main screen -----------------------------------------------------------
 
 void test_e_opens_the_row_of_the_bar_with_its_name_in_the_field()
@@ -401,6 +534,31 @@ void test_a_file_that_cannot_be_written_says_so_and_keeps_the_source()
                                   rig.events.last.c_str());
 }
 
+// T5 (C6): with no sources file yet, E on the Atari creates it with the first server.
+void test_e_creates_the_sources_file_when_it_is_missing()
+{
+    constexpr const char* file = RB_TEST_MENU_DIR "/sources-created.txt";
+    std::remove(file);
+    EditRig rig{file, ""};  // no source read: the file the menu edits does not exist
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionEdit, rig.pressE(1).action());
+    const MenuReply saved = rig.type("tnfs.calaluis.cl");
+    assert_line(saved, rb::host::kMainMessage, line(" FUENTE 2 GUARDADA"));
+    TEST_ASSERT_EQUAL_STRING("tnfs.calaluis.cl", rig.sources.name(2));
+    TEST_ASSERT_EQUAL_STRING("tnfs.calaluis.cl\n", readFile(file).c_str());
+    std::remove(file);
+}
+
+// T5: a file that cannot be created (its folder is missing) says so; the sources stay.
+void test_a_sources_file_that_cannot_be_created_says_so_and_keeps_the_sources()
+{
+    EditRig rig{RB_TEST_MENU_DIR "/no-such-folder/sources.txt"};
+    rig.pressE(1);
+    const MenuReply failed = rig.type("otro.cl");
+    assert_line(failed, rb::host::kMainMessage, line(" NO SE PUDO GUARDAR EL ARCHIVO"));
+    TEST_ASSERT_EQUAL_STRING("tnfs.example.cl", rig.sources.name(2));
+    TEST_ASSERT_EQUAL_STRING(kOriginal, readFile(kFile).c_str());
+}
+
 // --- 'T' through the transport decorator ---------------------------------------------
 
 void test_text_command_gets_ack_and_complete_and_a_retry_writes_the_same()
@@ -445,6 +603,11 @@ int main()
     RUN_TEST(test_rewriting_a_source_keeps_comments_blank_lines_and_the_others);
     RUN_TEST(test_a_new_source_goes_at_the_end_even_without_a_last_newline);
     RUN_TEST(test_a_file_that_cannot_be_rewritten_is_left_as_it_was);
+    RUN_TEST(test_a_missing_file_is_created_by_the_first_source_saved);
+    RUN_TEST(test_a_cut_save_never_loses_the_last_whole_file);
+    RUN_TEST(test_a_failed_rename_keeps_the_old_file_and_leaves_nothing_else);
+    RUN_TEST(test_a_retry_after_a_failed_restore_keeps_every_source);
+    RUN_TEST(test_two_saves_in_a_row_both_reach_the_file);
     RUN_TEST(test_e_opens_the_row_of_the_bar_with_its_name_in_the_field);
     RUN_TEST(test_return_saves_the_name_in_the_file_and_on_the_screen);
     RUN_TEST(test_source_2_is_added_on_an_empty_list);
@@ -457,6 +620,8 @@ int main()
     RUN_TEST(test_a_save_repeated_by_siov_deletes_one_source);
     RUN_TEST(test_e_on_source_1_or_without_a_file_says_why);
     RUN_TEST(test_a_file_that_cannot_be_written_says_so_and_keeps_the_source);
+    RUN_TEST(test_e_creates_the_sources_file_when_it_is_missing);
+    RUN_TEST(test_a_sources_file_that_cannot_be_created_says_so_and_keeps_the_sources);
     RUN_TEST(test_text_command_gets_ack_and_complete_and_a_retry_writes_the_same);
     return UNITY_END();
 }

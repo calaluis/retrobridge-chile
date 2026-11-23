@@ -8,3 +8,9 @@ CONFIG_RB_MENU_SIO=y
 # log ~0.1 s at 115200 baud; neither is needed to serve the menu.
 # CONFIG_SPIRAM_MEMTEST is not set
 CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+# E2 (menu-sio-wifi-tnfs): the Wi-Fi keeps the NVS as it is and the key only in RAM.
+# CONFIG_ESP_WIFI_NVS_ENABLED is not set
+# CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE is not set
+CONFIG_ESP_COREDUMP_ENABLE_TO_NONE=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y

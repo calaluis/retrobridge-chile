@@ -16,6 +16,7 @@ set(rb_srcs
     "src/menu_sources.cpp"
     "src/sha256.cpp"
     "src/tnfs_folder.cpp"
+    "src/wifi_config.cpp"
     "src/xex_image.cpp")
 
 if(ESP_PLATFORM)

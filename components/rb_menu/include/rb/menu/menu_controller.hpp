@@ -71,6 +71,7 @@
 #include "rb/menu/menu_catalog.hpp"
 #include "rb/menu/menu_image.hpp"
 #include "rb/menu/menu_loader.hpp"
+#include "rb/menu/network_gate.hpp"
 #include "rb/menu/menu_sources.hpp"
 #include "rb/app/inline_drive_mailbox.hpp"
 #include "rb/app/ports/image_repository.hpp"
@@ -122,6 +123,9 @@ public:
     void onColdReset() noexcept;
     // The --sources file E rewrites (menu-editar-servidor); nullptr: E says there is none.
     void setSourcesFile(const char* path) noexcept { sourcesFile_ = path; }
+    // What a TNFS source asks before each job (menu-sio-wifi-tnfs T5); nullptr: the
+    // network is always there (the PC).
+    void setNetworkGate(const NetworkGate* gate) noexcept { network_ = gate; }
     // The --images folder and its catalog (the one given to the constructor), where N
     // creates a blank ATR (menu-formatear-disco); not set: N says there is none.
     void setImagesFolder(const char* folder, MenuCatalog& catalog) noexcept
@@ -285,6 +289,7 @@ private:
     rb::app::CollectDriveReply collect_;
     MenuEvents* events_;
     MenuLoader* loader_;
+    const NetworkGate* network_ = nullptr;
 
     View view_ = View::Main;
     EntryIndex chosen_ = kNoEntry;         // catalog entry (or folder entry) waiting for a drive

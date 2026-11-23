@@ -21,7 +21,7 @@ Cada paso pide su propio «sí». Un «sí» no cubre el siguiente.
 | Paso | Qué se pide | Aviso |
 |---|---|---|
 | M | **Montaje USB + SIO para este banco.** El plan (§1) pide autorización específica. La excepción de `menu-cinta` T8 valía solo para aquel banco | Sin este «sí» no se conecta nada |
-| A | Descargar el ZIP `menu-sio` de la ejecución de CI de main en `5b9cfc1` (o de la cabeza que se fije) | Se dan nombre, ejecución y tamaño antes |
+| A | Descargar el ZIP `menu-sio` de la ejecución de CI de main **después de fusionar el PR #98** | Se dan nombre, ejecución y tamaño antes |
 | B | Leer la NVS (0x9000, 0x6000) en memoria, solo su SHA-256 | Abrir COM3 puede **reiniciar el ESP32** |
 | C | Flashear 0x1000, 0x8000 y 0x10000 con `verify_flash` | **SIO desconectado** del 65XE |
 | D | Preparar el servidor TNFS de la fuente 2: una `.ATR`, una `.XEX` y una `.ATR` grande (AC6). Para AC5, **renombrar** una imagen a `.off` y devolverla al final | No se borra nada en el servidor |
@@ -38,7 +38,7 @@ Reglas que siguen valiendo:
 
 | Dato | Valor |
 |---|---|
-| Firmware | main `5b9cfc1` (fusión del PR #96, T7). Se completa en el paso A |
+| Firmware | main con T7 (`5b9cfc1`, PR #96) y el PR #98. La cabeza exacta se completa en el paso A |
 | ZIP | se completa en el paso A: nombre, ejecución de CI, tamaño |
 | SHA-256 del ZIP | se completa en el paso A |
 | Comprobaciones del paquete | se copian del registro de CI («puertas H4 y M3a sin aprobar», pilas de `app_main` y `rb_drive_save`) |
@@ -74,22 +74,21 @@ Se anotan `N` de «D1 ready» y el `t` de «unidades restauradas».
 
 **Nunca debe aparecer:** `panic`, `Guru Meditation`, `DATA IN: cambio`, `uart_driver_delete`.
 
-**Límite de la consola (decisión pendiente O1).** En este paquete, la restauración de red no deja ninguna línea.
-Sus eventos son `menu_restore` (`net start`, `net restored`, `net failed`, `net dropped`, `net paused`) y salen en
-nivel DEBUG. Además, la imagen restaurada no emite `menu_mount`. Sin cambio, AC1–AC6 y AC9 solo tienen evidencia
-[P]. Opciones:
+**Consola de la restauración (decisión O1, resuelta el 2026-11-23: opción b).** Hasta `5b9cfc1`, los eventos
+`menu_restore` (`net start`, `net restored`, `net failed`, `net dropped`, `net paused`) salían en nivel DEBUG, y
+la imagen restaurada no emite `menu_mount`. La restauración de red no dejaba ninguna línea. El responsable eligió un
+PR previo, solo de firmware, que imprime `menu_restore` en nivel INFO: PR #98. **El paso A usa la cabeza de main
+después de fusionar el PR #98**, no `5b9cfc1`.
 
-- **(a)** Aceptar evidencia [P] (foto) para esos criterios, como en `menu-cinta` T8.
-- **(b) Recomendada.** Un PR pequeño previo, solo de firmware: imprimir `menu_restore` en nivel INFO en
-  `main/menu_sio.cpp`. Con eso cada caso deja su línea [C]: servidor, ruta, motivo y cancelación. Requiere su propio
-  PR, sus pruebas y su CI antes del paso A.
+Al copiar líneas al registro, el servidor de `net start` se escribe como «servidor de la fuente 2»: sin IP ni
+nombre de host.
 
 ## 4. Casos
 
 Las teclas se pulsan en el 65XE con el menú en pantalla. «Línea de D2» es la fila de D2 del menú principal.
-Con (b), la columna de consola vale. Con (a), se marca «— (DEBUG)».
+La columna de consola vale con el paquete que incluye el PR #98.
 
-| AC | Montaje | Acción | Pantalla esperada [P] | Consola esperada [C] con O1-(b) | Resultado |
+| AC | Montaje | Acción | Pantalla esperada [P] | Consola esperada [C] | Resultado |
 |---|---|---|---|---|---|
 | **AC1** | D2 montada desde la fuente 2 (`.ATR` pequeña); servidor encendido | Apagar y encender el 65XE | Línea de D2: `D2: CARGANDO <nombre>`; luego `D2 <nombre>`. El Atari lee D2 (por ejemplo, `DIR` en DOS) | `D2 net start server=… path=…`, luego `D2 net restored name=…` | pendiente |
 | **AC2** | `.XEX` de la fuente 2 asignado a D1 | Encender; esperar a que termine la carga; `A` | Mientras carga, `A` responde `D1 CARGANDO, ESPERA`. Después, `A` arranca el programa | `D1 net restored … xex=1` | pendiente |
@@ -99,7 +98,7 @@ Con (b), la columna de consola vale. Con (a), se marca «— (DEBUG)».
 | **AC5** | D2 de red recordada; en el servidor, su imagen renombrada a `.off` (paso D) | Encender | `D2: FALTA <nombre>`; D2 queda vacía | `D2 net failed: missing` | pendiente |
 | **AC5b** | Después de AC5 | Apagar y encender el 65XE | D2 vacía, sin `CARGANDO` | ningún `D2 net start` | pendiente |
 | **AC6** | D2 de red con la `.ATR` grande, para que dure la carga | Con `D2: CARGANDO`: fuente 1, una `.ATR` local, `2` | D2 muestra la imagen local; nunca la de red | `D2 net dropped: user` | pendiente |
-| **AC6b** | Igual | Con `D2: CARGANDO`: `U`, luego `2` | `D2 DESMONTADA`; D2 vacía | `D2 restore dropped: unmounted` | pendiente |
+| **AC6b** | Igual | Con `D2: CARGANDO`: `U`, luego `2` | `D2 DESMONTADA`; D2 vacía | `D2 net dropped: user` | pendiente |
 | **AC6c** | Después de AC6 o AC6b | Apagar y encender el 65XE | D2 sigue con la elección del usuario | ningún `D2 net start` | pendiente |
 | **AC7** | Primer arranque del firmware nuevo (la NVS tiene v2 de `menu-cinta`) | Encender tras el flasheo | D1–D8 y `C:` iguales a la foto de §2 paso 2 | `unidades restauradas …` sin problemas | pendiente |
 | **AC9** | D2 recordada desde la fuente 2 | `E` en la fuente 2: apuntarla a otro nombre de servidor; apagar y encender | D2 vuelve desde el servidor **original** | `D2 net start server=<original> …` | pendiente |

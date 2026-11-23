@@ -328,6 +328,85 @@ void test_a_take_that_keeps_failing_is_retried_every_100_ms_with_the_disk_up()
                  "disk.end", "tape.take"});
 }
 
+// ---- T7: the readings of the SIO task become the arbiter's inputs ----
+
+using rb::host::DataInReadings;
+using rb::host::dataInInputs;
+
+DataInReadings fullGates()
+{
+    DataInReadings r;
+    r.gatesOpen = true;
+    r.tapeOutput = true;
+    return r;
+}
+
+// Every reading reaches its input: COMMAND low = asserted, a deck with a tape = ready, not stopped.
+void test_the_readings_become_the_inputs()
+{
+    DataInReadings r = fullGates();
+    r.motorOn = true;
+    r.commandHigh = false;
+    r.tapeOnC = true;
+    r.tapeEnded = true;
+    r.atariOff = true;
+    const DataInInputs in = dataInInputs(r);
+    TEST_ASSERT_TRUE(in.gates);
+    TEST_ASSERT_TRUE(in.motorOn);
+    TEST_ASSERT_TRUE(in.commandLow);
+    TEST_ASSERT_TRUE(in.tapeReady);
+    TEST_ASSERT_TRUE(in.tapeEnded);
+    TEST_ASSERT_TRUE(in.poweredOff);
+    TEST_ASSERT_FALSE(in.tapeStopped);
+}
+
+// COMMAND high (idle) is not asserted; a deck with no tape is stopped and not ready (eject).
+void test_command_idle_and_an_empty_deck()
+{
+    DataInReadings r = fullGates();
+    r.commandHigh = true;
+    r.tapeOnC = false;
+    const DataInInputs in = dataInInputs(r);
+    TEST_ASSERT_FALSE(in.commandLow);
+    TEST_ASSERT_FALSE(in.tapeReady);
+    TEST_ASSERT_TRUE(in.tapeStopped);
+}
+
+// AC8, rule 4: either gate missing, or a cassette that cannot drive DATA IN in this build (until
+// T9): no gates. Run a whole load with MOTOR on and a tape ready: the SIO line is never touched.
+void test_without_gates_or_tape_output_the_line_never_moves()
+{
+    for (int missing = 0; missing < 2; ++missing) {
+        g_calls.clear();
+        DataInReadings r = fullGates();
+        if (missing == 0) {
+            r.gatesOpen = false;
+        } else {
+            r.tapeOutput = false;
+        }
+        r.tapeOnC = true;
+        Rig rig;
+        for (int i = 0; i < 50; ++i) {
+            r.motorOn = (i % 10) < 7;          // MOTOR on and off, as between blocks
+            r.commandHigh = (i % 10) != 9;     // and the Atari talking to a disk now and then
+            TEST_ASSERT_TRUE(rig.step(dataInInputs(r)) == DataInChange::None);
+        }
+        TEST_ASSERT_FALSE(dataInInputs(r).gates);
+        TEST_ASSERT_TRUE(rig.arbiter.owner() == DataInOwner::Disk);
+        assertCalls({});
+    }
+}
+
+// Both gates and a cassette that can drive DATA IN (T9): the arbiter may hand the line over.
+void test_with_gates_and_tape_output_the_tape_can_take_the_line()
+{
+    DataInReadings r = fullGates();
+    r.motorOn = true;
+    r.tapeOnC = true;
+    Rig rig;
+    TEST_ASSERT_TRUE(rig.step(dataInInputs(r)) == DataInChange::ToTape);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -346,5 +425,9 @@ int main(void)
     RUN_TEST(test_a_failed_begin_is_retried_every_100_ms);
     RUN_TEST(test_a_failed_release_never_begins_the_disk_until_it_succeeds);
     RUN_TEST(test_losing_the_gates_gives_the_line_back);
+    RUN_TEST(test_the_readings_become_the_inputs);
+    RUN_TEST(test_command_idle_and_an_empty_deck);
+    RUN_TEST(test_without_gates_or_tape_output_the_line_never_moves);
+    RUN_TEST(test_with_gates_and_tape_output_the_tape_can_take_the_line);
     return UNITY_END();
 }

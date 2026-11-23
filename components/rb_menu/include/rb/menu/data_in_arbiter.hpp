@@ -20,6 +20,22 @@ struct DataInInputs {
     bool tapeStopped = false;  // eject or rewind from the menu
 };
 
+// What the SIO task reads each step (T7), before it becomes DataInInputs.
+struct DataInReadings {
+    bool gatesOpen = false;    // H4 and M3a approved (TapeDeck::gatesOpen)
+    bool tapeOutput = false;   // this build can hand DATA IN to the cassette while it runs (T9)
+    bool motorOn = false;      // MOTOR as read: always off without M3a (EspMotorIn not granted)
+    bool commandHigh = true;   // COMMAND level on its input-only pin: high = idle
+    bool tapeOnC = false;      // the deck holds a tape
+    bool tapeEnded = false;    // the tape played to its end
+    bool atariOff = false;     // SioPowerWatch saw the 65XE powered off
+};
+
+// The arbiter's inputs from one step's readings. Without both gates AND a cassette that can drive
+// DATA IN, `gates` is false: the arbiter never moves the line (AC8, plan §2.3 rule 4), so the SIO
+// UART is never ended. A deck with no tape counts as stopped (eject, plan §2.3 rule 3).
+DataInInputs dataInInputs(const DataInReadings& readings) noexcept;
+
 // The SIO side of UART2.
 class DiskLine {
 public:

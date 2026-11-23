@@ -76,3 +76,20 @@ DataInChange DataInArbiter::beginDisk(uint64_t nowUs) noexcept
 }
 
 }  // namespace rb::host
+
+namespace rb::host {
+
+DataInInputs dataInInputs(const DataInReadings& readings) noexcept
+{
+    DataInInputs in;
+    in.gates = readings.gatesOpen && readings.tapeOutput;  // rule 4: otherwise the disk never lets go
+    in.motorOn = readings.motorOn;
+    in.commandLow = !readings.commandHigh;
+    in.tapeReady = readings.tapeOnC;
+    in.tapeEnded = readings.tapeEnded;
+    in.poweredOff = readings.atariOff;
+    in.tapeStopped = !readings.tapeOnC;  // ejected: the tape gives the line back (rule 3)
+    return in;
+}
+
+}  // namespace rb::host

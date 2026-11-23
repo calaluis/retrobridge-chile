@@ -111,6 +111,9 @@ dueño por defecto. La casetera nunca instala UART2 por su cuenta: pide la líne
    Secuencia: `TapeLine.release()` (línea en marca, driver borrado), luego `DiskLine.begin()`.
 4. **Sin puertas:** el árbitro nunca deja de dar la línea al disco. MOTOR ni se lee. La consola dice por qué
    (`cas: sin M3a/H4, la cinta no se reproduce`).
+   - **T7 (2026-11-23):** `CassetteService` elige sus salidas una vez, en `start()`; todavía no puede tomar DATA IN
+     en marcha. Hasta T9 el paso del árbitro recibe `gates = puertas && kTapeOutput` (`kTapeOutput = false` en
+     `menu_sio.cpp`): el árbitro queda inerte aunque se firmen las puertas, y el UART del SIO nunca se cierra.
 5. **Fallo en el traspaso:** si `take()` falla, la línea vuelve al disco con `begin()`; si `begin()` falla, se
    reintenta cada 100 ms y se registra; D1 nunca queda sin UART en silencio.
 

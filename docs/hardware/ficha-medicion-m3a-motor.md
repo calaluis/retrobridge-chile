@@ -110,8 +110,9 @@ acceso seguro al pin (cable o *breakout*).
 | Paso | Qué hacer | Anotar |
 |---|---|---|
 | C1 | Atari **apagado**. Resistencia de 10 kΩ entre pin 8 y pin 4 (masa) | — |
-| C2 | Encender, BASIC, repetir B1–B5 una vez | Mismos datos que en B |
-| C3 | Apagar el Atari y quitar la resistencia | — |
+| C2 | Encender, BASIC. Con la resistencia conectada, **primero** `POKE 54018,60` (motor apagado) y medir el pin 8 con el multímetro | Tensión de MOTOR en reposo con 10 kΩ |
+| C3 | Después, repetir B1–B5 una vez | Mismos datos que en B |
+| C4 | Apagar el Atari y quitar la resistencia | — |
 
 ### Medición D — pin 10 (comprobación)
 
@@ -176,7 +177,8 @@ El responsable lo registra en `docs/mediciones/m3a-motor-<fecha>.md`.
 | B3: nivel estable (mín. / máx.), 3 veces | |
 | B4: multímetro con el motor encendido | |
 | B5: pico o rebote al apagar (positivo y negativo), 3 veces | |
-| C: con 10 kΩ (B2, B3, B5), si se hizo | |
+| C2: reposo de MOTOR con 10 kΩ (`POKE 54018,60`), si se hizo | |
+| C3: con 10 kΩ (B2, B3, B5), si se hizo | |
 | D1: pin 10 con motor apagado / encendido | |
 | E1 / E2 / E3: pines 7, 5 y 3 en reposo | |
 | ¿`POKE 54018,52` y `,60` encendieron y apagaron el nivel? | sí / no |

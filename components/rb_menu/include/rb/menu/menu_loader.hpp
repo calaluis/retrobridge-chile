@@ -63,6 +63,12 @@ public:
     // wrapped disk; `bytes`, `sha256` and `segments` describe the .xex itself. Reading and
     // wrapping allocate, so they run on the loader thread.
     virtual uint32_t startXex(unsigned source, const char* path, std::size_t length) noexcept = 0;
+    // menu-tnfs-persistente T4 (AC9): as startFetch / startXex, but at the server `server` (the
+    // name remembered with the drive, 1..32 bytes) and not at a source: a restore asks the server
+    // the image came from, whatever the sources name now. The session is the loader's own, apart
+    // from sources 2..8. A null, empty or longer `server` gives NoEncontrado.
+    virtual uint32_t startFetchAt(const char* server, const char* path, std::size_t length) noexcept = 0;
+    virtual uint32_t startXexAt(const char* server, const char* path, std::size_t length) noexcept = 0;
 
     // The state of job `job`. A finished result is handed over once: a Folder is
     // swapped into `folder`; an Image gives its slot to the caller.

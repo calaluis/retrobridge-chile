@@ -433,10 +433,13 @@ int runMenu(const Options& options)
         links[n].emplace(sources.name(n) != nullptr ? sources.name(n) : "", n, resolver, events);
         linkOf[n] = &*links[n];
     }
+    // menu-tnfs-persistente T4: the restore session's link; the loader names its server per job.
+    rb::host::UdpTnfsLink restoreLink{"", rb::host::TnfsLoader::kRestore, resolver, events};
     rb::host::HostTnfsClock tnfsClock{clock};
     rb::host::HeapImageMemory imageMemory;
     std::optional<rb::host::TnfsLoader> loader;
-    loader.emplace(linkOf, repository.memory(), tnfsClock, imageMemory, nullptr, options.images);  // menu-xex
+    loader.emplace(linkOf, repository.memory(), tnfsClock, imageMemory, nullptr, options.images,  // menu-xex
+                   &restoreLink);
     // The menu as D1, the same composition the firmware uses (menu-sio-fisico). The
     // NetSIO transport under it is built now and opened below; SIO writes reach the
     // images folder (menu-escritura-disco).

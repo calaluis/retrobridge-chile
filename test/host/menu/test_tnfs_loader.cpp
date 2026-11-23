@@ -269,6 +269,70 @@ struct Rig {
     Clock clock;
 };
 
+// menu-tnfs-persistente T4: the restore link. rename() picks one of two fake servers by name, as
+// a name resolving to another address would; an unknown name does not resolve.
+struct RoutedLink final : TnfsLink, rb::netsio::DatagramPort {
+    RoutedLink(FakeTnfsServer& a, FakeTnfsServer& b) : a_(a), b_(b) {}
+    rb::core::Result<void> open() override
+    {
+        ++opens;
+        if (current_ == nullptr) {
+            return rb::core::Failure{ErrorCode::NotFound};
+        }
+        return {};
+    }
+    rb::netsio::DatagramPort& port() override { return *this; }
+    void rename(const char* server) noexcept override
+    {
+        ++renames;
+        current_ = std::strcmp(server, "srv-a") == 0 ? &a_ : std::strcmp(server, "srv-b") == 0 ? &b_ : nullptr;
+    }
+    rb::core::Result<void> send(Span<const uint8_t> datagram) override
+    {
+        if (current_ == nullptr) {
+            return rb::core::Failure{ErrorCode::IoError};
+        }
+        return current_->send(datagram);
+    }
+    rb::core::Result<std::size_t> receive(Span<uint8_t> out, uint32_t timeoutUs) override
+    {
+        if (current_ == nullptr) {
+            return rb::core::Failure{ErrorCode::IoError};
+        }
+        return current_->receive(out, timeoutUs);
+    }
+    int opens = 0;
+    int renames = 0;
+
+private:
+    FakeTnfsServer& a_;
+    FakeTnfsServer& b_;
+    FakeTnfsServer* current_ = nullptr;
+};
+
+// Source 2 on srv-a, and the restore link able to reach srv-a and srv-b.
+struct TwoServers {
+    TwoServers() : a(fakeClock), b(fakeClock), source2(a), restore(a, b) { links[2] = &source2; }
+    FakeTnfsServer a;
+    FakeTnfsServer b;
+    FakeLink source2;
+    RoutedLink restore;
+    TnfsLink* links[TnfsLoader::kMaxSource + 1] = {};
+    MemoryImageStore store;
+    TestMemory memory;
+    Clock clock;
+};
+
+uint32_t fetchAt(TnfsLoader& loader, const char* server, const char* path)
+{
+    return loader.startFetchAt(server, path, std::strlen(path));
+}
+
+rb::host::Sha256Digest digestOf(const Bytes& bytes)
+{
+    return rb::host::sha256(Span<const uint8_t>(bytes.data(), bytes.size()));
+}
+
 }  // namespace
 
 void setUp(void) {}
@@ -922,6 +986,108 @@ static void test_closing_does_not_wait_for_a_silent_server(void)
     TEST_ASSERT_TRUE(fakeClock.nowMicros() - before < 100000);
 }
 
+// menu-tnfs-persistente T4 (AC9): D2 remembered from srv-a; the user points source 2 at srv-b
+// with E; the restore still asks srv-a, on its own session, and srv-b hears nothing.
+static void test_a_restore_asks_the_remembered_server_not_the_source(void)
+{
+    TwoServers rig;
+    const Bytes fromA = image(1200);
+    Bytes fromB = image(1200);
+    fromB[0] ^= 0xFF;
+    rig.a.addFile("/juegos/ARCADE.ATR", fromA);
+    rig.b.addFile("/juegos/ARCADE.ATR", fromB);
+    TnfsLoader loader(rig.links, rig.store, rig.clock, rig.memory, nullptr, nullptr, &rig.restore);
+    loader.changeServer(2, "srv-b");
+    TnfsFolder folder;
+    const LoaderStatus status = awaitResult(loader, fetchAt(loader, "srv-a", "/juegos/ARCADE.ATR"), folder);
+    TEST_ASSERT_TRUE(status.kind == Kind::Image);
+    const rb::host::Sha256Digest expected = digestOf(fromA);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.data(), status.sha256.data(), 32);
+    TEST_ASSERT_EQUAL_size_t(0, rig.b.log().size());       // srv-b was never asked
+    TEST_ASSERT_EQUAL_INT(0, rig.source2.opens);            // source 2's session was not used
+    TEST_ASSERT_EQUAL_STRING("srv-b", rig.source2.renamedTo);  // and it did follow E
+    TEST_ASSERT_EQUAL_INT(1, rig.restore.opens);
+    (void)rig.store.release(status.slot);
+}
+
+// The restore session is kept for the same server and moved, with one UMOUNT, for another.
+static void test_the_restore_session_follows_the_server_of_each_job(void)
+{
+    TwoServers rig;
+    rig.a.addFile("/x.atr", image(300));
+    rig.b.addFile("/y.atr", image(300));
+    TnfsLoader loader(rig.links, rig.store, rig.clock, rig.memory, nullptr, nullptr, &rig.restore);
+    TnfsFolder folder;
+    for (int i = 0; i < 2; ++i) {
+        const LoaderStatus status = awaitResult(loader, fetchAt(loader, "srv-a", "/x.atr"), folder);
+        TEST_ASSERT_TRUE(status.kind == Kind::Image);
+        (void)rig.store.release(status.slot);
+    }
+    TEST_ASSERT_EQUAL_size_t(1, countCommand(rig.a, tnfs::cmd::kMount));  // one session, kept
+    TEST_ASSERT_EQUAL_INT(1, rig.restore.renames);
+    const LoaderStatus other = awaitResult(loader, fetchAt(loader, "srv-b", "/y.atr"), folder);
+    TEST_ASSERT_TRUE(other.kind == Kind::Image);
+    (void)rig.store.release(other.slot);
+    TEST_ASSERT_EQUAL_size_t(1, countCommand(rig.a, tnfs::cmd::kUmount));  // srv-a's session ended
+    TEST_ASSERT_EQUAL_size_t(1, countCommand(rig.b, tnfs::cmd::kMount));
+    TEST_ASSERT_EQUAL_INT(2, rig.restore.renames);
+    TEST_ASSERT_EQUAL_size_t(0, rig.a.openHandles());
+    TEST_ASSERT_EQUAL_size_t(0, rig.b.openHandles());
+}
+
+// startXexAt: the same server rule; the result is the wrapped disk, as startXex gives.
+static void test_a_xex_comes_from_the_remembered_server(void)
+{
+    TwoServers rig;
+    const Bytes xex = {0xFF, 0xFF, 0x00, 0x30, 0x00, 0x30, 0x60, 0xE0, 0x02, 0xE1, 0x02, 0x00, 0x30};
+    rig.a.addFile("/xex/JUEGO.XEX", xex);
+    TnfsLoader loader(rig.links, rig.store, rig.clock, rig.memory, nullptr, nullptr, &rig.restore);
+    TnfsFolder folder;
+    const char* path = "/xex/JUEGO.XEX";
+    const LoaderStatus status = awaitResult(loader, loader.startXexAt("srv-a", path, std::strlen(path)), folder);
+    TEST_ASSERT_TRUE(status.kind == Kind::Image);
+    TEST_ASSERT_TRUE(status.xex);
+    TEST_ASSERT_EQUAL_UINT32(2, status.segments);
+    TEST_ASSERT_EQUAL_UINT32(xex.size(), status.bytes);
+    (void)rig.store.release(status.slot);
+    TEST_ASSERT_EQUAL_size_t(0, rig.b.log().size());
+}
+
+// No usable server, a name that does not resolve, or no restore link: NoEncontrado (SERVIDOR NO
+// ENCONTRADO), and nothing goes out.
+static void test_a_restore_without_a_usable_server_gives_no_encontrado(void)
+{
+    TwoServers rig;
+    TnfsLoader loader(rig.links, rig.store, rig.clock, rig.memory, nullptr, nullptr, &rig.restore);
+    TnfsFolder folder;
+    const std::string tooLong(TnfsLoader::kMaxServer + 1, 's');
+    const char* const servers[] = {nullptr, "", tooLong.c_str()};
+    for (const char* server : servers) {
+        const LoaderStatus status = awaitResult(loader, loader.startFetchAt(server, "/x.atr", 6), folder);
+        TEST_ASSERT_TRUE(status.kind == Kind::Error);
+        TEST_ASSERT_TRUE(status.error == LoaderError::NoEncontrado);
+    }
+    TEST_ASSERT_EQUAL_INT(0, rig.restore.opens);
+    const LoaderStatus unknown = awaitResult(loader, fetchAt(loader, "srv-z", "/x.atr"), folder);
+    TEST_ASSERT_TRUE(unknown.error == LoaderError::NoEncontrado);  // the name does not resolve
+    TEST_ASSERT_EQUAL_size_t(0, rig.a.log().size() + rig.b.log().size());
+
+    TnfsLoader noLink(rig.links, rig.store, rig.clock, rig.memory);
+    const LoaderStatus none = awaitResult(noLink, fetchAt(noLink, "srv-a", "/x.atr"), folder);
+    TEST_ASSERT_TRUE(none.error == LoaderError::NoEncontrado);
+}
+
+// T3's errors hold on the restore session: ENOENT -> NoExiste.
+static void test_a_missing_image_at_the_remembered_server_gives_no_existe(void)
+{
+    TwoServers rig;
+    TnfsLoader loader(rig.links, rig.store, rig.clock, rig.memory, nullptr, nullptr, &rig.restore);
+    TnfsFolder folder;
+    const LoaderStatus status = awaitResult(loader, fetchAt(loader, "srv-a", "/nada.atr"), folder);
+    TEST_ASSERT_TRUE(status.kind == Kind::Error);
+    TEST_ASSERT_TRUE(status.error == LoaderError::NoExiste);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -957,5 +1123,10 @@ int main(void)
     RUN_TEST(test_closing_the_loader_unmounts_each_open_session);
     RUN_TEST(test_closing_an_unused_loader_sends_nothing);
     RUN_TEST(test_closing_does_not_wait_for_a_silent_server);
+    RUN_TEST(test_a_restore_asks_the_remembered_server_not_the_source);
+    RUN_TEST(test_the_restore_session_follows_the_server_of_each_job);
+    RUN_TEST(test_a_xex_comes_from_the_remembered_server);
+    RUN_TEST(test_a_restore_without_a_usable_server_gives_no_encontrado);
+    RUN_TEST(test_a_missing_image_at_the_remembered_server_gives_no_existe);
     return UNITY_END();
 }

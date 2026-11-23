@@ -713,6 +713,10 @@ bool start(const rb::board::BoardProfile& board)
         links[n] = createOnce<rb::host::UdpTnfsLink>("", n, resolver, g_events);
         linksReady = linksReady && links[n] != nullptr;
     }
+    // menu-tnfs-persistente T4: the restore session's link (one more UDP socket, opened only by a
+    // restore job). Without it the loader still runs; a restore then gives SERVIDOR NO ENCONTRADO.
+    rb::host::TnfsLink* restoreLink =
+        createOnce<rb::host::UdpTnfsLink>("", rb::host::TnfsLoader::kRestore, resolver, g_events);
     if (linksReady) {
         esp_pthread_cfg_t loaderThread = esp_pthread_get_default_config();
         loaderThread.stack_size = kLoaderStack;
@@ -721,7 +725,7 @@ bool start(const rb::board::BoardProfile& board)
         loaderThread.thread_name = "rb_tnfs";
         (void)esp_pthread_set_cfg(&loaderThread);
         g_loader = createOnce<rb::host::TnfsLoader>(links, g_repository.memory(), tnfsClock, imageMemory, nullptr,
-                                                    rb::esp::SdCardStorage::kMountPoint);
+                                                    rb::esp::SdCardStorage::kMountPoint, restoreLink);
         const esp_pthread_cfg_t defaults = esp_pthread_get_default_config();
         (void)esp_pthread_set_cfg(&defaults);
     }

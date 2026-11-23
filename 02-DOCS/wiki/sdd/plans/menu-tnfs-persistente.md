@@ -100,6 +100,18 @@ libre. [I] Coste: la descarga interrumpida empieza de cero; aceptable frente a b
 servidor recordado. Así, editar la fuente 2 con `E` no afecta a una restauración. [P] Spike en T4: confirmar que
 `TnfsLoader` admite una sesión más sin superar su memoria (una sesión extra = un enlace UDP y un MOUNT).
 
+**Nota del spike (T4, 2026-11-23).** Resultado: cabe; R1 queda retirado en host, pendiente de confirmar en el ESP32.
+- Diseño: `TnfsLoader::kRestore` (= 9) es una sesión más, con su `TnfsClient` y un `TnfsLink` propio que el loader
+  renombra al servidor de cada trabajo. Mismo servidor: la sesión se conserva. Otro servidor: un UMOUNT sin esperar y
+  cambio de nombre, como `changeServer`. Sin enlace, o con un servidor vacío o de más de 32 bytes: `NoEncontrado`.
+- Memoria [C] (host de 64 bits, `sizeof`): `TnfsClient` 1 320 B (los búferes de 1 024 + 265 B dominan, igual en
+  32 bits), `UdpTnfsLink` 120 B; el loader crece ~1,4 KB (de ~12,9 a 14,3 KB). En el FujiNet el loader y el enlace
+  van a PSRAM si hay (`createOnce`), si no a la DRAM. [P] El uso real de memoria libre en el ESP32 no se midió
+  (sin hardware): queda para T8.
+- Sockets [C]: el enlace solo abre su socket UDP con el primer trabajo de restauración. Peor caso: 7 fuentes + 1
+  restauración = 8 sockets UDP, bajo el máximo por defecto de lwIP en ESP-IDF (10; `sdkconfig*` no lo cambia).
+- Plan B (sesión de una fuente con el mismo servidor) no hace falta.
+
 ## 3. Interfaces & contracts
 
 ```text

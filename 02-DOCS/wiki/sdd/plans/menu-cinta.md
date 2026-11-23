@@ -160,6 +160,7 @@ DataInArbiter.step(motorOn, commandLow, tapeReady, tapeEnded, poweredOff, gates)
 | Cinta no válida (AC6) | `CINTA NO VALIDA` |
 | Sin memoria (AC6) | `SIN MEMORIA PARA LA CINTA` |
 | Casetera ocupada | `CASETERA OCUPADA, REPITE EN UN RATO` |
+| Casetera sin respuesta: no se sabe si tomó la cinta; `C:` sin cambio (revisión 2 del PR #85) | `CASETERA NO RESPONDE, REPITE EN UN RATO`; al arrancar, `C: CASETERA NO RESPONDE` |
 | Paquete sin casetera (T2) | `CASETERA NO DISPONIBLE` |
 | Desmontar (vista U) | `DESMONTAR: PULSA 1-8 O C, ESC CANCELA` |
 | Desmontada (AC4) | línea `C: SIN CINTA` |

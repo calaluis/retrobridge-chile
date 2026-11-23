@@ -399,7 +399,8 @@ void test_a_status_with_no_reply_is_asked_again_then_gives_up()
         state = deck.poll();
         ++polls;
     }
-    TEST_ASSERT_TRUE(state == TapeState::Invalid);
+    // Review 2 of PR #85, 3: nothing confirmed either way; never the false "not valid".
+    TEST_ASSERT_TRUE(state == TapeState::Unconfirmed);
     TEST_ASSERT_TRUE(polls < 100);
 }
 
@@ -422,6 +423,73 @@ void test_cancel_during_a_status_check_puts_the_old_tape_back()
     deck.pump();
     TEST_ASSERT_EQUAL_STRING("OLD.CAS", deck.loaded());
     assertSent(channel, {"mount OLD.CAS", "mount NEW.CAS", "status", "mount OLD.CAS"});
+}
+
+// Review 2 of PR #85, 1: U then C while the remembered tape is still being read. The eject
+// drops that load: when "mounted" comes, the tape goes out, no Ready is left behind, and the
+// next mount is taken once the eject is answered.
+void test_an_eject_during_a_load_drops_it_and_later_mounts_work()
+{
+    FakeChannel channel;
+    CasTapeDeck deck(channel, true);
+    deck.mount("A.CAS");
+    deck.eject();
+    channel.replies.push_back("mounted A.CAS: 1 data, 0 fsk");
+    deck.pump();
+    channel.replies.push_back("ejected A.CAS");
+    deck.pump();
+    TEST_ASSERT_TRUE(deck.poll() == TapeState::Idle);
+    TEST_ASSERT_EQUAL_STRING("", deck.loaded());
+    assertSent(channel, {"mount A.CAS", "eject"});
+    TEST_ASSERT_TRUE(deck.mount("B.CAS"));
+}
+
+// Review 2, 1: the load was already answered (pump() took "mounted") but nobody polled it.
+void test_an_eject_after_an_unread_ready_drops_it()
+{
+    FakeChannel channel;
+    CasTapeDeck deck(channel, true);
+    deck.mount("A.CAS");
+    channel.replies.push_back("mounted A.CAS: 1 data, 0 fsk");
+    deck.pump();
+    deck.eject();
+    TEST_ASSERT_TRUE(deck.poll() == TapeState::Idle);
+    channel.replies.push_back("ejected A.CAS");
+    deck.pump();
+    TEST_ASSERT_TRUE(deck.mount("B.CAS"));
+}
+
+// Review 2, 2: the cassette keeps 63 bytes of a name. Two long names with the same 63 bytes
+// cannot be told apart by "status": the load is not confirmed, never Ready for the wrong tape.
+void test_a_status_that_cannot_tell_two_long_names_apart_is_not_ready()
+{
+    const std::string head(70, 'A');
+    const std::string first = head + "1.CAS";
+    const std::string second = head + "2.CAS";
+    FakeChannel channel;
+    CasTapeDeck deck(channel, true);
+    deck.mount(first.c_str());
+    channel.replies.push_back("mounted " + head.substr(0, 63) + ": 1 data, 0 fsk");
+    deck.poll();
+    deck.mount(second.c_str());
+    channel.replies.push_back("");
+    deck.poll();
+    channel.replies.push_back(head.substr(0, 63) + ": segment 1/1, gap 0 ms, motor off");
+    TEST_ASSERT_TRUE(deck.poll() == TapeState::Unconfirmed);
+}
+
+// statusHolds: same name, another name, and a long name it cannot decide.
+void test_status_holds_knows_when_it_cannot_tell()
+{
+    using rb::host::StatusHolds;
+    TEST_ASSERT_TRUE(rb::host::statusHolds("A.CAS: segment 1/1, motor off", "A.CAS") == StatusHolds::Yes);
+    TEST_ASSERT_TRUE(rb::host::statusHolds("B.CAS: end, motor off", "A.CAS") == StatusHolds::No);
+    TEST_ASSERT_TRUE(rb::host::statusHolds("no tape, motor off", "A.CAS") == StatusHolds::No);
+    const std::string head(70, 'A');
+    const std::string reply = head.substr(0, 63) + ": segment 1/1, motor off";
+    TEST_ASSERT_TRUE(rb::host::statusHolds(reply.c_str(), (head + "1.CAS").c_str()) == StatusHolds::Unknown);
+    const std::string other = std::string(63, 'B') + ": segment 1/1, motor off";
+    TEST_ASSERT_TRUE(rb::host::statusHolds(other.c_str(), (head + "1.CAS").c_str()) == StatusHolds::No);
 }
 
 int main(void)
@@ -451,5 +519,9 @@ int main(void)
     RUN_TEST(test_a_mount_with_no_reply_and_the_old_tape_in_the_status_is_invalid);
     RUN_TEST(test_a_status_with_no_reply_is_asked_again_then_gives_up);
     RUN_TEST(test_cancel_during_a_status_check_puts_the_old_tape_back);
+    RUN_TEST(test_an_eject_during_a_load_drops_it_and_later_mounts_work);
+    RUN_TEST(test_an_eject_after_an_unread_ready_drops_it);
+    RUN_TEST(test_a_status_that_cannot_tell_two_long_names_apart_is_not_ready);
+    RUN_TEST(test_status_holds_knows_when_it_cannot_tell);
     return UNITY_END();
 }

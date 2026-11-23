@@ -40,17 +40,21 @@ CasMountReply classifyMountReply(const char* reply) noexcept
     return CasMountReply::Invalid;
 }
 
-bool statusHolds(const char* reply, const char* name) noexcept
+StatusHolds statusHolds(const char* reply, const char* name) noexcept
 {
     // "cas status": "<name>: segment ..." or "<name>: end, ..."; "no tape, ..." when empty.
     if (reply == nullptr || name == nullptr || name[0] == '\0') {
-        return false;
+        return StatusHolds::No;
     }
     std::size_t length = std::strlen(name);
     if (length > kCasNameMax) {
         length = kCasNameMax;
     }
-    return std::strncmp(reply, name, length) == 0 && reply[length] == ':';
+    if (std::strncmp(reply, name, length) != 0 || reply[length] != ':') {
+        return StatusHolds::No;
+    }
+    // A name cut by the cassette cannot be told from another one with the same first 63 bytes.
+    return std::strlen(name) > kCasNameMax ? StatusHolds::Unknown : StatusHolds::Yes;
 }
 
 bool CasTapeDeck::mount(const char* name) noexcept
@@ -103,6 +107,11 @@ void CasTapeDeck::cancel() noexcept
 
 void CasTapeDeck::eject() noexcept
 {
+    if (inFlight_ == Op::Mount || inFlight_ == Op::MountStatus) {
+        cancelled_ = true;  // review 2 of PR #85: the load in flight must not come back as Ready
+    }
+    previous_[0] = '\0';  // whatever comes back from a load or a restore goes out too
+    report_ = TapeState::Idle;
     loaded_[0] = '\0';
     restoreWaiting_ = false;
     ejectWaiting_ = true;
@@ -153,16 +162,25 @@ void CasTapeDeck::onReply(const char* reply) noexcept
             (void)post(Op::MountStatus, "status", nullptr);
             return;
         }
-        mountDone(kind == CasMountReply::Mounted, kind);
+        mountDone(kind == CasMountReply::Mounted ? Outcome::Taken : Outcome::NotTaken, kind);
         return;
-    case Op::MountStatus:
-        if (kind == CasMountReply::NoReply && statusLeft_ > 0) {
-            --statusLeft_;
-            (void)post(Op::MountStatus, "status", nullptr);
+    case Op::MountStatus: {
+        if (kind == CasMountReply::NoReply) {
+            if (statusLeft_ > 0) {
+                --statusLeft_;
+                (void)post(Op::MountStatus, "status", nullptr);
+                return;
+            }
+            mountDone(Outcome::Unknown, kind);  // review 2, 3: never the false "not valid"
             return;
         }
-        mountDone(statusHolds(reply, asked_), CasMountReply::Invalid);
+        const StatusHolds holds = statusHolds(reply, asked_);
+        mountDone(holds == StatusHolds::Yes ? Outcome::Taken
+                  : holds == StatusHolds::No ? Outcome::NotTaken
+                                             : Outcome::Unknown,
+                  CasMountReply::Invalid);
         return;
+    }
     case Op::Restore:
         if (kind == CasMountReply::Busy && busyLeft_ > 0) {
             --busyLeft_;
@@ -181,7 +199,7 @@ void CasTapeDeck::onReply(const char* reply) noexcept
             (void)post(Op::RestoreStatus, "status", nullptr);
             return;
         }
-        restoreDone(statusHolds(reply, previous_));
+        restoreDone(statusHolds(reply, previous_) == StatusHolds::Yes);
         return;
     case Op::Eject:
         if ((kind == CasMountReply::Busy || kind == CasMountReply::NoReply) && busyLeft_ > 0) {
@@ -195,16 +213,20 @@ void CasTapeDeck::onReply(const char* reply) noexcept
     }
 }
 
-void CasTapeDeck::mountDone(bool taken, CasMountReply kind) noexcept
+void CasTapeDeck::mountDone(Outcome outcome, CasMountReply kind) noexcept
 {
     if (cancelled_) {
         cancelled_ = false;
-        if (taken) {
-            undo();
+        if (outcome != Outcome::NotTaken) {
+            undo();  // the cassette has (or may have) the tape the menu no longer wants
         }
         return;
     }
-    if (taken) {
+    if (outcome == Outcome::Unknown) {
+        report_ = TapeState::Unconfirmed;  // loaded_ stays: what the deck last knew for sure
+        return;
+    }
+    if (outcome == Outcome::Taken) {
         copyName(loaded_, asked_);
         report_ = TapeState::Ready;
         return;

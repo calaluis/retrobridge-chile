@@ -726,6 +726,10 @@ void MenuController::tapeDone(TapeState state)
         say(" SIN MEMORIA PARA LA CINTA");
         std::snprintf(detail, sizeof detail, "C: name=%s refused: no memory", tapeIncoming_);
         break;
+    case TapeState::Unconfirmed:  // review 2 of PR #85: nobody knows; C: stays as it was
+        say(" CASETERA NO RESPONDE, REPITE EN UN RATO");
+        std::snprintf(detail, sizeof detail, "C: name=%s unconfirmed: no reply", tapeIncoming_);
+        break;
     case TapeState::Invalid:
     default:  // Idle: the deck lost the load; the tape on C: stays, as with Invalid
         say(" CINTA NO VALIDA");
@@ -809,6 +813,15 @@ void MenuController::serviceRestoredTape()
         char done[MenuCatalog::kMaxName + 32];
         std::snprintf(done, sizeof done, "C: name=%s restored", tapeName_);
         event("menu_restore", done);
+        return;
+    }
+    if (state == TapeState::Unconfirmed) {
+        // Review 2 of PR #85: the cassette did not answer. The tape stays remembered on C: (it is
+        // not known to be bad); nothing is saved.
+        char unsure[MenuCatalog::kMaxName + 48];
+        std::snprintf(unsure, sizeof unsure, "C: name=%s restore unconfirmed: no reply", tapeName_);
+        event("menu_restore", unsure);
+        say(" C: CASETERA NO RESPONDE");
         return;
     }
     char detail[MenuCatalog::kMaxName + 64];

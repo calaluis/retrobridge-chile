@@ -16,6 +16,9 @@ enum class TapeState : uint8_t {
     Ready,     // the tape asked for is now the one on C:
     Invalid,   // not a tape this cassette can play
     NoMemory,  // no room to hold the tape
+    // The cassette did not answer: nobody knows whether it took the tape. C: does not change
+    // (review 2 of PR #85).
+    Unconfirmed,
 };
 
 class TapeDeck {

@@ -11,11 +11,14 @@
 //                   "busy..." (the last tape is still closing) = sent again, anything else = Invalid.
 //                   No reply in time: the service keeps the command and may still finish it, so
 //                   "status" is asked (it runs after the mount, on the same loop) and the tape it
-//                   names decides. A service that did not start (no PSRAM) answers NoMemory at once.
+//                   names decides; if it never answers, or cannot tell two long names apart, the
+//                   load is Unconfirmed (C: does not change). A service that did not start (no
+//                   PSRAM) answers NoMemory at once.
 //   cancel()     -> the load is dropped, even if its result was already taken but not yet handed
 //                   out by poll(); if the cassette took the new tape, the tape that was on C: goes
 //                   back ("mount <old>", or "eject" if there was none), so C: stays (AC6).
-//   eject()      -> "eject", once nothing else is in flight; sent again on "busy" or no reply.
+//   eject()      -> "eject", once nothing else is in flight; sent again on "busy" or no reply. A
+//                   load in flight, or answered but not yet polled, is dropped: its tape goes out.
 //   pump()       -> takes replies and sends what waits; poll() pumps too. Call it every SIO step.
 //
 // Review of PR #85 (T5): the deck never says a tape that the cassette does not hold.
@@ -49,8 +52,11 @@ enum class CasMountReply { Mounted, Busy, TooBig, NoReply, Invalid };
 // What a `cas mount` reply says.
 CasMountReply classifyMountReply(const char* reply) noexcept;
 
-// True if a `cas status` reply names `name` as the tape the cassette holds.
-bool statusHolds(const char* reply, const char* name) noexcept;
+enum class StatusHolds { Yes, No, Unknown };
+
+// Whether a `cas status` reply names `name` as the tape the cassette holds. The cassette keeps
+// 63 bytes of a name: a longer name whose first 63 bytes match is Unknown, never Yes.
+StatusHolds statusHolds(const char* reply, const char* name) noexcept;
 
 class CasTapeDeck final : public TapeDeck {
 public:
@@ -73,10 +79,11 @@ public:
 
 private:
     enum class Op { None, Mount, MountStatus, Restore, RestoreStatus, Eject };
+    enum class Outcome { Taken, NotTaken, Unknown };
 
     bool post(Op op, const char* verb, const char* name) noexcept;
     void onReply(const char* reply) noexcept;
-    void mountDone(bool taken, CasMountReply kind) noexcept;
+    void mountDone(Outcome outcome, CasMountReply kind) noexcept;
     void restoreDone(bool taken) noexcept;
     void undo() noexcept;  // the cassette holds asked_, the menu does not want it
     void sendWaiting() noexcept;

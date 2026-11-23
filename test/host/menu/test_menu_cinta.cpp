@@ -466,6 +466,43 @@ void test_a_busy_cassette_at_power_up_gets_the_tape_when_it_is_free()
     TEST_ASSERT_FALSE(rig.controller->memoryChanged());  // C: never changed
 }
 
+// Review 2 of PR #85, 3: the cassette did not answer, so nobody knows whether the tape went in.
+// The line says so, C: does not change, and nothing is saved.
+void test_an_unconfirmed_tape_says_the_cassette_did_not_answer()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    mountTape(rig, KD);  // nave.Cas
+    deck.result = TapeState::Unconfirmed;
+    const MenuReply shown = mountTape(rig, KC);
+    assert_line(shown, kMainMessage, " CASETERA NO RESPONDE, REPITE EN UN RATO");
+    assert_line(shown, rb::host::kMainTape, tapeLine("NAVE.CAS").c_str());
+    TEST_ASSERT_EQUAL_STRING("nave.Cas", rig.controller->tapeName());
+    TEST_ASSERT_TRUE(rig.events.has("C: name=KARATE.CAS unconfirmed: no reply"));
+}
+
+// Review 2, 3, at power-up: a remembered tape the cassette did not confirm stays remembered on C:
+// (it is not taken out, as an invalid one would be), and the line says the cassette did not answer.
+void test_an_unconfirmed_remembered_tape_stays_on_c()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    deck.result = TapeState::Unconfirmed;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    restoreWith(rig, tapeMemory("KARATE.CAS"));
+    rig.step();
+    rig.step();
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", rig.controller->tapeName());
+    const MenuReply shown = rig.press(kPoll);
+    assert_line(shown, rb::host::kMainTape, tapeLine("KARATE.CAS").c_str());
+    assert_line(shown, kMainMessage, " C: CASETERA NO RESPONDE");
+    TEST_ASSERT_TRUE(rig.events.has("C: name=KARATE.CAS restore unconfirmed: no reply"));
+    TEST_ASSERT_FALSE(rig.controller->memoryChanged());
+}
+
 int main(void)
 {
     writeFolder();
@@ -488,5 +525,7 @@ int main(void)
     RUN_TEST(test_a_missing_remembered_tape_is_reported);
     RUN_TEST(test_a_remembered_tape_the_deck_refuses_is_taken_out);
     RUN_TEST(test_a_busy_cassette_at_power_up_gets_the_tape_when_it_is_free);
+    RUN_TEST(test_an_unconfirmed_tape_says_the_cassette_did_not_answer);
+    RUN_TEST(test_an_unconfirmed_remembered_tape_stays_on_c);
     return UNITY_END();
 }

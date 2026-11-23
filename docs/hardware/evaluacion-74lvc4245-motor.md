@@ -126,7 +126,11 @@ TI **SCES351Y**, revisada en octubre de 2025.
 - VCC 1,65–5,5 V. **Entradas tolerantes a 5,5 V** con cualquier VCC (máximo absoluto 6,5 V) [D].
 - **Ioff ±10 µA máx.** con VCC = 0 y VI o VO = 0–5,5 V [D].
 - Con VCC = 3 V: VT+ = 1,48–1,92 V [D]. MOTOR 4,7 V ≫ 1,92 V. Histéresis frente al ruido.
-- Salida push-pull a 3V3: VOH ≥ VCC − 0,1 V con −100 µA [D] → IO36 ≈ 3,2–3,3 V ≥ 2,48 V [T].
+- Salida push-pull a 3V3. La hoja especifica VOH ≥ VCC − 0,1 V **con IOH = −100 µA**, y VOH ≥ 2,4 V con −16 mA
+  (VCC = 3 V) [D]. R2 (10 k a GND) pide ≈ 330 µA: **no hay fila para esa corriente**. Valor **esperado**
+  ≈ 3,2–3,3 V [I], porque 330 µA está mucho más cerca de 100 µA que de 16 mA. La única cifra garantizada por
+  encima de 100 µA es 2,4 V a −16 mA, que queda **por debajo** de VIH 2,48 V [D][T]: la hoja **no garantiza** el
+  nivel con R2. Por eso V4 y V6 lo **miden bajo carga** (§8).
 - SOT-23-5 o SC70-5. **Una** alimentación: el 3V3 de la FujiNet.
 - No inversor. **R2 puede quedar a GND**: la salida la vence con 0,33 mA [T].
 
@@ -163,7 +167,7 @@ Valores para MOTOR = 4,7–5,25 V.
 | Alimentaciones | 2 (VCCA 5 V, VCCB 3V3) | 1 (3V3) | 1 (3V3) | 1 (`VCC_BUF`) | 0 |
 | Pines de control | DIR, OE | — | — | — | — |
 | Encapsulado | 24 pines, 0,65 mm | SOT-23-5 | SOT-23-5 | Ya montado (SOIC-14) | Resistencia |
-| IO36 alto | ≈ VCCB [D] | ≥ 3,2 V [D][T] | 3,3 V (pull-up) [T] | 3,3 V (pull-up) [I] | 2,73–3,20 V [T] |
+| IO36 alto | ≈ VCCB [D] | ≈ 3,2–3,3 V esperado [I]; se mide bajo carga (V4) | 3,3 V (pull-up) [T] | 3,3 V (pull-up) [I] | 2,73–3,20 V [T] |
 | Margen frente a VIH 2,48 V | ≈ 0,7 V | ≈ 0,7 V | ≈ 0,8 V | ≈ 0,8 V | **0,25 V** |
 | Máx. en la entrada | VCCA + 0,5 V: **riesgo si VCCA < MOTOR** [T] | 6,5 V abs.; 5,5 V operativo [D] | 6,5 V abs.; 5,5 V operativo [D] | 7 V abs. [D] | Lo limita Rs |
 | FujiNet apagada: corriente desde MOTOR | ≤ 2 µA (Ioff, rev. K) [D] | ≤ 10 µA [D] | ≤ 10 µA [D] | Entrada tolerada con VCC = 0 [R]; corriente sin cifra [P] | ≈ 0,6 mA [T] |
@@ -196,16 +200,20 @@ Cálculos [T]:
 - MOTOR 4,7 V: entrada ≈ 4,7 · 10 / 11 ≈ 4,27 V ≫ VT+ 1,92 V. Con 5,25 V: 4,77 V ≤ 5,5 V operativo.
 - MOTOR apagado: entrada 0 V → salida ≈ 0 V.
 - Carga sobre MOTOR: 4,9 / 11 k ≈ **0,45 mA**.
-- Salida alta: VOH ≈ 3,2–3,3 V; R2 (10 k a GND) consume 0,33 mA.
-- **FujiNet apagada, Atari encendido:** VCC de U_A = 0 → entrada ≤ 10 µA y salida en Ioff [D]. IO36 queda en 0 V
+- Salida alta: **esperado** VOH ≈ 3,2–3,3 V con R2 (10 k a GND, ≈ 330 µA) [I]. La hoja no lo garantiza a esa
+  corriente (§4.1). Se verifica bajo carga en V4 y V6.
+- **FujiNet apagada, Atari encendido:** VCC de U_A = 0 → fuga del integrado ≤ 10 µA en la entrada y en la salida
+  (Ioff) [D]. MOTOR sigue cargado por Rin + pull-down: ≈ 0,45 mA [T], que van a GND, no al ESP32. IO36 queda en 0 V
   por R2. **Sin alimentación parásita** por este camino [I].
 - **Atari apagado, FujiNet encendida:** el pull-down deja la salida en bajo.
 - Picos: Rin limita la corriente; el valor real depende de M3a [P]. Si M3a muestra picos > 5,5 V, añadir un clamp
   en la entrada (por ejemplo, un zener de 5,1 V a GND) [I].
 
 Limitaciones [I]:
-- **J2 recibe el MOTOR traducido (3,3 V).** Una XC12 detrás de la FujiNet no funcionaría bien. RetroBridge emula la
-  casetera: limitación aceptable, documentada.
+- **J2 recibe el MOTOR traducido (3,3 V).** **Con el adaptador puesto, no se conecta en J2 ningún periférico que
+  use o cargue MOTOR** (por ejemplo, una XC12, que se alimenta del pin 8 [E-Atari]). La salida de 3,3 V del
+  SN74LVC1G17 **no reemplaza** la alimentación de MOTOR original: no está pensada para dar corriente a un periférico
+  [I]. RetroBridge emula la casetera, así que no hace falta una casetera detrás.
 - El cable a 3V3 es una intervención pequeña y reversible en la placa.
 - Sin el cable a 3V3, la salida queda sin alimentar e IO36 en 0 V por R2: falla de forma segura.
 
@@ -231,7 +239,7 @@ revisión K. El 74LVC1G17 da la misma protección con la placa apagada (Ioff), c
 | L4 | Piezas antiguas sin Ioff garantizado | 4245A | Revisión K o confirmación de TI |
 | L5 | Entrada CMOS flotante con MOTOR apagado | 4245A, 1G17, 1G07 | Pull-down de 10 k |
 | L6 | Cable a 3V3 mal soldado o en otro riel | 6.1, 6.2 | Etapa V3 (sin energía) |
-| L7 | J2 recibe 3,3 V en MOTOR | 6.1 | Documentado; sin XC12 detrás |
+| L7 | J2 recibe 3,3 V en MOTOR; un periférico que use o cargue MOTOR quedaría mal alimentado y cargaría la salida del 1G17 | 6.1 | **Prohibido** conectar en J2 periféricos que usen o carguen MOTOR mientras el adaptador esté puesto; rotular el adaptador |
 | L8 | Errores de montaje (pin 8 cruzado, puentes) | Todas | Etapas V2–V5 |
 | L9 | Umbrales del ESP32 sin confirmar en la WROVER | Todas | Revisar la hoja de datos [P] |
 | L10 | Tolerancia del 74LS07 sin VCC apoyada en un hilo de foro no leído aquí | 74LS07 (1.6, modificación E) | Confirmar el hilo de TI E2E; medir la fuga si se elige esa vía |
@@ -248,8 +256,9 @@ revisión K. El 74LVC1G17 da la misma protección con la placa apagada (Ioff), c
 | V1 | M3a en el Atari solo (`ficha-medicion-m3a-motor.md`) | V0 | Nivel y picos registrados; recalcular Rin y clamp |
 | V2 | Adaptador **sin energía**: continuidad 1:1, Rin, pull-down, sin cortos | V1 | Valores dentro de tolerancia |
 | V3 | Cable a 3V3 **sin energía**: continuidad al riel 3V3; sin continuidad a `VCC`, `SIO_5V` ni GND | V2 | Correcto |
-| V4 | Adaptador en banco, sin Atari ni FujiNet: 3,3 V limitados a 20 mA como VCC; entrada con fuente limitada a 1 mA (0 / 4,7 / 5,25 V); 10 kΩ a GND en la salida | V3 | Salida ≤ 0,1 V y ≥ 3,1 V; corriente de VCC < 1 mA |
-| V5 | Banco con **VCC = 0** y entrada a 5,25 V | V4 | Salida ≈ 0 V; corriente de entrada ≤ 10 µA (según la resolución del instrumento) |
+| V4 | Adaptador en banco, sin Atari ni FujiNet: 3,3 V limitados a 20 mA como VCC; entrada con fuente limitada a 1 mA (0 / 4,7 / 5,25 V); 10 kΩ a GND en la salida | V3 | **Prueba bajo carga:** con los 10 kΩ a GND en la salida (≈ 330 µA, como R2), salida alta ≥ 3,1 V y baja ≤ 0,1 V; corriente de VCC < 1 mA |
+| V5a | Banco con **VCC = 0 V** (VCC unido a GND) y 5,25 V en la entrada del adaptador (antes de Rin), con el pull-down de 10 kΩ montado | V4 | **Corriente total** ≈ 5,25 / 11 kΩ ≈ **477 µA** (454–502 µA con resistencias al 5 %) [T]. Casi toda va por el pull-down: **no es la fuga del integrado**. Salida con 10 kΩ a GND ≤ 0,1 V (≈ 10 µA o menos por la salida) |
+| V5b | **Fuga del integrado:** igual que V5a, pero con el pull-down **desconectado** (antes de montarlo, o con un puente retirable) | V5a | Corriente por Rin ≤ **10 µA** (límite Ioff [D]); equivale a una caída en Rin de 1 kΩ ≤ 10 mV. Según la resolución del instrumento |
 | V6 | Atari solo + adaptador alimentado desde el banco a 3,3 V; 10 kΩ en la salida; `POKE 54018,52` / `,60` | V5 | Salida alta 3,1–3,3 V; pico ≤ 3,6 V; baja ≤ 0,3 V |
 | V7 | Atari encendido, FujiNet con S5 en OFF, adaptador puesto | V6 + orden de conexión de `procedimiento-medicion-pasiva-sio.md` §2 | IO36 ≈ 0 V; el 3V3 de la FujiNet no sube |
 | V8 | Atari y FujiNet encendidos; firmware actual **sin configurar GPIO36** | V7 | IO36 alto 3,1–3,3 V, bajo ≤ 0,3 V, picos ≤ 3,6 V |

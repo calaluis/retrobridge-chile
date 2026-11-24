@@ -27,7 +27,7 @@ LOCK_CALL = re.compile(
     r"\b(__atomic_\w+|__sync_\w+|vPortEnterCritical\w*|vPortExitCritical\w*|xPortEnterCritical\w*"
     r"|spinlock_acquire\w*|esp_cpu_compare_and_set\w*)\b"
 )
-LOAD_STORE = re.compile(r"\s(l32i(?:\.n)?|s32i(?:\.n)?|l32ai|s32ri|memw)\s")
+LOAD_STORE = re.compile(r"\s(l32i(?:\.n)?|s32i(?:\.n)?|l8ui|s8i|l32ai|s32ri|memw)\s")
 
 PROBE_SOURCE = """#include <atomic>
 #include <cstdint>
@@ -55,14 +55,21 @@ def disassemble(objdump, obj):
     return subprocess.run([objdump, "-dr", "-C", str(obj)], check=True, capture_output=True, text=True).stdout
 
 
-# The DataInHandover functions that must be in the object, and the atomic access each one must show:
-# an acquire load is `l32i` followed by `memw`; a release store is `memw` followed by `s32i`.
+# The functions that must be in the object, and the atomic access each one must show: an acquire load
+# is a load (`l32i`, or `l8ui` for a bool) followed by `memw`; a release store is `memw` followed by a
+# store (`s32i`, or `s8i`). "handover": DataInHandover (T9a.1). "progress": the cassette ports'
+# TapeProgress accesses in main/cassette_ports.cpp (T9a.7, requirement 2).
 REQUIRED = {
     "rb::host::DataInHandover::request(": "store",
     "rb::host::DataInHandover::confirm(": "store",
     "rb::host::DataInHandover::ackFor(": "load",
     "rb::host::DataInHandover::pending(": "load",
 }
+PROGRESS = {
+    "rb::menusio::ProgressSink::publish(": "store",
+    "rb::menusio::tapeEnded(": "load",
+}
+PROFILES = {"handover": REQUIRED, "progress": PROGRESS}
 FUNCTION = re.compile(r"^[0-9a-f]+ <(.+)>:$")
 INSTRUCTION = re.compile(r"^\s*[0-9a-f]+:\s+[0-9a-f]+\s+([a-z0-9.]+)")
 
@@ -86,18 +93,18 @@ def has_access(mnemonics, kind):
     """A 32-bit acquire load (l32i then memw) or release store (memw then s32i) in this function."""
     for i in range(len(mnemonics) - 1):
         first, second = mnemonics[i], mnemonics[i + 1]
-        if kind == "load" and first in ("l32i", "l32i.n") and second == "memw":
+        if kind == "load" and first in ("l32i", "l32i.n", "l8ui") and second == "memw":
             return True
-        if kind == "store" and first == "memw" and second in ("s32i", "s32i.n"):
+        if kind == "store" and first == "memw" and second in ("s32i", "s32i.n", "s8i"):
             return True
     return False
 
 
-def missing_accesses(disassembly):
-    """What the required DataInHandover functions lack: absent, or without their access and barrier."""
+def missing_accesses(disassembly, required=None):
+    """What the required functions lack: absent, or without their access and barrier."""
     found = functions(disassembly)
     problems = []
-    for prefix, kind in REQUIRED.items():
+    for prefix, kind in (REQUIRED if required is None else required).items():
         names = [name for name in found if name.startswith(prefix)]
         if not names:
             problems.append(f"{prefix}...) no está en el objeto")
@@ -107,11 +114,11 @@ def missing_accesses(disassembly):
     return problems
 
 
-def check(objdump, obj):
+def check(objdump, obj, expect="handover"):
     listing = disassemble(objdump, obj)
     print(listing)
     calls = lock_calls(listing)
-    problems = missing_accesses(listing)
+    problems = missing_accesses(listing, PROFILES[expect])
     print(f"accesos directos: {plain_accesses(listing)}")
     if calls:
         print(f"FALLO: {obj} llama a rutinas con cerrojo o de libatomic:")
@@ -123,8 +130,8 @@ def check(objdump, obj):
             print(f"  {line}")
     if calls or problems:
         return 1
-    print(f"OK: {obj}: las cuatro funciones de DataInHandover usan l32i/s32i con memw; ninguna llamada a "
-          "__atomic_*, __sync_* ni a secciones críticas")
+    print(f"OK: {obj}: las {len(PROFILES[expect])} funciones de «{expect}» usan cargas/almacenamientos con memw; "
+          "ninguna llamada a __atomic_*, __sync_* ni a secciones críticas")
     return 0
 
 
@@ -170,9 +177,11 @@ def main(argv=None):
     parser.add_argument("--obj")
     parser.add_argument("--compdb")
     parser.add_argument("--like", default="data_in_handover.cpp")
+    parser.add_argument("--expect", choices=sorted(PROFILES), default="handover",
+                        help="which functions must be in the object (check mode)")
     args = parser.parse_args(argv)
     if args.mode == "check":
-        return check(args.objdump, Path(args.obj))
+        return check(args.objdump, Path(args.obj), args.expect)
     return probe(args.objdump, args.compdb, args.like)
 
 

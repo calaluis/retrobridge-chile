@@ -40,11 +40,12 @@
 
 #include "rb/board/board_profile.hpp"
 #include "rb/cassette/cassette_player.hpp"
+#include "rb/cassette/cassette_tick.hpp"
 #include "rb/cassette/fsk_symbol_feed.hpp"
 
 namespace rb::esp {
 
-class EspDataIn final : public rb::cassette::ByteOut, public rb::cassette::WaveOut {
+class EspDataIn final : public rb::cassette::ByteOut, public rb::cassette::WaveOut, public rb::cassette::LiveLine {
 public:
     static constexpr std::size_t kFeedPortions = 4096;  // >= 0.4 s of signal (100 us minimum), 16 KB
     static constexpr uint32_t kStartPortions = 1024;    // a run starts with this much queued, or with
@@ -74,15 +75,15 @@ public:
 
     // §2.4 "hardware libre": the UART has nothing left to send, no FSK run is active or queued, the RMT
     // has let go of the pin and the driver is not faulted. The cassette confirms only when true.
-    bool hardwareFree() const noexcept;
+    bool hardwareFree() const noexcept override;
 
     // Gives DATA IN back to UART2 for the disk (§2.4 step 6 and the Fault recovery). Ends any FSK run,
     // routes the pin to UART2 TX and reads the GPIO matrix to check it. Busy: the RMT still has the pin
     // or bytes are still going out (ask again next tick). Uart: the pin is UART2 TX and the line is empty,
     // confirm Disk. Lost: UART2 did not take the pin (uart_set_pin failed or the matrix reads otherwise);
     // the pin is reset (output off, the 74LS07 lets go) and the driver is faulted: confirm Released.
-    enum class GiveBack : uint8_t { Busy, Uart, Lost };
-    GiveBack giveBack() noexcept;
+    using GiveBack = rb::cassette::LiveLine::GiveBack;  // Busy, Uart, Lost (menu-cinta T9a.7: CassetteTick)
+    GiveBack giveBack() noexcept override;
 
     // ByteOut
     bool setBaud(uint32_t baud) override;
@@ -98,7 +99,7 @@ public:
 
     // Cassette loop, every tick: starts a queued run, restarts after an underrun, gives the pin
     // back to the UART once a run has played.
-    void pump() noexcept;
+    void pump() noexcept override;
 
     uint32_t underruns() const noexcept { return underruns_; }
     uint32_t failures() const noexcept { return failures_; }  // runs dropped: the RMT could not play

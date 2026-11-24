@@ -396,6 +396,89 @@ Aprobable para T9a.4, sin defecto bloqueante. Dos observaciones pasan a verifica
 - **Mutantes:** 3 de 3 detectados por las dos pruebas: sin línea de ayuda, texto sin OPTION y la línea sobre `C:`.
 - **Lo que no prueba.** Cómo se ve en el 65XE real (banco T9b).
 
+## T9a.7a — lado casetera de la integración (2026-11-24)
+
+- **Decisiones del responsable (2026-11-24).** T9a.7 va en dos PR: T9a.7a, el lado casetera (este), y T9a.7b, el
+  lado SIO (UART2 con anillo de 2048, `DiskLine` con `park`/`resume`, `EspTapeLine` sobre `DataInHandover`,
+  `tapeEnded` leído de `TapeProgress`). Rama nueva por PR desde main.
+- **Hecho.**
+  - `rb::cassette::CassetteTick` (`rb_cassette`, puro): el tick de la tarea de la casetera. En cada tick:
+    `player.tick()` con un `GatedMotor` y las salidas de `PlayerOutputs`; `pump()` de la línea viva;
+    `publish(player.ended(bytes, wave))` con las salidas de ese tick (requisito 2); y la respuesta al que presta
+    DATA IN: `Take` → hardware libre → `select(true)` → `Tape` (paso 3); `Release` → `select(false)` →
+    `giveBack()` → `Disk` o `Released` (paso 6). Los puertos (`DataInLender`, `LiveLine`, `EndSink`) son
+    interfaces de `rb_cassette`, porque `rb_menu` no puede ver `rb/cassette` (capas).
+  - `EspDataIn` implementa `LiveLine` (`hardwareFree`, `giveBack`, `pump`); `GiveBack` es ahora el de `LiveLine`.
+  - `CassetteService` usa `CassetteTick`. Exclusivo (`configure()`, H4 y M3a firmadas, sin disco): salida viva
+    desde el arranque, como antes. Compartido (`attachShared()`): viva solo con un `DataInLender`
+    (`lendDataIn()`), y entonces solo entre un `Tape` confirmado y la siguiente liberación. Compartido sin
+    prestamista: nunca se conduce. `reportEnd()` da el `EndSink`.
+  - `main/cassette_ports.{hpp,cpp}`: `HandoverLender` (sobre `DataInHandover`), `ProgressSink` (sobre
+    `TapeProgress`) y `tapeEnded()` (la lectura de la tarea SIO). Todos los accesos atómicos del lado casetera
+    van en ese objeto, fuera de línea.
+  - `menu_sio.cpp`: `g_progress` y `reportEnd(g_progressSink)` antes de `start()`. La tarea SIO aún no lo lee
+    (T9a.7b). `kTapeOutput` sigue en `false`: en `menu-sio` DATA IN no se configura, así que la casetera descarta
+    como hasta hoy.
+  - CI: `check_atomic_calls.py check --expect progress` sobre `cassette_ports.cpp.obj` (requisito 2). El script
+    gana el perfil `progress` (`ProgressSink::publish`, `tapeEnded`) y acepta los accesos de un byte
+    (`l8ui`/`s8i`) de un `atomic<bool>`.
+- **Pruebas** (`test_cassette_tick`, 5, con el `CassettePlayer`, `PlayerOutputs`, `DataInHandover`,
+  `HandoverTapeLine`, `DataInArbiter` y adaptadores reales):
+  - **Requisito 1:** MOTOR encendido y la toma sin confirmar 200 ticks (cada toma vence a los 20 ms y se repite):
+    cero bytes y cero partes FSK en descartar, nada en vivo; tras `Tape`, la cinta entera en vivo (un registro sin
+    hueco y una pasada FSK corta), igual que la referencia tocada en vivo desde el principio;
+  - sin salida viva, la cinta avanza con MOTOR hacia descartar, como antes;
+  - paso 6: `select(false)` antes de `Disk`; mientras `giveBack()` es `Busy`, no hay `Disk` ni nada más en vivo;
+    `Lost` → `Released`;
+  - **Requisito 2, la cadena completa** con el `EspDataIn` real en modo compartido (`fake_idf`, modelo de TX):
+    cinta al final con el último byte aún en UART2 y MOTOR apagado → ningún `release`; al vaciarse →
+    `ReleaseRequested` y `Disk`.
+  - `test_check_atomic_calls`: 6 nuevas (perfil `progress`: pasa, falta `publish`, falta cada barrera, el perfil
+    `handover` lo rechaza, conteo de `l8ui`/`s8i`).
+- **RED:** con un tick que solo reproduce y bombea (el bucle de antes) fallan 4 de las 5; la de «sin salida viva»
+  es de no regresión. **GREEN:** host 99/99; herramientas 307/307; capas OK.
+- **Mutantes:** 9 de 9 detectados en `cassette_tick.cpp`: sin publicar, publicar siempre falso, tomar sin hardware
+  libre, confirmar sin `select(true)`, `select(false)` solo al volver, `Busy` confirma `Disk`, `Lost` confirma
+  `Disk`, sin `pump()` y sin responder.
+- **Lo que no prueba.** La compilación de ESP-IDF y `check_atomic_calls` sobre Xtensa (sin ESP-IDF local: los
+  comprueba la CI). La elección exclusivo/compartido de `CassetteService::start()` no tiene prueba de host (es
+  código ESP). El 65XE real (banco T9b).
+
+### Revisión del PR #106 (2026-11-24)
+
+- **Hallazgo:** el fin de cinta se confirmaba antes de vaciar UART2. Tras `select(false)`, `ended()` miraba las
+  salidas de descarte, que siempre están vacías. Con un byte de la cinta aún en UART2, `TapeProgress` ya decía
+  `true`.
+- **Corrección:** `CassetteTick` guarda `returning_`. Se activa al soltar una salida viva en el paso 6. Se apaga
+  cuando `giveBack()` devuelve `Uart` o `Lost`. Mientras está activo, el fin se publica como `false`. El fin real
+  aparece en el tick siguiente a la devolución de la línea.
+- **Prueba nueva:** `test_a_release_with_bytes_left_in_uart2_does_not_publish_the_end`, con el `EspDataIn` real
+  compartido (600 baudios). Cinta al final, último byte en UART2, MOTOR apagado y COMMAND bajo (regla 3). Mientras
+  UART2 no se vacía, `tapeEnded` es `false`; después llega `Disk` y luego `true`.
+- **RED:** falló con «end published with a tape byte in UART2». **GREEN:** host 99/99 (6 pruebas en
+  `test_cassette_tick`); herramientas 307/307; capas OK.
+- **Mutantes:** 12 de 12 detectados, más el cuerpo RED. Nuevos: publicar sin mirar `returning_`, `returning_`
+  nunca activado y `returning_` no apagado con `Uart`.
+
+### Segunda revisión del PR #106 (2026-11-24)
+
+- **Hallazgo:** `Lost` también apagaba `returning_`. Pero `EspDataIn::giveBack()` devuelve `Lost` cuando falla
+  la ruta GPIO, antes de mirar UART2. En el tick siguiente se publicaba un fin falso.
+- **Corrección:**
+  - `Uart` significa línea recuperada y TX vacío, así que apaga `returning_`.
+  - `Lost` significa línea liberada por seguridad, sin garantía de que la transmisión terminó. No apaga
+    `returning_`. Tras `Lost`, el fin no se publica, ni siquiera cuando UART2 ya está vacío.
+  - Una nueva toma confirmada (`Tape`) apaga `returning_`.
+- **Pruebas nuevas:**
+  - `test_a_lost_line_with_bytes_left_in_uart2_never_publishes_the_end`: `EspDataIn` real con `failUartSetPin`.
+    `Released` se confirma con el byte aún en UART2. En 300 ticks, nunca `ToDisk` ni fin publicado.
+  - `test_a_new_take_after_a_lost_line_publishes_the_end_again`: tras `Lost`, una nueva toma vuelve a publicar
+    el fin real.
+- **RED:** falló con «end published after a lost line». **GREEN:** 8 de 8 en `test_cassette_tick`; host 99/99;
+  herramientas 307/307; capas OK.
+- **Mutantes:** 14 de 14 detectados, más el cuerpo RED. Nuevos: `Lost` apaga `returning_` y la toma nueva no lo
+  apaga.
+
 ## Siguiente
 
 Revisar este PR de documentos. Los PR de código de T9a empiezan solo después de aprobarlo, uno por tarea.

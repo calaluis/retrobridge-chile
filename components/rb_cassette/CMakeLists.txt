@@ -10,6 +10,7 @@ set(rb_srcs
     "src/fsk_wave.cpp"
     "src/fsk_loader.cpp"
     "src/cassette_player.cpp"
+    "src/cassette_tick.cpp"
     "src/cassette_commands.cpp"
     "src/stdio_tape_files.cpp")
 

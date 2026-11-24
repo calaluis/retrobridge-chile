@@ -11,6 +11,11 @@
 //   the player plays into it: records by UART, FSK by RMT, and the loop pumps it every tick.
 //   Otherwise the player plays into DiscardByteOut and DiscardWaveOut: the tape moves with
 //   MOTOR, so `cas status` follows a load attempt, but DATA IN gets nothing.
+// - menu-cinta T9a.7: the loop runs CassetteTick (PlayerOutputs, GatedMotor). With EspDataIn in shared
+//   mode (UART2 is the disk's) DATA IN is lent by the SIO task through a DataInLender: the player
+//   plays live only between a confirmed Tape and the next release; the tape does not move otherwise.
+//   Shared mode with no lender: never driven. An EndSink, when given, gets "the tape played to its
+//   end" every tick.
 //
 // Memory (ADR-011): the loader bank and the two segment tables are reserved once in PSRAM by
 // start(); nothing is allocated afterwards.
@@ -25,6 +30,7 @@
 #include "rb/board/board_profile.hpp"
 #include "rb/cassette/cassette_commands.hpp"
 #include "rb/cassette/cassette_player.hpp"
+#include "rb/cassette/cassette_tick.hpp"
 #include "rb/cassette/discard_outputs.hpp"
 #include "rb/cassette/fsk_loader.hpp"
 #include "rb/cassette/stdio_tape_files.hpp"
@@ -54,6 +60,11 @@ public:
     // `root`: prefix for tape paths, e.g. "/sd/". `dataIn` is used only if it is enabled when
     // start() runs; the choice is fixed from then on.
     CassetteService(const char* root, EspMotorIn& motor, EspDataIn& dataIn) noexcept;
+
+    // Before start(). Shared mode: who lends DATA IN (the SIO task, through DataInHandover).
+    void lendDataIn(rb::cassette::DataInLender& lender) noexcept { lender_ = &lender; }
+    // Before start(): where "the tape played to its end" goes every tick (TapeProgress).
+    void reportEnd(rb::cassette::EndSink& sink) noexcept { tick_.report(sink); }
 
     // Reserves the memory and starts both tasks. False if PSRAM or the tasks are missing.
     bool start() noexcept;
@@ -88,9 +99,10 @@ private:
     rb::cassette::CassettePlayer player_{loader_};
     rb::cassette::DiscardByteOut bytes_;
     rb::cassette::DiscardWaveOut wave_;
-    rb::cassette::ByteOut* byteOut_ = &bytes_;
-    rb::cassette::WaveOut* waveOut_ = &wave_;
-    bool driving_ = false;  // the outputs are dataIn_
+    rb::cassette::PlayerOutputs outputs_{bytes_, wave_};
+    rb::cassette::CassetteTick tick_{player_, outputs_, motor_};
+    rb::cassette::DataInLender* lender_ = nullptr;
+    bool driving_ = false;  // dataIn_ is the live output (exclusive, or lent in shared mode)
     alignas(rb::cassette::CassetteCommands) unsigned char commandsStorage_[sizeof(rb::cassette::CassetteCommands)];
     rb::cassette::CassetteCommands* commands_ = nullptr;
 

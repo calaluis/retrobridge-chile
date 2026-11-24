@@ -1,5 +1,7 @@
 #include "menu_sio.hpp"
 
+#include "cassette_ports.hpp"
+
 #include "sdkconfig.h"
 
 #include <array>
@@ -169,6 +171,11 @@ EspTapeDeck* g_tape = nullptr;                     // finish() creates it; then 
 bool g_tapeApplied = false;                        // SIO task only
 rb::host::StartupFlags g_startup;                  // finish(): publishTape(), then publishPlan()
 rb::esp::EspMotorIn* g_motor = nullptr;            // finish(), before publishTape(); reads off without M3a
+// "The tape played to its end" (menu-cinta T9a.7, requirement 2): the cassette task publishes it every tick
+// through g_progressSink (given before start()); the SIO task reads it with tapeEnded() (T9a.7b). Both
+// accesses are in cassette_ports.cpp, the object CI checks for lock-free atomics.
+rb::host::TapeProgress g_progress;
+ProgressSink g_progressSink{g_progress};
 
 // Who owns DATA IN (menu-cinta T7, plan §2.3): one arbiter, stepped by the SIO task between two frames.
 // The disk line is the SIO UART. The tape line is not built yet: CassetteService chooses its outputs once,
@@ -785,6 +792,7 @@ static void startCassette(bool sdMounted, rb::esp::CassetteService& cassette, rb
     const std::size_t largestBefore = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
     ESP_LOGI(kTag, "PSRAM libre antes de la casetera: %u B (bloque mayor %u B)", static_cast<unsigned>(freeBefore),
              static_cast<unsigned>(largestBefore));
+    cassette.reportEnd(g_progressSink);  // before start(): the loop publishes from its first tick
     const bool started = cassette.start();
     ESP_LOGI(kTag, "PSRAM libre despues de la casetera: %u B (bloque mayor %u B); RAM interna libre %u B",
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),

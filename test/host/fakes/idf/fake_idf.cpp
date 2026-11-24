@@ -1,5 +1,7 @@
 #include "fake_idf.hpp"
 
+#include <algorithm>
+
 #include "driver/gpio.h"
 #include "driver/rmt_encoder.h"
 #include "driver/rmt_tx.h"
@@ -54,6 +56,66 @@ bool line_released()
     return !(g_state.owner == Owner::Rmt && g_state.rmtBusy);
 }
 
+namespace {
+
+int64_t byteUs(const State& s)
+{
+    const int64_t baud = s.uartBaud > 0 ? s.uartBaud : 600;
+    return (10 * 1000000 + baud - 1) / baud;  // 8N1: 10 bits a byte
+}
+
+// The driver's interrupt (ring -> FIFO, unless held) and the hardware (FIFO -> shift register).
+void tx_hardware(State& s)
+{
+    while (!s.txIsrHeld && !s.txRingData.empty() && s.txFifo < kTxFifo) {
+        const int move = std::min(s.txRingData.front(), kTxFifo - s.txFifo);
+        s.txRingData.front() -= move;
+        s.txFifo += move;
+        if (s.txRingData.front() == 0) {
+            s.txRingUsed -= s.txRingCost.front();
+            s.txRingData.erase(s.txRingData.begin());
+            s.txRingCost.erase(s.txRingCost.begin());
+        }
+    }
+    if (s.txShiftLeftUs == 0 && s.txFifo > 0) {
+        --s.txFifo;
+        s.txShiftLeftUs = byteUs(s);
+    }
+}
+
+}  // namespace
+
+void tx_advance(int64_t us)
+{
+    State& s = g_state;
+    while (us > 0) {
+        tx_hardware(s);
+        if (s.txShiftLeftUs == 0) {
+            s.nowUs += us;
+            return;
+        }
+        const int64_t step = std::min(us, s.txShiftLeftUs);
+        s.nowUs += step;
+        us -= step;
+        s.txShiftLeftUs -= step;
+    }
+    tx_hardware(s);
+}
+
+int tx_in_flight()
+{
+    const State& s = g_state;
+    int ring = 0;
+    for (const int n : s.txRingData) {
+        ring += n;
+    }
+    return ring + s.txFifo + (s.txShiftLeftUs > 0 ? 1 : 0);
+}
+
+bool tx_empty() { return tx_in_flight() == 0; }
+
+void tx_hardware_now() { tx_hardware(g_state); }
+
 }  // namespace fake_idf
 
 using fake_idf::Owner;
@@ -75,22 +137,42 @@ esp_err_t gpio_reset_pin(gpio_num_t gpio_num)
     if (gpio_num == s.pin || s.pin < 0) {
         s.pin = gpio_num;
         s.owner = Owner::Gpio;  // default state: output off, pull-up: the 74LS07 lets the line go
+        s.outSel = 256;
+        s.outEnabled = false;
     }
     return ESP_OK;
 }
 
-esp_err_t uart_driver_install(uart_port_t, int, int, int, QueueHandle_t*, int)
+esp_err_t uart_driver_install(uart_port_t, int, int tx, int, QueueHandle_t*, int)
 {
-    if (fake_idf::state().failUartInstall) {
+    auto& s = fake_idf::state();
+    ++s.uartInstalls;
+    if (s.failUartInstall) {
         return ESP_FAIL;
     }
-    fake_idf::state().uartInstalled = true;
+    s.uartInstalled = true;
+    s.txRing = tx;
     return ESP_OK;
 }
 
 esp_err_t uart_driver_delete(uart_port_t)
 {
+    ++fake_idf::state().uartDeletes;
     fake_idf::state().uartInstalled = false;
+    return ESP_OK;
+}
+
+esp_err_t uart_get_tx_buffer_free_size(uart_port_t, size_t* size)
+{
+    auto& s = fake_idf::state();
+    *size = static_cast<size_t>(s.txRing - s.txRingUsed);
+    if (s.txIsrAfterRingRead) {
+        // The interrupt fires between this read and the FIFO read: bytes move from the ring to the FIFO.
+        const bool held = s.txIsrHeld;
+        s.txIsrHeld = false;
+        fake_idf::tx_hardware_now();
+        s.txIsrHeld = held;
+    }
     return ESP_OK;
 }
 
@@ -127,16 +209,32 @@ esp_err_t uart_set_pin(uart_port_t, int tx, int rx, int, int)
     }
     s.pin = tx;
     s.owner = Owner::Uart;
+    s.outSel = fake_idf::kU2TxdOutIdx;
+    s.outEnabled = true;
     return ESP_OK;
 }
 
-esp_err_t uart_wait_tx_done(uart_port_t, uint32_t)
+esp_err_t uart_wait_tx_done(uart_port_t, uint32_t ticks)
 {
-    ++fake_idf::state().uartWaitTxDone;
-    return ESP_OK;
+    auto& s = fake_idf::state();
+    ++s.uartWaitTxDone;
+    if (!s.txModel) {
+        return ESP_OK;
+    }
+    // 1 tick = 1 ms (CONFIG_FREERTOS_HZ=1000): waits for the line to empty, at most `ticks`.
+    const int64_t until = s.nowUs + static_cast<int64_t>(ticks) * 1000;
+    fake_idf::tx_hardware_now();
+    while (!fake_idf::tx_empty() && s.nowUs < until) {
+        fake_idf::tx_advance(std::min<int64_t>(until - s.nowUs, s.txShiftLeftUs > 0 ? s.txShiftLeftUs : 1));
+    }
+    return fake_idf::tx_empty() ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
-esp_err_t uart_set_baudrate(uart_port_t, uint32_t) { return ESP_OK; }
+esp_err_t uart_set_baudrate(uart_port_t, uint32_t baud)
+{
+    fake_idf::state().uartBaud = static_cast<int>(baud);
+    return ESP_OK;
+}
 
 int uart_write_bytes(uart_port_t, const void* src, size_t size)
 {
@@ -145,9 +243,40 @@ int uart_write_bytes(uart_port_t, const void* src, size_t size)
         return -1;
     }
     const auto* bytes = static_cast<const uint8_t*>(src);
-    s.nowUs += static_cast<int64_t>((size * 10u * 1000000u + 19199u) / 19200u);
     s.written.insert(s.written.end(), bytes, bytes + size);
-    return static_cast<int>(size);
+    if (!s.txModel) {
+        s.nowUs += static_cast<int64_t>((size * 10u * 1000000u + 19199u) / 19200u);
+        return static_cast<int>(size);
+    }
+    const int64_t start = s.nowUs;
+    const int n = static_cast<int>(size);
+    if (s.txRing > 0) {
+        // Into the ring, as one write; blocks only while the ring has no room for it.
+        const int cost = fake_idf::kTxRingHeader + ((n + 3) / 4) * 4;
+        while (s.txRing - s.txRingUsed < cost) {
+            fake_idf::tx_advance(s.txShiftLeftUs > 0 ? s.txShiftLeftUs : 1);
+        }
+        s.txRingData.push_back(n);
+        s.txRingCost.push_back(cost);
+        s.txRingUsed += cost;
+    } else {
+        // No ring: the caller copies into the FIFO and blocks until all of it is in.
+        int left = n;
+        while (left > 0) {
+            fake_idf::tx_hardware_now();
+            const int put = std::min(left, fake_idf::kTxFifo - s.txFifo);
+            s.txFifo += put;
+            left -= put;
+            if (left > 0) {
+                fake_idf::tx_hardware_now();
+                fake_idf::tx_advance(s.txShiftLeftUs > 0 ? s.txShiftLeftUs : 1);
+            }
+        }
+    }
+    fake_idf::tx_hardware_now();
+    s.txWriteBlockedUs = std::max(s.txWriteBlockedUs, s.nowUs - start);
+    s.txMaxInFlight = std::max(s.txMaxInFlight, fake_idf::tx_in_flight());
+    return n;
 }
 
 esp_err_t rmt_new_tx_channel(const rmt_tx_channel_config_t* config, rmt_channel_handle_t* ret)
@@ -160,6 +289,8 @@ esp_err_t rmt_new_tx_channel(const rmt_tx_channel_config_t* config, rmt_channel_
     s.rmtChannel = true;
     s.pin = config->gpio_num;
     s.owner = Owner::Rmt;
+    s.outSel = fake_idf::kRmtOut0Idx;
+    s.outEnabled = true;
     s.initLevel = config->flags.init_level;
     *ret = reinterpret_cast<rmt_channel_handle_t>(&fake_idf::g_channel);
     return ESP_OK;

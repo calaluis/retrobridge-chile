@@ -293,9 +293,27 @@ add_library(fake_idf STATIC fakes/idf/fake_idf.cpp)
 target_include_directories(fake_idf PUBLIC fakes/idf ${CMAKE_CURRENT_LIST_DIR})
 rb_apply_build_flags(fake_idf)
 rb_add_host_test(test_esp_data_in esp_cassette/test_esp_data_in.cpp
-                 ${rb_root}/components/rb_esp_cassette/src/esp_data_in.cpp)
+                 ${rb_root}/components/rb_esp_cassette/src/esp_data_in.cpp
+                 fakes/idf/fake_gpio_route.cpp)
 target_include_directories(test_esp_data_in PRIVATE ${rb_root}/components/rb_esp_cassette/include)
 target_link_libraries(test_esp_data_in PRIVATE fake_idf rb_cassette rb_board)
+
+# menu-cinta T9a.2: EspDataIn in shared mode (decision 3, R9, R11) and the Fault recovery end to end,
+# against fake_idf's TX model (ring, FIFO, shift register, time) and GPIO matrix.
+rb_add_host_test(test_esp_data_in_shared esp_cassette/test_esp_data_in_shared.cpp
+                 ${rb_root}/components/rb_esp_cassette/src/esp_data_in.cpp
+                 fakes/idf/fake_gpio_route.cpp)
+target_include_directories(test_esp_data_in_shared PRIVATE ${rb_root}/components/rb_esp_cassette/include
+                           ${rb_root}/components/rb_menu/include)
+target_link_libraries(test_esp_data_in_shared PRIVATE fake_idf rb_cassette rb_board)
+rb_add_host_test(test_esp_data_in_recovery esp_cassette/test_esp_data_in_recovery.cpp
+                 ${rb_root}/components/rb_esp_cassette/src/esp_data_in.cpp
+                 fakes/idf/fake_gpio_route.cpp
+                 ${rb_root}/components/rb_menu/src/data_in_arbiter.cpp
+                 ${rb_root}/components/rb_menu/src/data_in_handover.cpp)
+target_include_directories(test_esp_data_in_recovery PRIVATE ${rb_root}/components/rb_esp_cassette/include
+                           ${rb_root}/components/rb_menu/include)
+target_link_libraries(test_esp_data_in_recovery PRIVATE fake_idf rb_cassette rb_board)
 
 # EspSioUart against the fake ESP-IDF (menu-sio-fisico T4).
 rb_add_host_test(test_esp_sio_uart esp_sio/test_esp_sio_uart.cpp ${rb_root}/components/rb_esp_sio/src/esp_sio_uart.cpp)

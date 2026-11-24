@@ -28,9 +28,12 @@ public:
 
     static constexpr int kUartRxBuffer = 1024;
     static constexpr int kUartTxBuffer = 0;  // uart_write_bytes() blocks until the FIFO takes everything
+    // menu-cinta decision 3: the TX ring the disk installs once at boot when the cassette shares UART2
+    // (T9a.7). write() ends at the same line time with it: it still waits for uart_wait_tx_done().
+    static constexpr int kSharedTxRing = 2048;
     static constexpr uint32_t kTxDoneMarginMs = 20;
 
-    explicit EspSioUart(Pins pins) noexcept : pins_(pins) {}
+    explicit EspSioUart(Pins pins, int txRing = kUartTxBuffer) noexcept : pins_(pins), txRing_(txRing) {}
     EspSioUart(const EspSioUart&) = delete;
     EspSioUart& operator=(const EspSioUart&) = delete;
 
@@ -38,6 +41,7 @@ public:
     bool begin() noexcept;
     void end() noexcept;
     bool ready() const noexcept { return ready_; }
+    int txRing() const noexcept { return txRing_; }
 
     // Levels for the console (`sio status`): true = high (idle).
     bool commandHigh() const noexcept;
@@ -51,6 +55,7 @@ public:
 
 private:
     Pins pins_;
+    int txRing_;
     bool ready_ = false;
 };
 

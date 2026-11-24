@@ -6,6 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "rb/cassette/fsk_wave.hpp"
+#include "rb/esp/gpio_route.hpp"
 #include "soc/gpio_reg.h"
 #include "soc/gpio_sig_map.h"
 #include "soc/soc.h"
@@ -46,10 +47,9 @@ void trace(const char* call, int err)
 // What drives the pin, read from the GPIO matrix: output signal and output enable.
 Owner route(int pin, uint32_t& signal, bool& enabled)
 {
-    // A volatile load, not REG_GET_FIELD: its DPORT check needs a constant address, and the GPIO matrix is not DPORT.
-    const uint32_t cfg = GPIO_FUNC0_OUT_SEL_CFG_REG + 4u * static_cast<uint32_t>(pin);
-    signal = (*reinterpret_cast<const volatile uint32_t*>(cfg) >> GPIO_FUNC0_OUT_SEL_S) & GPIO_FUNC0_OUT_SEL_V;
-    enabled = ((REG_READ(GPIO_ENABLE_REG) >> pin) & 1u) != 0;
+    const rb::esp::OutputRoute read = rb::esp::readOutputRoute(pin);  // shared with EspDataIn (menu-cinta T9a.2)
+    signal = read.signal;
+    enabled = read.enabled;
     if (!enabled) {
         return Owner::Released;
     }

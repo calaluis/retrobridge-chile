@@ -128,8 +128,11 @@ NVS_CHECK = "sin nvs_* en main/ ni components/ (código)"
 _SERVICE = "components/rb_esp_cassette/src/cassette_service.cpp"
 CASSETTE_SIO_CALLS = (
     (_DATA_IN, "uart_driver_install", 1), (_DATA_IN, "uart_param_config", 1), (_DATA_IN, "uart_set_pin", 3),
-    (_DATA_IN, "uart_driver_delete", 2), (_DATA_IN, "uart_wait_tx_done", 2), (_DATA_IN, "uart_set_baudrate", 1),
+    (_DATA_IN, "uart_driver_delete", 2), (_DATA_IN, "uart_wait_tx_done", 3), (_DATA_IN, "uart_set_baudrate", 1),
     (_DATA_IN, "uart_write_bytes", 1),
+    # menu-cinta T9a.2 (decision 3): the shared mode reads, never writes, what UART2 TX still holds: the ring's
+    # free room and the FIFO's (HAL), plus txEmpty() (the third uart_wait_tx_done). Same port, no new pin.
+    (_DATA_IN, "uart_get_tx_buffer_free_size", 1), (_DATA_IN, "uart_ll_get_txfifo_len", 1),
     (_DATA_IN, "rmt_new_tx_channel", 1), (_DATA_IN, "rmt_new_simple_encoder", 1), (_DATA_IN, "rmt_enable", 1),
     (_DATA_IN, "rmt_transmit", 1), (_DATA_IN, "rmt_disable", 1),  # once per enable (bench test C8, d05bfe2)
     (_DATA_IN, "rmt_tx_register_event_callbacks", 1),  # the end of a run comes from on_trans_done
@@ -141,9 +144,10 @@ CASSETTE_SIO_CALLS = (
 # five uart_set_pin(), no gpio_reset_pin(), two rmt_disable() and the end of a run polled with
 # rmt_tx_wait_all_done() instead of on_trans_done. Accepted as a whole, never mixed with the set above.
 CASSETTE_SIO_CALLS_BEFORE_C8 = tuple(
-    (path, call, {"uart_set_pin": 5, "uart_driver_delete": 1, "rmt_disable": 2}.get(call, count))
+    (path, call, {"uart_set_pin": 5, "uart_driver_delete": 1, "rmt_disable": 2, "uart_wait_tx_done": 2}.get(call, count))
     for path, call, count in CASSETTE_SIO_CALLS
-    if call not in ("gpio_reset_pin", "rmt_tx_register_event_callbacks")) + (
+    if call not in ("gpio_reset_pin", "rmt_tx_register_event_callbacks", "uart_get_tx_buffer_free_size",
+                    "uart_ll_get_txfifo_len")) + (
     (_DATA_IN, "rmt_tx_wait_all_done", 1),)
 # Every uart_set_pin() of the cassette puts TX on the granted DATA IN pin and nothing else.
 CASSETTE_UART_SET_PIN = re.compile(r"uart_set_pin\s*\(\s*kUart\s*,\s*(?:pins\.dataIn\(\)|pin_)\s*,"

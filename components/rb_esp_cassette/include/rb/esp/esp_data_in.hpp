@@ -21,6 +21,13 @@
 //   and a 2 ms loop, one byte at a time as a rule; at most CassettePlayer::kMaxSend after a long
 //   stall of the loop).
 //
+// Shared mode (menu-cinta T9a.2, plan §2.4): attachShared() uses UART2 as the disk installed it, once
+// at boot. It never installs nor deletes the driver; what passes between the SIO task and this one is
+// the permission to transmit on DATA IN. send() never blocks: it writes only while fewer than
+// kSharedInFlight bytes are on their way (TX ring + FIFO + shift register, decision 3), so giving the
+// line back never waits for more than 32 bytes. hardwareFree() and giveBack() are what the cassette
+// task checks before it confirms Tape or Disk to the SIO task.
+//
 // Only configure() with a CassetteOutputAssignment (H4 and M3a signed) touches the hardware;
 // without it every call refuses and nothing is driven. One task calls everything except the
 // refill interrupt: the cassette loop, which also calls pump() every tick.
@@ -43,12 +50,37 @@ public:
     static constexpr uint32_t kStartPortions = 1024;    // a run starts with this much queued, or with
                                                         // all the player had (no growth in a tick)
     static constexpr uint32_t kDefaultBaud = 600;
+    static constexpr std::size_t kSharedInFlight = 32;  // decision 3: 32 bytes ~ 0.53 s at 600 baud
+    static constexpr std::size_t kTxFifo = 128;         // the ESP32's UART TX FIFO
 
     EspDataIn() noexcept : feed_(rb::core::Span<uint32_t>(slots_, kFeedPortions)) {}
 
     // Installs UART2 TX on the granted DATA IN pin. False leaves everything as it was.
     bool configure(const rb::board::CassetteOutputAssignment& pins) noexcept;
     bool enabled() const noexcept { return pin_ >= 0; }
+
+    // Shared mode: UART2 is already installed (by the disk, with a TX ring of `txRing` bytes; 0: none)
+    // and DATA IN is already its TX. Touches no hardware; the rate is set by setBaud() when the cassette
+    // takes the line. False if already enabled in the other mode.
+    bool attachShared(const rb::board::CassetteOutputAssignment& pins, std::size_t txRing) noexcept;
+    bool shared() const noexcept { return shared_; }
+
+    // Shared mode: bytes on their way out, never under the truth. Ring (its size minus its free room,
+    // headers included), then FIFO (128 minus its free room), then 1 for the shift register. Read in
+    // that order: a byte the interrupt moves between the two reads is counted twice, never zero times.
+    std::size_t inFlight() const noexcept;
+
+    // §2.4 "hardware libre": the UART has nothing left to send, no FSK run is active or queued, the RMT
+    // has let go of the pin and the driver is not faulted. The cassette confirms only when true.
+    bool hardwareFree() const noexcept;
+
+    // Gives DATA IN back to UART2 for the disk (§2.4 step 6 and the Fault recovery). Ends any FSK run,
+    // routes the pin to UART2 TX and reads the GPIO matrix to check it. Busy: the RMT still has the pin
+    // or bytes are still going out (ask again next tick). Uart: the pin is UART2 TX and the line is empty,
+    // confirm Disk. Lost: UART2 did not take the pin (uart_set_pin failed or the matrix reads otherwise);
+    // the pin is reset (output off, the 74LS07 lets go) and the driver is faulted: confirm Released.
+    enum class GiveBack : uint8_t { Busy, Uart, Lost };
+    GiveBack giveBack() noexcept;
 
     // ByteOut
     bool setBaud(uint32_t baud) override;
@@ -93,14 +125,19 @@ private:
     bool takePin() noexcept;      // UART -> RMT; false: the UART still has the pin
     void dropRun() noexcept;      // RMT failure: drop the queued run, pin back to the UART
     bool releasePin() noexcept;   // RMT -> UART, line at mark; false: the RMT kept the pin
-    bool pinToUart() noexcept;    // false: the UART refused it, the driver is faulted
+    bool pinToUart() noexcept;    // false: the UART refused it (shared mode: or the matrix disagrees), faulted
     int traced(const char* call, int err) const noexcept;  // reports err to the trace, returns it
     bool startTransmission() noexcept;
     bool transmitting() const noexcept;
     void disableChannel() noexcept;  // rmt_disable() once per enable
     void discardIfDue() noexcept;    // clears the feed of a cancelled run (the RMT not reading it)
 
+    bool sharedRoom(std::size_t bytes) const noexcept;  // shared mode: may `bytes` be written now?
+    bool txEmpty() const noexcept;  // UART2 has nothing left to send (ring, FIFO, shift register)
+
     int8_t pin_ = -1;
+    bool shared_ = false;
+    std::size_t txRing_ = 0;    // shared mode: the TX ring the disk installed
     uint32_t baud_ = kDefaultBaud;
     void* channel_ = nullptr;   // rmt_channel_handle_t while the pin belongs to the RMT
     void* encoder_ = nullptr;   // rmt_encoder_handle_t

@@ -66,7 +66,39 @@ struct State {
     unsigned uartFlushes = 0;
     unsigned uartWaitTxDone = 0;
     unsigned taskDelays = 0;
+
+    // --- UART2 TX timing model (menu-cinta T9a.2, decision 3) --------------------------------
+    // Off by default: the older tests keep their simple UART. On: uart_write_bytes() goes through the
+    // TX ring (if one was installed) or straight into the 128-byte FIFO, the "interrupt" moves bytes
+    // from the ring to the FIFO, the shift register sends one byte every 10 bits at uartBaud, and
+    // uart_wait_tx_done() waits on that. Time is nowUs. Every write costs the ring a header besides its
+    // data (kTxRingHeader, as the driver's per-write item headers), so the ring looks fuller than its data.
+    bool txModel = false;
+    int txRing = 0;                      // TX ring size (uart_driver_install's tx_buffer_size)
+    int txRingUsed = 0;                  // ring bytes taken, headers included
+    std::vector<int> txRingData;         // data bytes left in each write still in the ring, oldest first
+    std::vector<int> txRingCost;         // what each of those writes costs the ring
+    int txFifo = 0;                      // bytes in the hardware FIFO (0..128)
+    int64_t txShiftLeftUs = 0;           // > 0: a byte is in the shift register for this long
+    bool txIsrHeld = false;              // the interrupt does not move ring -> FIFO (until released)
+    bool txIsrAfterRingRead = false;     // the interrupt runs right after uart_get_tx_buffer_free_size()
+    int64_t txWriteBlockedUs = 0;        // the longest single uart_write_bytes() call, in model time
+    int txMaxInFlight = 0;               // most data bytes ever in ring + FIFO + shift register
+    unsigned uartInstalls = 0;
+    unsigned uartDeletes = 0;
+
+    // --- GPIO matrix of the DATA IN pin (menu-cinta T9a.2, Fault recovery) --------------------
+    uint32_t outSel = 256;               // GPIO_FUNCn_OUT_SEL: 256 = SIG_GPIO_OUT (plain GPIO)
+    bool outEnabled = false;
+    bool routeForced = false;            // readOutputRoute() returns the forced values instead
+    uint32_t forcedSel = 0;
+    bool forcedEnabled = false;
 };
+
+constexpr int kTxFifo = 128;
+constexpr int kTxRingHeader = 28;        // per write: the driver's tx header item and the data item's header
+constexpr uint32_t kU2TxdOutIdx = 198;   // U2TXD_OUT_IDX on the ESP32
+constexpr uint32_t kRmtOut0Idx = 87;     // RMT_SIG_OUT0_IDX on the ESP32
 
 extern int g_channel;
 extern int g_encoder;
@@ -78,5 +110,11 @@ void reset();
 std::size_t play_all();
 // True when DATA IN is at mark: nothing drives it low. A run in flight may drive it.
 bool line_released();
+// TX model: lets `us` of line time pass (the shift register sends, the interrupt refills the FIFO).
+void tx_advance(int64_t us);
+// TX model: data bytes not yet on the wire (ring + FIFO + shift register), headers not counted.
+int tx_in_flight();
+bool tx_empty();
+void tx_hardware_now();  // runs the interrupt and the hardware once, without time passing
 
 }  // namespace fake_idf

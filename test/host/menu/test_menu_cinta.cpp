@@ -854,6 +854,26 @@ void test_a_after_a_cancel_whose_old_tape_does_not_come_back_does_not_boot()
     TEST_ASSERT_TRUE(rig.controller->menuOnD1());
 }
 
+// T9a.6 (plan requirement 5): the main screen names A, OPTION, START+OPTION and C: in the line under C:, with or
+// without a tape, and the C: line above it still shows the tape.
+void test_the_main_screen_has_the_tape_help_line()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    const char* help = "A+OPTION: SIN BASIC  A+START+OPTION: C:";
+    TEST_ASSERT_TRUE(std::strlen(help) <= 40);
+    const MenuReply empty = rig.press(kPoll);
+    assert_line(empty, rb::host::kMainHelp, help);
+    assert_line(empty, rb::host::kMainTape, "C: SIN CINTA");
+    const MenuReply mounted = mountTape(rig, KC);
+    assert_line(mounted, rb::host::kMainHelp, help);
+    assert_line(mounted, rb::host::kMainTape, tapeLine("KARATE.CAS").c_str());
+    TEST_ASSERT_EQUAL_UINT(rb::host::kMainTape + 40, rb::host::kMainHelp);
+    TEST_ASSERT_EQUAL_UINT(rb::host::kMainHelp + 40, rb::host::kMainFooter);
+}
+
 int main(void)
 {
     writeFolder();
@@ -893,5 +913,6 @@ int main(void)
     RUN_TEST(test_a_after_a_cancelled_replacement_does_not_boot);
     RUN_TEST(test_a_after_a_replacement_cancelled_with_break_does_not_boot);
     RUN_TEST(test_a_after_a_cancel_whose_old_tape_does_not_come_back_does_not_boot);
+    RUN_TEST(test_the_main_screen_has_the_tape_help_line);
     return UNITY_END();
 }

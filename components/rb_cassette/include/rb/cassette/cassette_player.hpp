@@ -45,6 +45,9 @@ class ByteOut {
 public:
     virtual bool setBaud(uint32_t baud) = 0;                     // false: try again later
     virtual bool send(rb::core::Span<const uint8_t> bytes) = 0;  // false: busy, nothing taken
+    // Everything sent has left DATA IN (menu-cinta T9a.4): nothing in a ring, a FIFO or the shift
+    // register. A ByteOut that cannot tell answers false.
+    virtual bool drained() const = 0;
 
 protected:
     ~ByteOut() = default;
@@ -92,6 +95,10 @@ public:
     void changeOutputs(WaveOut& previous, bool previousDrove) noexcept;
 
     bool loaded() const noexcept { return source_ != nullptr; }
+    // The tape has played to its end and nothing of it is still on its way out (menu-cinta T9a.4,
+    // TapeProgress): a tape is loaded, its last part is done, `bytes` is drained and `wave` is idle.
+    // False again after rewind() or unload(). Pass the outputs the last tick played into.
+    bool ended(const ByteOut& bytes, const WaveOut& wave) const noexcept;
     bool atEnd() const noexcept { return segment_ >= segments_.size(); }
     uint32_t segment() const noexcept { return segment_; }
     PlayerPhase phase() const noexcept { return atEnd() ? PlayerPhase::End : phase_; }

@@ -87,6 +87,9 @@ public:
     // ByteOut
     bool setBaud(uint32_t baud) override;
     bool send(rb::core::Span<const uint8_t> bytes) override;
+    // UART2 has nothing left to send (ring, FIFO, shift register). True when not configured: nothing
+    // was sent.
+    bool drained() const override;
 
     // WaveOut
     bool push(const rb::cassette::FskPortion& portion) override;

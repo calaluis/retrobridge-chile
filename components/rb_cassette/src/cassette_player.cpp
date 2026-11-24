@@ -183,6 +183,11 @@ void CassettePlayer::tick(uint64_t nowUs, const MotorIn& motor, ByteOut& bytes, 
     }
 }
 
+bool CassettePlayer::ended(const ByteOut& bytes, const WaveOut& wave) const noexcept
+{
+    return loaded() && atEnd() && bytes.drained() && wave.idle();
+}
+
 void CassettePlayer::changeOutputs(WaveOut& previous, bool previousDrove) noexcept
 {
     sentBaud_ = 0;  // the new ByteOut has not been given the rate

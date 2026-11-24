@@ -104,6 +104,9 @@ Plan: [`plans/menu-cinta.md`](../plans/menu-cinta.md). T1–T7 se hicieron en el
   - Cinco mutantes detectados: confirmación aceptada al vencer (2 fallos), `release` vencido que reanuda el disco
     (3), un evento por reintento (2), confirmación sin mirar la secuencia (15), `resume()` fallido tomado como
     `Disk` (3).
+- **Punto abierto (CI del PR #100).** En el ESP32, GCC no da `std::atomic<uint32_t>` como «siempre sin
+  cerrojo», así que la comprobación queda solo en host. Solo se usan cargas y almacenes de 32 bits alineados. T9a.7
+  comprueba cómo se compilan en el ESP32 (instrucciones directas o `libatomic`).
 - **Queda para otras tareas.** Contar llamadas a `uart_driver_*` y `rmt_*` necesita el `DiskLine` real: T9a.7.
   `rb_menu` no incluye cabeceras de drivers. Hardware libre y `Released` en la casetera: T9a.2.
 

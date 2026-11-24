@@ -59,7 +59,12 @@ private:
     uint32_t lastSeq_ = 0;  // SIO task only
 };
 
+// Only aligned 32-bit loads and stores are used (no read-modify-write). On the host they are always
+// lock-free. The ESP32 GCC (Xtensa) does not report them as always lock-free, so the check is host
+// only; how the target compiles them (plain l32i/s32i with memw, or libatomic) is checked in T9a.7.
+#ifndef ESP_PLATFORM
 static_assert(std::atomic<uint32_t>::is_always_lock_free, "the handover must not take a lock");
+#endif
 
 // The SIO-side TapeLine over a DataInHandover. take()/release() publish a request the first time and
 // poll its ack after that; asking for the other kind starts a new request (a new sequence), so an

@@ -283,6 +283,34 @@ Plan: [`plans/menu-cinta.md`](../plans/menu-cinta.md). T1–T7 se hicieron en el
   sin puerta, `previousDrove` ignorado, pasada o registro desde «descartar» sin repetir, `select()` que da el lado
   nuevo como viejo).
 
+## T9a.4 — `tapeEnded` real (2026-11-24)
+
+- **Hecho.**
+  - `ByteOut::drained()` (nuevo, virtual puro): todo lo enviado salió de DATA IN. `DiscardByteOut`: siempre
+    verdadero. `EspDataIn`: `txEmpty()` (anillo, FIFO y registro de UART2 vacíos); sin configurar, verdadero (nada
+    suyo en la línea). Sin llamadas nuevas a ESP-IDF: la lista del empaquetador no cambia.
+  - `CassettePlayer::ended(bytes, wave)`: cinta cargada, última parte terminada, `bytes.drained()` y
+    `wave.idle()`. Vuelve a falso al rebobinar o expulsar.
+  - `rb::host::TapeProgress` (`rb/menu/tape_progress.hpp`): un `std::atomic<bool>` que publica la tarea de la
+    casetera y lee la tarea SIO; sin cerrojo ni reservas. En `rb_menu` porque lo lee el lado SIO, como
+    `DataInHandover`.
+  - El cableado (publicar cada tick y leerlo en `menu_sio.cpp`) es T9a.7: contrato en el requisito 2 del plan.
+- **Pruebas** (6 nuevas):
+  - `test_rb_cassette_player`: cinta de dos partes, sin fin tras la primera y con fin solo con los bytes de la
+    última fuera; última parte FSK, sin fin mientras suena; falso otra vez al rebobinar y al expulsar.
+  - `test_esp_data_in_shared`: `drained()` falso con bytes en el anillo y con el último en el registro; verdadero
+    al salir; verdadero sin configurar aunque UART2 tenga bytes de otro.
+  - `test_data_in_handover`: regla 3 con el valor publicado: MOTOR apagado al final con bytes aún saliendo, 50
+    ticks sin pedir `release`; al vaciarse, `ReleaseRequested` y `Disk` con un solo `resume()`; el valor vuelve a
+    falso.
+- **RED** (con `ended()` = `atEnd()` y `drained()` siempre verdadero): fallan 4 (las 3 del reproductor y la de bytes
+  en camino). Las 2 del traspaso pasan ya antes: la regla 3 existe desde T9a.1; son de integración del valor
+  publicado.
+- **GREEN:** host 98/98; herramientas 300/300; capas OK.
+- **Mutantes:** 6 de 6 detectados: `ended()` sin `loaded()`, sin `atEnd()`, sin los bytes, sin la onda;
+  `drained()` siempre verdadero y `drained()` sin el caso «sin configurar».
+- **Lo que no prueba.** La publicación entre las dos tareas reales del ESP32 (T9a.7) ni el UART2 real (banco T9b).
+
 ## Siguiente
 
 Revisar este PR de documentos. Los PR de código de T9a empiezan solo después de aprobarlo, uno por tarea.

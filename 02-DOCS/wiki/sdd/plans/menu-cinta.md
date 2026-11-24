@@ -466,6 +466,11 @@ Requisitos de código de T9 antes de poner `kTapeOutput = true` (revisión de T7
    reproductor (fin de la última parte de la cinta) sin bloquear el bucle SIO, para que la regla 3 («fin de cinta y
    MOTOR apagado → disco») funcione.
 
+   **Contrato con T9a.7 (T9a.4, 2026-11-24).** T9a.4 deja `CassettePlayer::ended(bytes, wave)`, `ByteOut::drained()`
+   y `rb::host::TapeProgress` (`rb/menu/tape_progress.hpp`, un atómico). T9a.7 **debe**: en la tarea de la
+   casetera, tras cada `tick()`, publicar `progress.publish(player.ended(outs.bytes(), outs.wave()))` con las mismas
+   salidas que ese tick; en la tarea SIO, leer `readings.tapeEnded = progress.ended()` en lugar del `false` fijo.
+
 Requisitos de arranque de T9 (observación del responsable tras el banco T8, 2026-11-23). `A` ya salta a `COLDSV`,
 que lee las teclas de consola: con OPTION arranca D1 sin BASIC, sin nada D1 con BASIC, con START+OPTION la cinta.
 

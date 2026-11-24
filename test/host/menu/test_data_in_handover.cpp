@@ -9,6 +9,7 @@
 
 #include "rb/menu/data_in_arbiter.hpp"
 #include "rb/menu/data_in_handover.hpp"
+#include "rb/menu/tape_progress.hpp"
 #include "unity.h"
 
 // --- Allocations on the SIO path -------------------------------------------------
@@ -484,6 +485,47 @@ void test_the_sio_path_allocates_nothing()
     TEST_ASSERT_EQUAL_UINT32(0, g_allocations);
 }
 
+// ---- T9a.4: rule 3 with TapeProgress ----
+
+// The cassette publishes "ended" only with its output empty. MOTOR off at the end of the tape: while the
+// last bytes are still going out the arbiter keeps the tape (no release asked); once they are out it asks
+// for the disk at once.
+void test_rule_3_waits_for_the_published_end()
+{
+    Rig rig;
+    rig.cassette.releaseDelay = 2;
+    rig.stepUntil(playing(), DataInChange::ToTape);
+    rb::host::TapeProgress progress;
+    bool atEnd = true;
+    bool drained = false;  // the last record's bytes still in UART2
+    DataInInputs in = playing();
+    in.motorOn = false;
+    for (int i = 0; i < 50; ++i) {
+        progress.publish(atEnd && drained);  // cassette task
+        in.tapeEnded = progress.ended();     // SIO task
+        TEST_ASSERT_TRUE(rig.step(in) == DataInChange::None);
+        TEST_ASSERT_TRUE(rig.arbiter.owner() == DataInOwner::Tape);
+    }
+    drained = true;
+    progress.publish(atEnd && drained);
+    in.tapeEnded = progress.ended();
+    TEST_ASSERT_TRUE(rig.step(in) == DataInChange::ReleaseRequested);
+    rig.stepUntil(in, DataInChange::ToDisk, 10);
+    TEST_ASSERT_EQUAL(1, rig.disk.resumes);
+}
+
+// Rewound or ejected after the end: the cassette publishes false again and MOTOR off alone does not
+// hand the line back (a pause between two parts keeps the tape).
+void test_a_published_end_goes_back_to_false()
+{
+    rb::host::TapeProgress progress;
+    TEST_ASSERT_FALSE(progress.ended());
+    progress.publish(true);
+    TEST_ASSERT_TRUE(progress.ended());
+    progress.publish(false);
+    TEST_ASSERT_FALSE(progress.ended());
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -502,5 +544,7 @@ int main(void)
     RUN_TEST(test_a_disk_ack_with_a_failed_resume_is_a_disk_fault);
     RUN_TEST(test_giving_back_during_a_pending_take_releases);
     RUN_TEST(test_the_sio_path_allocates_nothing);
+    RUN_TEST(test_rule_3_waits_for_the_published_end);
+    RUN_TEST(test_a_published_end_goes_back_to_false);
     return UNITY_END();
 }

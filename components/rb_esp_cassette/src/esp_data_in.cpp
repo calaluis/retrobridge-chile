@@ -169,6 +169,11 @@ EspDataIn::GiveBack EspDataIn::giveBack() noexcept
     return txEmpty() ? GiveBack::Uart : GiveBack::Busy;
 }
 
+bool EspDataIn::drained() const
+{
+    return !enabled() || txEmpty();
+}
+
 bool EspDataIn::txEmpty() const noexcept { return uart_wait_tx_done(kUart, 0) == ESP_OK; }
 
 bool EspDataIn::setBaud(uint32_t baud)

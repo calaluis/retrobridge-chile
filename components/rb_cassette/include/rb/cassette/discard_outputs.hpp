@@ -23,6 +23,7 @@ public:
         bytes_ += static_cast<uint32_t>(bytes.size());
         return true;
     }
+    bool drained() const override { return true; }  // nothing goes out
     uint32_t baud() const noexcept { return baud_; }
     uint32_t bytes() const noexcept { return bytes_; }
 

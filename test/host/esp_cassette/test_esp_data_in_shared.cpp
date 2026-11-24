@@ -412,6 +412,34 @@ void test_records_flow_at_600_baud_without_loss()
     TEST_ASSERT_LESS_OR_EQUAL_INT(32, s.txMaxInFlight);
 }
 
+// ---- T9a.4: drained() for TapeProgress ----
+
+// Bytes in the ring, the FIFO or the shift register: not drained; once out: drained.
+void test_drained_only_once_the_bytes_are_out()
+{
+    shared(2048);
+    TEST_ASSERT_TRUE(g_dataIn->drained());
+    const uint8_t bytes[8] = {};
+    TEST_ASSERT_TRUE(g_dataIn->send(rb::core::Span<const uint8_t>(bytes, 8)));
+    TEST_ASSERT_FALSE(g_dataIn->drained());
+    fake_idf::tx_advance(8 * 16667 - 20000);
+    TEST_ASSERT_FALSE(g_dataIn->drained());  // the last byte still in the shift register
+    fake_idf::tx_advance(200000);
+    TEST_ASSERT_TRUE(g_dataIn->drained());
+}
+
+// Not configured (or detached after release): nothing of its own is on the line, even while UART2 still
+// sends someone else's bytes (the disk's).
+void test_drained_when_not_configured_whatever_uart2_holds()
+{
+    shared(2048);
+    const uint8_t bytes[8] = {};
+    TEST_ASSERT_TRUE(g_dataIn->send(rb::core::Span<const uint8_t>(bytes, 8)));
+    EspDataIn other;
+    TEST_ASSERT_FALSE(other.enabled());
+    TEST_ASSERT_TRUE(other.drained());
+}
+
 // ---- review of PR #101: release() and recover() in shared mode ----
 
 // Bytes still going out: release() refuses and stays attached; once the line is empty it detaches.
@@ -520,6 +548,8 @@ int main(void)
     RUN_TEST(test_an_empty_line_takes_a_30_byte_catch_up);
     RUN_TEST(test_a_write_still_in_the_ring_blocks_the_next);
     RUN_TEST(test_records_flow_at_600_baud_without_loss);
+    RUN_TEST(test_drained_only_once_the_bytes_are_out);
+    RUN_TEST(test_drained_when_not_configured_whatever_uart2_holds);
     RUN_TEST(test_release_waits_for_the_bytes_going_out);
     RUN_TEST(test_release_after_a_failed_uart_set_pin_refuses_and_stays_safe);
     RUN_TEST(test_release_with_a_wrong_route_refuses);

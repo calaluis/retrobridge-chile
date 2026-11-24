@@ -115,6 +115,8 @@ public:
 class FakeBytes final : public ByteOut {
 public:
     bool failSend = false;
+    bool busy = false;  // bytes still on their way out
+    bool drained() const override { return !busy; }
     std::vector<uint32_t> bauds;
     Bytes sent;
     std::size_t largestSend = 0;
@@ -1006,6 +1008,54 @@ void test_player_outputs_release_mid_run_stops_the_live_signal()
     TEST_ASSERT_EQUAL_size_t(0, d.rig.wave.pushed.size());
 }
 
+// ---- the end of the tape, as TapeProgress publishes it (menu-cinta T9a.4) ----
+
+// A tape of two parts: not ended after the first; at the end of the last, ended only once its bytes
+// have left DATA IN.
+void test_ended_only_after_the_last_part_and_its_bytes_out()
+{
+    Rig rig(fuji() + chunk("data", 0, {1}) + chunk("data", 0, {2}));
+    TEST_ASSERT_FALSE(rig.player.ended(rig.bytes, rig.wave));
+    rig.advance(kByte600);
+    TEST_ASSERT_EQUAL_UINT32(1, rig.player.segment());
+    TEST_ASSERT_FALSE(rig.player.ended(rig.bytes, rig.wave));
+    rig.bytes.busy = true;  // the last byte still in the UART
+    rig.advance(kByte600);
+    TEST_ASSERT_TRUE(rig.player.atEnd());
+    TEST_ASSERT_FALSE(rig.player.ended(rig.bytes, rig.wave));
+    rig.bytes.busy = false;
+    TEST_ASSERT_TRUE(rig.player.ended(rig.bytes, rig.wave));
+}
+
+// The last part an FSK run: not ended while its signal still plays.
+void test_ended_waits_for_the_last_run_to_play()
+{
+    Rig rig(fuji() + chunk("fsk ", 0, values({3, 5})));
+    rig.advance(1);
+    TEST_ASSERT_FALSE(rig.player.ended(rig.bytes, rig.wave));  // queued, playing
+    rig.wave.pending = 0;
+    rig.advance(1);
+    TEST_ASSERT_TRUE(rig.player.atEnd());
+    TEST_ASSERT_TRUE(rig.player.ended(rig.bytes, rig.wave));
+    rig.wave.pending = 1;  // a signal still on the RMT
+    TEST_ASSERT_FALSE(rig.player.ended(rig.bytes, rig.wave));
+}
+
+// Rewound or ejected: not ended any more.
+void test_ended_is_false_again_after_rewind_or_eject()
+{
+    Rig rig(fuji() + chunk("data", 0, {1}));
+    rig.advance(kByte600);
+    TEST_ASSERT_TRUE(rig.player.ended(rig.bytes, rig.wave));
+    rig.player.rewind(rig.wave);
+    TEST_ASSERT_FALSE(rig.player.ended(rig.bytes, rig.wave));
+    rig.advance(1);
+    rig.advance(kByte600);
+    TEST_ASSERT_TRUE(rig.player.ended(rig.bytes, rig.wave));
+    rig.player.unload(rig.wave);
+    TEST_ASSERT_FALSE(rig.player.ended(rig.bytes, rig.wave));
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -1050,5 +1100,8 @@ int main()
     RUN_TEST(test_player_outputs_take_from_discard_replays_without_the_gate);
     RUN_TEST(test_player_outputs_without_live_cannot_take);
     RUN_TEST(test_player_outputs_release_mid_run_stops_the_live_signal);
+    RUN_TEST(test_ended_only_after_the_last_part_and_its_bytes_out);
+    RUN_TEST(test_ended_waits_for_the_last_run_to_play);
+    RUN_TEST(test_ended_is_false_again_after_rewind_or_eject);
     return UNITY_END();
 }

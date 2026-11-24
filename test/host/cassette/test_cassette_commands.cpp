@@ -150,7 +150,7 @@ struct FakeBytes final : ByteOut {
     {
         sent.insert(sent.end(), bytes.data(), bytes.data() + bytes.size());
         return true;
-    }
+    }    bool drained() const override { return true; }
 };
 
 struct FakeWave final : WaveOut {

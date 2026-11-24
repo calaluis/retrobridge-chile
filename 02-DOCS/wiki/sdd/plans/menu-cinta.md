@@ -420,7 +420,7 @@ instalados a la vez es el fallo que más cuesta en el equipo).
 | T9a.4 | `tapeEnded` real: `TapeProgress.ended()` publicado por la casetera solo con la salida vacía, leído sin bloquear | AC9–AC12 (lógica), requisito 2 | 1 | T9a.1 | sí | `ctest -R data_in_handover` verde: la regla 3 («fin + MOTOR apagado → disco») con el valor publicado |
 | T9a.5 | `A` sin disco en D1 con una cinta en `C:` arranca (`COLDSV`); D1 tras el arranque de cinta según la pregunta abierta de la spec | requisitos 3 y 4 | 1 | — | sí | `ctest -R menu_cinta` verde |
 | T9a.6 | Línea de ayuda con `A`, OPTION, START+OPTION y `C`, dentro de 40 columnas | requisito 5 | 0 | — | sí | `ctest -R menu_cinta` verde; texto literal |
-| T9a.7 | Firmware: UART2 con anillo de TX de 2048 bytes al arrancar (decisión 3), `DiskLine` con `park`/`resume`, `EspTapeLine` en lugar de `PendingTapeLine` y `DataInHandover` en `menu_sio.cpp`; `CassetteService` con `PlayerOutputs` y `GatedMotor` según el contrato del requisito 1. **`kTapeOutput` sigue en `false`** | — | 2 | T9a.1–T9a.4 | no | CI verde: ESP-IDF, paquete `menu-sio` y comprobaciones de puertas **sin cambios**; prueba de integración del contrato del requisito 1 en verde |
+| T9a.7 | Firmware: UART2 con anillo de TX de 2048 bytes al arrancar (decisión 3), `DiskLine` con `park`/`resume`, `EspTapeLine` en lugar de `PendingTapeLine` y `DataInHandover` en `menu_sio.cpp`; `CassetteService` con `PlayerOutputs` y `GatedMotor` según el contrato del requisito 1. **`kTapeOutput` sigue en `false`** | — | 2 | T9a.1–T9a.4 | no | CI verde: ESP-IDF, paquete `menu-sio` y comprobaciones de puertas **sin cambios**; prueba de integración del contrato del requisito 1 en verde; cadena `ended()` → `TapeProgress` → árbitro probada y `check_atomic_calls` sobre los objetos que usan `TapeProgress` (requisito 2) |
 | T9b | Banco AC9–AC12 con MOTOR activo y salida de casetera | AC9–AC12 | 2 | T8, T9a y los **requisitos previos** (abajo) | no | registro con las tres cintas de `cassette-cas` cargadas desde el menú |
 
 **Requisitos previos de T9b (enmienda del 2026-11-24).** Hacen falta todos. Ninguna aceptación de riesgo
@@ -470,6 +470,16 @@ Requisitos de código de T9 antes de poner `kTapeOutput = true` (revisión de T7
    y `rb::host::TapeProgress` (`rb/menu/tape_progress.hpp`, un atómico). T9a.7 **debe**: en la tarea de la
    casetera, tras cada `tick()`, publicar `progress.publish(player.ended(outs.bytes(), outs.wave()))` con las mismas
    salidas que ese tick; en la tarea SIO, leer `readings.tapeEnded = progress.ended()` en lugar del `false` fijo.
+
+   **Verificación obligatoria en T9a.7 (revisión del PR #103).**
+   - **La cadena completa.** Una prueba de integración con el `CassettePlayer` real, `TapeProgress` y el
+     `DataInArbiter` real: cinta al final con el último byte aún en el UART2 del doble y MOTOR apagado → ningún
+     `release`; al vaciarse el UART → `ReleaseRequested` y `Disk`. En T9a.4 la prueba del traspaso publica el valor
+     a mano; no cubre `CassettePlayer::ended()` → `TapeProgress` → árbitro.
+   - **Atómico sin cerrojo en el ESP32.** `static_assert(is_always_lock_free)` solo vale en host. En T9a.4
+     `TapeProgress` es solo cabecera y ningún objeto del firmware la usa, así que no hay código que leer. En T9a.7,
+     la CI pasa `tools/ci/check_atomic_calls.py check` (con su control negativo `probe`) por cada objeto del paquete
+     `menu-sio` que publique o lea `TapeProgress`, igual que hoy con `data_in_handover.cpp.obj`.
 
 Requisitos de arranque de T9 (observación del responsable tras el banco T8, 2026-11-23). `A` ya salta a `COLDSV`,
 que lee las teclas de consola: con OPTION arranca D1 sin BASIC, sin nada D1 con BASIC, con START+OPTION la cinta.

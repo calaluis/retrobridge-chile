@@ -295,7 +295,7 @@ Plan: [`plans/menu-cinta.md`](../plans/menu-cinta.md). T1–T7 se hicieron en el
     casetera y lee la tarea SIO; sin cerrojo ni reservas. En `rb_menu` porque lo lee el lado SIO, como
     `DataInHandover`.
   - El cableado (publicar cada tick y leerlo en `menu_sio.cpp`) es T9a.7: contrato en el requisito 2 del plan.
-- **Pruebas** (6 nuevas):
+- **Pruebas** (7 nuevas):
   - `test_rb_cassette_player`: cinta de dos partes, sin fin tras la primera y con fin solo con los bytes de la
     última fuera; última parte FSK, sin fin mientras suena; falso otra vez al rebobinar y al expulsar.
   - `test_esp_data_in_shared`: `drained()` falso con bytes en el anillo y con el último en el registro; verdadero
@@ -310,6 +310,18 @@ Plan: [`plans/menu-cinta.md`](../plans/menu-cinta.md). T1–T7 se hicieron en el
 - **Mutantes:** 6 de 6 detectados: `ended()` sin `loaded()`, sin `atEnd()`, sin los bytes, sin la onda;
   `drained()` siempre verdadero y `drained()` sin el caso «sin configurar».
 - **Lo que no prueba.** La publicación entre las dos tareas reales del ESP32 (T9a.7) ni el UART2 real (banco T9b).
+
+### Revisión del PR #103 (2026-11-24)
+
+Aprobable para T9a.4, sin defecto bloqueante. Dos observaciones pasan a verificación obligatoria de T9a.7
+(plan, requisito 2, y fila de T9a.7):
+
+- **La cadena completa.** La prueba del traspaso publica `atEnd && drained` a mano; T9a.7 prueba
+  `CassettePlayer::ended()` → `TapeProgress` → `DataInArbiter` con el reproductor y el árbitro reales.
+- **Atómico en el ESP32.** El `static_assert` de `TapeProgress` es solo de host. Hoy ningún objeto del firmware usa
+  la cabecera; T9a.7 pasa `check_atomic_calls.py` (con su control negativo) por los objetos que la usen.
+- **Menores, corregidos.** Eran 7 pruebas nuevas, no 6 (se añadió la del caso «sin configurar» para matar un
+  mutante). `drained()` del doble de `test_cassette_commands.cpp` estaba pegado al cierre de la función anterior.
 
 ## Siguiente
 

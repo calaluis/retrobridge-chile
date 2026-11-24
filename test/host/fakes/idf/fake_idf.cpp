@@ -64,17 +64,54 @@ int64_t byteUs(const State& s)
     return (10 * 1000000 + baud - 1) / baud;  // 8N1: 10 bits a byte
 }
 
+int align4(int n) { return (n + 3) & ~3; }
+
+// NOSPLIT ring geometry (ESP-IDF ringbuf): the largest item and the size uart.c infers from it.
+int maxItem(const State& s) { return align4(s.txRing / 2) - kRingItemHeader; }
+
+int offFree(const State& s) { return s.txItems.empty() ? s.txWp : s.txItems.front().off; }
+
+// Where an item of `len` bytes (header included) goes now, or -1: it does not fit. NOSPLIT: an item never
+// wraps; if the tail is too short it goes to the start and the tail is left unused.
+int place(const State& s, int len)
+{
+    if (len - kRingItemHeader > maxItem(s)) {
+        return -1;
+    }
+    const int acq = s.txWp;
+    const int free = offFree(s);
+    if (s.txItems.empty() || acq > free) {
+        if (acq + len <= s.txRing) {
+            return acq;
+        }
+        return (s.txItems.empty() ? len <= s.txRing : len < free) ? 0 : -1;
+    }
+    return acq + len < free ? acq : -1;  // the free room is between the write point and the oldest item
+}
+
+// Puts an item in the ring, waiting (line time passes) while it does not fit.
+void put(State& s, int payload, int data)
+{
+    const int len = kRingItemHeader + align4(payload);
+    int at = place(s, len);
+    while (at < 0) {
+        tx_advance(s.txShiftLeftUs > 0 ? s.txShiftLeftUs : 1);
+        at = place(s, len);
+    }
+    s.txItems.push_back(State::RingItem{at, len, data, 0});
+    s.txWp = at + len == s.txRing ? 0 : at + len;
+}
+
 // The driver's interrupt (ring -> FIFO, unless held) and the hardware (FIFO -> shift register).
 void tx_hardware(State& s)
 {
-    while (!s.txIsrHeld && !s.txRingData.empty() && s.txFifo < kTxFifo) {
-        const int move = std::min(s.txRingData.front(), kTxFifo - s.txFifo);
-        s.txRingData.front() -= move;
+    while (!s.txIsrHeld && !s.txItems.empty() && s.txFifo < kTxFifo) {
+        State::RingItem& item = s.txItems.front();
+        const int move = std::min(item.data - item.copied, kTxFifo - s.txFifo);
+        item.copied += move;
         s.txFifo += move;
-        if (s.txRingData.front() == 0) {
-            s.txRingUsed -= s.txRingCost.front();
-            s.txRingData.erase(s.txRingData.begin());
-            s.txRingCost.erase(s.txRingCost.begin());
+        if (item.copied == item.data) {
+            s.txItems.erase(s.txItems.begin());  // returned to the ring
         }
     }
     if (s.txShiftLeftUs == 0 && s.txFifo > 0) {
@@ -98,6 +135,9 @@ void tx_advance(int64_t us)
         s.nowUs += step;
         us -= step;
         s.txShiftLeftUs -= step;
+        if (s.txShiftLeftUs == 0) {
+            ++s.txBytesOut;
+        }
     }
     tx_hardware(s);
 }
@@ -106,8 +146,8 @@ int tx_in_flight()
 {
     const State& s = g_state;
     int ring = 0;
-    for (const int n : s.txRingData) {
-        ring += n;
+    for (const State::RingItem& item : s.txItems) {
+        ring += item.data - item.copied;
     }
     return ring + s.txFifo + (s.txShiftLeftUs > 0 ? 1 : 0);
 }
@@ -115,6 +155,36 @@ int tx_in_flight()
 bool tx_empty() { return tx_in_flight() == 0; }
 
 void tx_hardware_now() { tx_hardware(g_state); }
+
+void put_item(int payload, int data) { put(g_state, payload, data); }
+
+int tx_free_size()
+{
+    const State& s = g_state;
+    if (s.txRing == 0 || place(s, kRingItemHeader + 4) < 0) {
+        return 0;  // no ring, or not even the smallest item fits
+    }
+    const int maxItemSize = maxItem(s);
+    const int acq = s.txWp;
+    const int free = offFree(s);
+    const int bufSizeMin = (2 * (maxItemSize + kRingItemHeader - 3)) & ~3;
+    const auto usable = [&](int seg) {
+        if (seg <= kRingItemHeader) {
+            return 0;
+        }
+        return std::min((seg - kRingItemHeader) & ~3, maxItemSize);
+    };
+    int total = 0;
+    if (acq == free && s.txItems.empty()) {
+        total = s.txRing - kRingItemHeader;  // empty: one large segment (uart.c)
+    } else if (acq <= free) {
+        total = usable(free - acq);
+    } else {
+        total = usable(bufSizeMin - acq) + usable(free);
+    }
+    const int desc = kRingItemHeader + align4(12);
+    return total > desc ? total - desc : 0;
+}
 
 }  // namespace fake_idf
 
@@ -165,7 +235,7 @@ esp_err_t uart_driver_delete(uart_port_t)
 esp_err_t uart_get_tx_buffer_free_size(uart_port_t, size_t* size)
 {
     auto& s = fake_idf::state();
-    *size = static_cast<size_t>(s.txRing - s.txRingUsed);
+    *size = static_cast<size_t>(fake_idf::tx_free_size());
     if (s.txIsrAfterRingRead) {
         // The interrupt fires between this read and the FIFO read: bytes move from the ring to the FIFO.
         const bool held = s.txIsrHeld;
@@ -251,14 +321,9 @@ int uart_write_bytes(uart_port_t, const void* src, size_t size)
     const int64_t start = s.nowUs;
     const int n = static_cast<int>(size);
     if (s.txRing > 0) {
-        // Into the ring, as one write; blocks only while the ring has no room for it.
-        const int cost = fake_idf::kTxRingHeader + ((n + 3) / 4) * 4;
-        while (s.txRing - s.txRingUsed < cost) {
-            fake_idf::tx_advance(s.txShiftLeftUs > 0 ? s.txShiftLeftUs : 1);
-        }
-        s.txRingData.push_back(n);
-        s.txRingCost.push_back(cost);
-        s.txRingUsed += cost;
+        // uart_tx_all(): the description item, then the data (one item: our writes are far below max_item).
+        fake_idf::put_item(12, 0);
+        fake_idf::put_item(n, n);
     } else {
         // No ring: the caller copies into the FIFO and blocks until all of it is in.
         int left = n;

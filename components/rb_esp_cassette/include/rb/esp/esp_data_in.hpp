@@ -65,9 +65,11 @@ public:
     bool attachShared(const rb::board::CassetteOutputAssignment& pins, std::size_t txRing) noexcept;
     bool shared() const noexcept { return shared_; }
 
-    // Shared mode: bytes on their way out, never under the truth. Ring (its size minus its free room,
-    // headers included), then FIFO (128 minus its free room), then 1 for the shift register. Read in
-    // that order: a byte the interrupt moves between the two reads is counted twice, never zero times.
+    // Shared mode: bytes on their way out, never under the truth. The ring counts as empty (0) or full (its
+    // size): uart_get_tx_buffer_free_size() is the driver's bound for the next write, not the free room, and
+    // tells only that. Then the FIFO (128 minus its free room) and 1 for the shift register. Read in that
+    // order: a byte the interrupt moves between the two reads is counted twice, never zero times. So send()
+    // writes only into an empty ring, and the interrupt moves each write to the FIFO at once.
     std::size_t inFlight() const noexcept;
 
     // §2.4 "hardware libre": the UART has nothing left to send, no FSK run is active or queued, the RMT
@@ -107,12 +109,16 @@ public:
     // The UART could not take DATA IN back: the pin is reset (no output) and everything is refused.
     bool faulted() const noexcept { return faulted_; }
     uint32_t pinFaults() const noexcept { return pinFaults_; }  // times the UART refused the pin
-    // Explicit recovery: gives the pin back to the UART. True when not (or no longer) faulted.
+    // Explicit recovery: gives the pin back to the UART. True when not (or no longer) faulted. Shared mode:
+    // true only once the GPIO matrix reads UART2 TX with the output on; otherwise the pin is reset again.
     bool recover() noexcept;
 
     // Undoes configure(): stops any run, deletes the UART2 driver and resets the pin (output off,
     // pull-up). enabled() is false afterwards. Used by the bench test C8. False: the RMT did not let
     // go of the pin (releasePending()); nothing else was undone and a later release() retries.
+    // Shared mode: deletes and resets nothing; detaches only when giveBack() returns Uart (pin on UART2
+    // TX, checked in the matrix, nothing left to send). Otherwise false and still attached: Busy, ask
+    // again; Lost, the pin is reset and the driver stays faulted.
     bool release() noexcept;
 
     // Optional trace of every ESP-IDF call that changes the pin or its peripherals, with its

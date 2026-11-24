@@ -336,6 +336,166 @@ void test_a_matrix_that_reads_otherwise_loses_the_line()
     TEST_ASSERT_EQUAL(GiveBack::Uart, g_dataIn->giveBack());
 }
 
+// ---- review of PR #101: the ring as ESP-IDF 6.1 reports it, and progress at 600 baud ----
+
+// The model's uart_get_tx_buffer_free_size() is uart.c's bound, not the free room: an empty 2048 ring reads
+// 2020, and one write still in it drops the bound to its max item size minus the description (996).
+void test_the_free_size_follows_esp_idf_6_1()
+{
+    shared(2048);
+    std::size_t free = 0;
+    TEST_ASSERT_EQUAL(ESP_OK, uart_get_tx_buffer_free_size(UART_NUM_2, &free));
+    TEST_ASSERT_EQUAL_UINT(2048 - 8 - 20, free);
+    fake_idf::state().txIsrHeld = true;  // the write stays in the ring
+    const uint8_t one = 0x55;
+    TEST_ASSERT_EQUAL_INT(1, uart_write_bytes(UART_NUM_2, &one, 1));
+    TEST_ASSERT_EQUAL(ESP_OK, uart_get_tx_buffer_free_size(UART_NUM_2, &free));
+    TEST_ASSERT_EQUAL_UINT((2048 / 2 - 8) - 20, free);
+    fake_idf::state().txIsrHeld = false;
+    fake_idf::tx_hardware_now();
+    TEST_ASSERT_EQUAL(ESP_OK, uart_get_tx_buffer_free_size(UART_NUM_2, &free));
+    TEST_ASSERT_EQUAL_UINT(2048 - 8 - 20, free);
+}
+
+// The bound is not bytes in the ring: with the line empty, the 30 bytes a stalled loop owes go out at once.
+void test_an_empty_line_takes_a_30_byte_catch_up()
+{
+    shared(2048);
+    TEST_ASSERT_EQUAL_UINT(1, g_dataIn->inFlight());  // only the shift register, counted as busy
+    std::vector<uint8_t> bytes(30, 0x55);
+    TEST_ASSERT_TRUE(g_dataIn->send(rb::core::Span<const uint8_t>(bytes.data(), 30)));
+    // One of the 30 is already in the shift register: 30 on their way, room for exactly one more.
+    const uint8_t one = 0x55;
+    TEST_ASSERT_TRUE(g_dataIn->send(rb::core::Span<const uint8_t>(&one, 1)));
+    TEST_ASSERT_FALSE(g_dataIn->send(rb::core::Span<const uint8_t>(&one, 1)));
+    TEST_ASSERT_LESS_OR_EQUAL_INT(32, fake_idf::state().txMaxInFlight);
+}
+
+// A write still in the ring (the interrupt has not run) counts as a full ring: nothing more is written.
+void test_a_write_still_in_the_ring_blocks_the_next()
+{
+    shared(2048);
+    fake_idf::state().txIsrHeld = true;
+    const uint8_t one = 0x55;
+    TEST_ASSERT_TRUE(g_dataIn->send(rb::core::Span<const uint8_t>(&one, 1)));
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT(32, g_dataIn->inFlight());
+    TEST_ASSERT_FALSE(g_dataIn->send(rb::core::Span<const uint8_t>(&one, 1)));
+}
+
+// Records paced by the tape clock at 600 baud (60 bytes/s) for 10 s: every byte goes out, in step with
+// the clock, never blocking and never more than 32 bytes on their way.
+void test_records_flow_at_600_baud_without_loss()
+{
+    shared(2048);
+    std::vector<uint8_t> bytes(512, 0x55);
+    uint64_t sent = 0;
+    int want = 512;
+    for (int tick = 1; tick <= 5000; ++tick) {
+        const uint64_t due = static_cast<uint64_t>(tick) * kTickUs * 60 / 1000000;  // bytes the clock allows
+        const uint64_t owed = due - sent;
+        if (owed > 0) {
+            const std::size_t n = static_cast<std::size_t>(owed < static_cast<uint64_t>(want) ? owed : want);
+            if (g_dataIn->send(rb::core::Span<const uint8_t>(bytes.data(), n))) {
+                sent += n;
+                want = 512;
+            } else {
+                want = 1;
+            }
+        }
+        fake_idf::tx_advance(kTickUs);
+    }
+    const auto& s = fake_idf::state();
+    TEST_ASSERT_EQUAL_UINT64(600, sent);                          // the clock never fell behind
+    TEST_ASSERT_EQUAL_UINT64(sent, s.written.size());              // every accepted byte reached the driver
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT64(sent - 1, s.txBytesOut);   // and the wire (the last may be shifting)
+    TEST_ASSERT_EQUAL_INT64(0, s.txWriteBlockedUs);
+    TEST_ASSERT_LESS_OR_EQUAL_INT(32, s.txMaxInFlight);
+}
+
+// ---- review of PR #101: release() and recover() in shared mode ----
+
+// Bytes still going out: release() refuses and stays attached; once the line is empty it detaches.
+void test_release_waits_for_the_bytes_going_out()
+{
+    shared(2048);
+    const uint8_t bytes[8] = {};
+    TEST_ASSERT_TRUE(g_dataIn->send(rb::core::Span<const uint8_t>(bytes, 8)));
+    TEST_ASSERT_FALSE(g_dataIn->release());
+    TEST_ASSERT_TRUE(g_dataIn->enabled());
+    TEST_ASSERT_TRUE(g_dataIn->shared());
+    fake_idf::tx_advance(200000);
+    TEST_ASSERT_TRUE(g_dataIn->release());
+    TEST_ASSERT_FALSE(g_dataIn->enabled());
+    TEST_ASSERT_EQUAL_UINT(0, fake_idf::state().uartDeletes);
+}
+
+// GPIO21 not restored (uart_set_pin fails): release() refuses, the pin stays reset and the driver faulted.
+void test_release_after_a_failed_uart_set_pin_refuses_and_stays_safe()
+{
+    shared(2048);
+    startRun();
+    fake_idf::state().failUartSetPin = true;
+    TEST_ASSERT_FALSE(g_dataIn->release());
+    TEST_ASSERT_TRUE(g_dataIn->enabled());
+    TEST_ASSERT_TRUE(g_dataIn->faulted());
+    TEST_ASSERT_TRUE(fake_idf::state().owner == Owner::Gpio);
+    TEST_ASSERT_FALSE(g_dataIn->release());  // still failing: still attached
+    fake_idf::state().failUartSetPin = false;
+    TEST_ASSERT_TRUE(g_dataIn->release());
+    TEST_ASSERT_TRUE(fake_idf::state().owner == Owner::Uart);
+}
+
+// uart_set_pin says OK but the matrix reads another signal: release() refuses, the pin is reset.
+void test_release_with_a_wrong_route_refuses()
+{
+    shared(2048);
+    auto& s = fake_idf::state();
+    s.routeForced = true;
+    s.forcedSel = fake_idf::kRmtOut0Idx;
+    s.forcedEnabled = true;
+    TEST_ASSERT_FALSE(g_dataIn->release());
+    TEST_ASSERT_TRUE(g_dataIn->enabled());
+    TEST_ASSERT_TRUE(g_dataIn->faulted());
+    TEST_ASSERT_TRUE(s.owner == Owner::Gpio);
+}
+
+// recover() in shared mode trusts the matrix, not uart_set_pin alone.
+void test_recover_checks_the_matrix_in_shared_mode()
+{
+    shared(2048);
+    auto& s = fake_idf::state();
+    s.failUartSetPin = true;
+    TEST_ASSERT_EQUAL(GiveBack::Lost, g_dataIn->giveBack());
+    TEST_ASSERT_FALSE(g_dataIn->recover());  // uart_set_pin still fails
+    s.failUartSetPin = false;
+    s.routeForced = true;
+    s.forcedSel = fake_idf::kU2TxdOutIdx;
+    s.forcedEnabled = false;  // the right signal with the output off is not UART2 driving the line
+    TEST_ASSERT_FALSE(g_dataIn->recover());
+    TEST_ASSERT_TRUE(g_dataIn->faulted());
+    TEST_ASSERT_TRUE(s.owner == Owner::Gpio);  // reset again, nobody drives DATA IN
+    s.routeForced = false;
+    TEST_ASSERT_TRUE(g_dataIn->recover());
+    TEST_ASSERT_FALSE(g_dataIn->faulted());
+    TEST_ASSERT_TRUE(s.owner == Owner::Uart);
+}
+
+// recover() with bytes still in UART2: the route is checked and restored at once; the bytes go out on
+// UART2, and hardwareFree() stays false until they have.
+void test_recover_with_bytes_pending_restores_the_route_and_keeps_the_line_busy()
+{
+    shared(2048);
+    const uint8_t bytes[8] = {};
+    TEST_ASSERT_TRUE(g_dataIn->send(rb::core::Span<const uint8_t>(bytes, 8)));
+    fake_idf::state().failUartSetPin = true;
+    TEST_ASSERT_EQUAL(GiveBack::Lost, g_dataIn->giveBack());
+    fake_idf::state().failUartSetPin = false;
+    TEST_ASSERT_TRUE(g_dataIn->recover());
+    TEST_ASSERT_FALSE(g_dataIn->hardwareFree());
+    fake_idf::tx_advance(200000);
+    TEST_ASSERT_TRUE(g_dataIn->hardwareFree());
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -356,5 +516,14 @@ int main(void)
     RUN_TEST(test_give_back_routes_the_pin_to_uart2_and_checks_the_matrix);
     RUN_TEST(test_a_failed_uart_set_pin_loses_the_line_safely);
     RUN_TEST(test_a_matrix_that_reads_otherwise_loses_the_line);
+    RUN_TEST(test_the_free_size_follows_esp_idf_6_1);
+    RUN_TEST(test_an_empty_line_takes_a_30_byte_catch_up);
+    RUN_TEST(test_a_write_still_in_the_ring_blocks_the_next);
+    RUN_TEST(test_records_flow_at_600_baud_without_loss);
+    RUN_TEST(test_release_waits_for_the_bytes_going_out);
+    RUN_TEST(test_release_after_a_failed_uart_set_pin_refuses_and_stays_safe);
+    RUN_TEST(test_release_with_a_wrong_route_refuses);
+    RUN_TEST(test_recover_checks_the_matrix_in_shared_mode);
+    RUN_TEST(test_recover_with_bytes_pending_restores_the_route_and_keeps_the_line_busy);
     return UNITY_END();
 }

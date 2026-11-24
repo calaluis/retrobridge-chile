@@ -323,6 +323,34 @@ Aprobable para T9a.4, sin defecto bloqueante. Dos observaciones pasan a verifica
 - **Menores, corregidos.** Eran 7 pruebas nuevas, no 6 (se añadió la del caso «sin configurar» para matar un
   mutante). `drained()` del doble de `test_cassette_commands.cpp` estaba pegado al cierre de la función anterior.
 
+## T9a.5 — `A` sin disco en D1 con cinta en `C:` (2026-11-24)
+
+- **Decisiones del responsable (2026-11-24).** Requisito 4: con D1 vacía, D1 responde como unidad sin disco.
+  Puertas cerradas: `A` se niega con `CINTA EN C:, AUN NO PUEDE CARGARSE`. Quedan en la spec (pregunta abierta
+  cerrada).
+- **Hecho** (`MenuController`).
+  - `A` con D1 vacía y una cinta lista en `C:` (`tapeOnC()`: casetera presente, nombre en `C:` y sin restauración
+    pendiente) llama a `bootTape()`: comprueba las puertas, vacía D1 con el mismo `unmount` que la tecla U y
+    responde `kMenuActionBoot` (el 6502 salta a `COLDSV`; con START+OPTION el OS arranca la cinta).
+  - D1 vacía en el `DriveBay`: el despachador SIO contesta a D1 con ERROR al instante (comportamiento de unidad
+    vacía que ya existía).
+  - `InFlight::TapeBoot`: al aplicarse, `menuOnD1()` pasa a falso y el registro dice `D1=empty (tape boot)`; si
+    el vaciado falla, `ERROR: D1 NO SE PUDO VACIAR`. El arranque en frío vuelve a pedir el menú, como tras un
+    arranque de disco.
+  - Con un disco en D1 nada cambia: `A` lo arranca, haya cinta o no.
+- **Pruebas** (`test_menu_cinta`, 7 nuevas): arranque de cinta con D1 vacía (D1 sin imagen, menú fuera, cinta en
+  `C:`, eventos); disco en D1 con cinta (arranca el disco); puertas cerradas (aviso, menú en D1); sin cinta y con la
+  cinta sacada (`D1 SIN DISCO`); arranque en frío tras la cinta (menú de vuelta, cinta en `C:`); cinta recordada sin
+  confirmar (no arranca; al confirmarse, sí); cambio de cinta en lectura (no arranca).
+- **RED:** con el código de main fallan 3 (arranque de cinta, puertas, arranque en frío). Las demás pasan ya antes
+  y quedan como no regresión.
+- **GREEN:** host 98/98; herramientas 300/300; capas OK.
+- **Mutantes:** 6 de 6 detectados: nunca arranca la cinta, sin mirar el nombre, sin mirar la restauración, sin
+  puertas, D1 sin vaciar y `menuOnD1()` verdadero tras el arranque de cinta. «Sin mirar la lectura en curso» era
+  equivalente (`key()` no llega a `boot()` durante un trabajo): la comprobación se quitó.
+- **Lo que no prueba.** El 65XE real: que el OS, con START+OPTION, haga el arranque de disco, reciba el ERROR de
+  D1 y cargue la cinta (banco T9b).
+
 ## Siguiente
 
 Revisar este PR de documentos. Los PR de código de T9a empiezan solo después de aprobarlo, uno por tarea.

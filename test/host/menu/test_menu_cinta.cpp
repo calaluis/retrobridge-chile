@@ -503,6 +503,143 @@ void test_an_unconfirmed_remembered_tape_stays_on_c()
     TEST_ASSERT_FALSE(rig.controller->memoryChanged());
 }
 
+// --- T9a.5 (requirements 3 and 4): A with D1 empty and a tape on C: ----------------
+
+// D1 empty, a tape on C:, the gates open: A boots (COLDSV). The menu leaves D1, which answers like a drive
+// with no disk (ERROR at once): the OS disk boot neither waits nor loads the menu over the tape's program.
+void test_a_with_d1_empty_and_a_tape_boots_with_no_disk_on_d1()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    mountTape(rig, KC);
+    TEST_ASSERT_TRUE(rig.controller->menuOnD1());
+    const MenuReply boot = rig.press(KA);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionBoot, boot.action());
+    rig.step();
+    TEST_ASSERT_FALSE(rig.controller->menuOnD1());
+    TEST_ASSERT_EQUAL_STRING("", rig.mounted(1));  // no image: the drive answers ERROR (no disk)
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", rig.controller->tapeName());  // the tape stays on C:
+    TEST_ASSERT_TRUE(rig.events.has("C: name=KARATE.CAS boot: D1 empty"));
+    TEST_ASSERT_TRUE(rig.events.has("D1=empty (tape boot)"));
+}
+
+// With a disk on D1, A boots it as always, tape or no tape.
+void test_a_with_a_disk_on_d1_boots_the_disk_even_with_a_tape()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    mountTape(rig, KC);
+    rig.press(K1);
+    rig.press(KA);  // A: DISCO.ATR
+    rig.settle(K1);
+    TEST_ASSERT_NOT_NULL(rig.controller->driveName(1));
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionBoot, rig.press(KA).action());
+    rig.step();
+    TEST_ASSERT_FALSE(rig.controller->menuOnD1());
+    TEST_ASSERT_EQUAL_STRING("DISCO.ATR", rig.mounted(1));
+}
+
+// The gates closed (H4/M3a unsigned): the tape cannot play, so A does not boot and says why (AC8). D1
+// keeps the menu.
+void test_a_with_a_tape_but_no_gates_refuses_and_says_why()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    deck.gates = false;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    mountTape(rig, KC);
+    const MenuReply refused = rig.press(KA);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, refused.action());
+    assert_line(refused, kMainMessage, " CINTA EN C:, AUN NO PUEDE CARGARSE");
+    rig.step();
+    TEST_ASSERT_TRUE(rig.controller->menuOnD1());
+    TEST_ASSERT_EQUAL_STRING(rb::host::kMenuLocation, rig.mounted(1));
+    TEST_ASSERT_TRUE(rig.events.has("C: name=KARATE.CAS boot refused: gates closed"));
+}
+
+// No tape on C: (never mounted, or taken out): A with D1 empty says so, as before.
+void test_a_with_d1_empty_and_no_tape_says_d1_has_no_disk()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    assert_line(rig.press(KA), kMainMessage, " D1 SIN DISCO: ABRE LA FUENTE 1");
+    mountTape(rig, KC);
+    rig.press(KU);
+    rig.settle(KC);  // U then C: the tape is taken out
+    TEST_ASSERT_NULL(rig.controller->tapeName());
+    const MenuReply refused = rig.press(KA);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, refused.action());
+    assert_line(refused, kMainMessage, " D1 SIN DISCO: ABRE LA FUENTE 1");
+    TEST_ASSERT_TRUE(rig.controller->menuOnD1());
+}
+
+// After the tape's program, a cold reset (65XE off and on) brings the menu back on D1; the tape stays.
+void test_a_cold_reset_after_a_tape_boot_brings_the_menu_back()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    mountTape(rig, KC);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionBoot, rig.press(KA).action());
+    rig.step();
+    TEST_ASSERT_FALSE(rig.controller->menuOnD1());
+    rig.controller->onColdReset();
+    rig.controller->service();
+    rig.step();
+    TEST_ASSERT_TRUE(rig.controller->menuOnD1());
+    TEST_ASSERT_EQUAL_STRING(rb::host::kMenuLocation, rig.mounted(1));
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", rig.controller->tapeName());
+}
+
+// A tape remembered at power-up that the deck has not confirmed yet (cassette busy): not on C: for A, which
+// says D1 has no disk; once the deck holds it, A boots the tape.
+void test_a_with_a_remembered_tape_not_confirmed_does_not_boot()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    deck.busy = true;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    restoreWith(rig, tapeMemory("KARATE.CAS"));
+    rig.step();
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", rig.controller->tapeName());
+    const MenuReply refused = rig.press(KA);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, refused.action());
+    assert_line(refused, kMainMessage, " D1 SIN DISCO: ABRE LA FUENTE 1");
+    deck.busy = false;
+    for (int i = 0; i < 5; ++i) {
+        rig.step();
+    }
+    TEST_ASSERT_TRUE(rig.events.has("C: name=KARATE.CAS restored"));
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionBoot, rig.press(KA).action());
+}
+
+// A while another tape is being read to replace the one on C: (the deck not answered yet): no boot.
+void test_a_while_the_tape_is_read_does_not_boot()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    mountTape(rig, KC);  // KARATE.CAS on C:
+    deck.pendingFor = 1000;
+    rig.press(K1);
+    rig.press(KD);
+    rig.press(KC);  // nave.Cas: the deck starts reading
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", rig.controller->tapeName());
+    TEST_ASSERT_TRUE(rig.press(KA).action() != rb::host::kMenuActionBoot);
+    rig.step();
+    TEST_ASSERT_TRUE(rig.controller->menuOnD1());
+}
+
 int main(void)
 {
     writeFolder();
@@ -527,5 +664,12 @@ int main(void)
     RUN_TEST(test_a_busy_cassette_at_power_up_gets_the_tape_when_it_is_free);
     RUN_TEST(test_an_unconfirmed_tape_says_the_cassette_did_not_answer);
     RUN_TEST(test_an_unconfirmed_remembered_tape_stays_on_c);
+    RUN_TEST(test_a_with_d1_empty_and_a_tape_boots_with_no_disk_on_d1);
+    RUN_TEST(test_a_with_a_disk_on_d1_boots_the_disk_even_with_a_tape);
+    RUN_TEST(test_a_with_a_tape_but_no_gates_refuses_and_says_why);
+    RUN_TEST(test_a_with_d1_empty_and_no_tape_says_d1_has_no_disk);
+    RUN_TEST(test_a_cold_reset_after_a_tape_boot_brings_the_menu_back);
+    RUN_TEST(test_a_with_a_remembered_tape_not_confirmed_does_not_boot);
+    RUN_TEST(test_a_while_the_tape_is_read_does_not_boot);
     return UNITY_END();
 }

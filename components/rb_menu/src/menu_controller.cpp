@@ -257,9 +257,11 @@ void MenuController::collect()
             }
         } else if (inFlight_ == InFlight::Boot) {
             say(" ERROR: D1 NO SE PUDO MONTAR");
+        } else if (inFlight_ == InFlight::TapeBoot) {
+            say(" ERROR: D1 NO SE PUDO VACIAR");
         }
     } else {
-        if (inFlight_ == InFlight::Menu || inFlight_ == InFlight::Boot) {
+        if (inFlight_ == InFlight::Menu || inFlight_ == InFlight::Boot || inFlight_ == InFlight::TapeBoot) {
             menuOnD1_ = inFlight_ == InFlight::Menu;
         } else {
             recycle(previous_);  // the displaced source was closed with the reply
@@ -280,6 +282,7 @@ void MenuController::collect()
         }
         const char* what = inFlight_ == InFlight::Menu    ? "menu"
                            : inFlight_ == InFlight::Boot  ? "image"
+                           : inFlight_ == InFlight::TapeBoot ? "empty (tape boot)"
                            : inFlight_ == InFlight::Mount ? "mounted"
                                                           : "empty";
         std::snprintf(detail, sizeof detail, "D%u=%s", number, what);
@@ -996,6 +999,9 @@ bool MenuController::boot()
         return false;
     }
     if (d1.kind == Shown::Kind::None) {
+        if (tapeOnC()) {
+            return bootTape();
+        }
         say(" D1 SIN DISCO: ABRE LA FUENTE 1");
         return false;
     }
@@ -1017,6 +1023,42 @@ bool MenuController::boot()
     shown_[0].locked = mounted.value().writeProtected;
     message_[0] = '\0';
     std::snprintf(detail, sizeof detail, "D1 name=%s", name);
+    event("menu_boot", detail);
+    return true;
+}
+
+// T9a.5 (plan requirements 3 and 4): a tape the deck holds now, not one still being read or restored.
+bool MenuController::tapeOnC() const noexcept
+{
+    // While a tape is read (Job::Tape) key() answers onLoading() and A never gets here.
+    return tape_ != nullptr && tapeName_[0] != '\0' && tapeRestore_ == TapeRestore::None;
+}
+
+// A with D1 empty and a tape on C:. The OS boots the tape with START+OPTION (COLDSV reads them), but first
+// tries a disk boot: the menu leaves D1, so D1 answers like a drive with no disk (ERROR at once) and the
+// menu is never loaded over the tape's program. A cold reset brings the menu back (service()). With the
+// gates closed the tape cannot play: no boot, and the reason, as when it was mounted (AC8).
+bool MenuController::bootTape()
+{
+    char detail[MenuCatalog::kMaxName + 48];
+    if (!tape_->gatesOpen()) {
+        say(" CINTA EN C:, AUN NO PUEDE CARGARSE");
+        std::snprintf(detail, sizeof detail, "C: name=%s boot refused: gates closed", tapeName_);
+        event("menu_boot", detail);
+        return false;
+    }
+    const rb::core::Result<void> emptied =
+        mailbox_.idle() ? unmount_.execute(drive(1)) : rb::core::Result<void>{rb::core::Failure{ErrorCode::MailboxBusy}};
+    if (!emptied.ok()) {
+        say(" ERROR: %s", reason(emptied.error()));
+        std::snprintf(detail, sizeof detail, "C: name=%s boot refused: error %u", tapeName_,
+                      static_cast<unsigned>(emptied.error()));
+        event("menu_boot", detail);
+        return false;
+    }
+    inFlight_ = InFlight::TapeBoot;
+    message_[0] = '\0';
+    std::snprintf(detail, sizeof detail, "C: name=%s boot: D1 empty", tapeName_);
     event("menu_boot", detail);
     return true;
 }

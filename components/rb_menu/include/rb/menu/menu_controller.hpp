@@ -192,8 +192,11 @@ private:
     static constexpr std::size_t kStackDepth = 32;  // folder levels remembered for Esc (M42-3)
     enum class View : uint8_t { Main, List, Pick, Unmount, Folder, FolderPick, Edit, Create };
     enum class CreateStep : uint8_t { Name, Density, Drive };
-    enum class InFlight : uint8_t { None, Menu, Boot, Mount, Unmount };
+    // TapeBoot: A with D1 empty and a tape on C: (T9a.5): the menu leaves D1, which is left empty.
+    enum class InFlight : uint8_t { None, Menu, Boot, Mount, Unmount, TapeBoot };
     enum class Job : uint8_t { None, Open, Enter, Up, Fetch, Xex, Tape };
+    bool tapeOnC() const noexcept;
+    bool bootTape();
 
     // What a drive shows: nothing, an entry of the local catalog, or an image in a
     // slot of the MemoryImageStore: one that came over TNFS, or the disk a .xex (local

@@ -14,7 +14,8 @@ set(rb_main_requires rb_core rb_domain rb_application rb_sio rb_file_storage rb_
     rb_menu rb_esp_sio console esp_adc esp_driver_gpio esp_timer heap esp_app_format
     rb_menu_tnfs esp_wifi esp_netif esp_event lwip pthread)  # E2: Wi-Fi and TNFS (menu-sio-wifi-tnfs)
 if(CONFIG_RB_MENU_SIO)
-    list(APPEND rb_main_srcs "menu_sio.cpp" "wifi_station.cpp" "esp_tape_deck.cpp")  # test package menu-sio only (menu-sio-fisico, E2; menu-cinta T5)
+    list(APPEND rb_main_srcs "menu_sio.cpp" "wifi_station.cpp" "esp_tape_deck.cpp"  # test package menu-sio only (menu-sio-fisico, E2; menu-cinta T5)
+         "cassette_ports.cpp")  # menu-cinta T9a.7: the atomics of the cassette ports, checked alone in CI
 endif()
 
 idf_component_register(

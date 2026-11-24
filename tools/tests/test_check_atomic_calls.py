@@ -108,5 +108,52 @@ class RequiredAccesses(unittest.TestCase):
         self.assertIn("pending", problems[0])
 
 
+# menu-cinta T9a.7: TapeProgress (std::atomic<bool>) in main/cassette_ports.cpp, byte accesses.
+PROGRESS = """
+00000000 <rb::menusio::ProgressSink::publish(bool)>:
+   0:	004136        	entry	a1, 32
+   3:	2228      	l32i.n	a2, a2, 4
+   5:	0020c0        	memw
+   8:	004232        	s8i	a3, a2, 0
+   b:	f01d      	retw.n
+
+00000000 <rb::menusio::tapeEnded(rb::host::TapeProgress const&)>:
+   0:	004136        	entry	a1, 32
+   3:	000222        	l8ui	a2, a2, 0
+   6:	0020c0        	memw
+   9:	f01d      	retw.n
+"""
+
+
+class ProgressAccesses(unittest.TestCase):
+    def test_the_byte_store_and_load_pass(self):
+        self.assertEqual(cac.missing_accesses(PROGRESS, cac.PROFILES["progress"]), [])
+        self.assertEqual(cac.lock_calls(PROGRESS), [])
+
+    def test_the_handover_profile_does_not_accept_the_progress_object(self):
+        self.assertEqual(len(cac.missing_accesses(PROGRESS)), 4)
+
+    def test_a_missing_publish_fails(self):
+        listing = PROGRESS.replace("ProgressSink::publish(", "ProgressSink::other(")
+        problems = cac.missing_accesses(listing, cac.PROFILES["progress"])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("publish", problems[0])
+
+    def test_a_byte_store_without_its_barrier_fails(self):
+        listing = PROGRESS.replace("   5:\t0020c0        \tmemw", "   5:\t0020c0        \tnop")
+        problems = cac.missing_accesses(listing, cac.PROFILES["progress"])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("publish", problems[0])
+
+    def test_a_byte_load_without_its_barrier_fails(self):
+        listing = PROGRESS.replace("   6:\t0020c0        \tmemw", "   6:\t0020c0        \tnop")
+        problems = cac.missing_accesses(listing, cac.PROFILES["progress"])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("tapeEnded", problems[0])
+
+    def test_the_byte_accesses_are_counted(self):
+        self.assertEqual(cac.plain_accesses(PROGRESS), {"l32i.n": 1, "memw": 2, "s8i": 1, "l8ui": 1})
+
+
 if __name__ == "__main__":
     unittest.main()

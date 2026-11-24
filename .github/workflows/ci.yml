@@ -71,7 +71,7 @@ jobs:
           grep -q '^CONFIG_RB_MENU_SIO=y' build-menu-sio/sdkconfig
           if grep -q '^CONFIG_RB_BENCH_C8=y' build-menu-sio/sdkconfig; then echo "bench-c8 in menu-sio"; exit 1; fi
           idf.py -B build-menu-sio -D SDKCONFIG=build-menu-sio/sdkconfig size
-      - name: DataInHandover atomics without locks on Xtensa (menu-cinta T9a.1)
+      - name: DataInHandover and TapeProgress atomics without locks on Xtensa (menu-cinta T9a.1, T9a.7)
         shell: bash
         run: |
           . "$IDF_PATH/export.sh"
@@ -79,6 +79,9 @@ jobs:
           python3 -I tools/ci/check_atomic_calls.py probe --compdb build-menu-sio/compile_commands.json
           python3 -I tools/ci/check_atomic_calls.py check \
                   --obj build-menu-sio/esp-idf/rb_menu/CMakeFiles/__idf_rb_menu.dir/src/data_in_handover.cpp.obj
+          # T9a.7 (requirement 2): every access of the cassette ports (DataInHandover, TapeProgress) is here.
+          python3 -I tools/ci/check_atomic_calls.py check --expect progress \
+                  --obj build-menu-sio/esp-idf/main/CMakeFiles/__idf_main.dir/cassette_ports.cpp.obj
 
   # Read-only cassette firmware (cassette-cas, variant "cassette-lectura") for the FujiNet Atari
   # FN32ROV-1.3/1.5: `cas mount` and `cas status` over USB, with H4 and M3a unsigned, so DATA IN and

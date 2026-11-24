@@ -103,10 +103,19 @@ bool CassetteService::start() noexcept
         new (&tableB_[i]) rb::cassette::CasSegment{};
     }
     loader_.bind(rb::core::Span<uint8_t>(bank_, kBankBytes));
-    driving_ = dataIn_.enabled();
-    if (driving_) {
-        byteOut_ = &dataIn_;
-        waveOut_ = &dataIn_;
+    if (dataIn_.enabled() && !dataIn_.shared()) {
+        // Exclusive (H4 and M3a signed, no disk on UART2): the cassette owns DATA IN from the start.
+        outputs_.setLive(dataIn_, dataIn_);
+        (void)outputs_.select(true, player_);  // no tape loaded yet: nothing to move
+        tick_.pump(dataIn_);
+        driving_ = true;
+    } else if (dataIn_.enabled() && lender_ != nullptr) {
+        // Shared (menu-cinta T9a.7): live only once the SIO task lends DATA IN (plan §2.4 steps 3 and 6).
+        outputs_.setLive(dataIn_, dataIn_);
+        tick_.lend(*lender_, dataIn_);
+        driving_ = true;
+    } else if (dataIn_.enabled()) {
+        ESP_LOGE(kTag, "DATA IN shared with the disk but nobody lends it: not driven");
     }
     commands_ = new (commandsStorage_) rb::cassette::CassetteCommands(
         player_, loader_, files_, rb::core::Span<rb::cassette::CasSegment>(tableA_, kSegments),
@@ -177,14 +186,11 @@ void CassetteService::loop() noexcept
     for (;;) {
         // The request is a copy: a caller that gave up cannot change it underneath.
         if (xQueueReceive(requests_, &request, 0) == pdTRUE) {
-            commands_->run(request.line, motor_, *waveOut_, rb::core::Span<char>(reply.text, sizeof reply.text));
+            commands_->run(request.line, motor_, outputs_.wave(), rb::core::Span<char>(reply.text, sizeof reply.text));
             reply.sequence = request.sequence;
             (void)xQueueOverwrite(replies_, &reply);  // a reply nobody waits for is replaced
         }
-        player_.tick(static_cast<uint64_t>(esp_timer_get_time()), motor_, *byteOut_, *waveOut_);
-        if (driving_) {
-            dataIn_.pump();
-        }
+        tick_.tick(static_cast<uint64_t>(esp_timer_get_time()));  // play, pump, publish, answer the lender
         vTaskDelay(kLoopPeriod);
     }
 }

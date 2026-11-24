@@ -11,6 +11,9 @@
 
 #include "menu_tnfs_rig.hpp"
 #include "rb/menu/tape_deck.hpp"
+#include "rb/sio/sio_checksum.hpp"
+#include "rb/sio/sio_codes.hpp"
+#include "rb/sio/sio_command_dispatcher.hpp"
 
 namespace {
 
@@ -99,6 +102,17 @@ std::string tapeLine(const char* name)
     std::string line = std::string("C: ") + name;
     line.resize(40, ' ');
     return line;
+}
+
+// The OS disk boot: READ sector 1 of D1, as the SIO dispatcher answers it from the drive bay.
+uint8_t bootRead(Rig& rig)
+{
+    rb::sio::SioCommandDispatcher dispatcher{rig.bay};
+    uint8_t frame[5] = {0x31, 'R', 1, 0, 0};
+    frame[4] = rb::sio::sio_checksum(rb::core::Span<const uint8_t>{frame, 4});
+    TEST_ASSERT_TRUE(dispatcher.accept(rb::core::Span<const uint8_t>{frame, 5}) == rb::sio::Acceptance::Accepted);
+    uint8_t out[rb::sio::SioCommandDispatcher::kMaxFrameSize];
+    return dispatcher.execute(rb::core::Span<uint8_t>{out, sizeof out}).code;
 }
 
 // Mounts the tape of `letter` on C:.
@@ -640,6 +654,98 @@ void test_a_while_the_tape_is_read_does_not_boot()
     TEST_ASSERT_TRUE(rig.controller->menuOnD1());
 }
 
+// Review of PR #104: a remembered tape the deck did not confirm (no reply) keeps its name on C: but does
+// not boot.
+void test_a_remembered_tape_left_unconfirmed_does_not_boot()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    deck.result = TapeState::Unconfirmed;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    restoreWith(rig, tapeMemory("KARATE.CAS"));
+    for (int i = 0; i < 5; ++i) {
+        rig.step();
+    }
+    TEST_ASSERT_TRUE(rig.events.has("C: name=KARATE.CAS restore unconfirmed: no reply"));
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", rig.controller->tapeName());  // kept, not ejected
+    const MenuReply refused = rig.press(KA);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, refused.action());
+    assert_line(refused, kMainMessage, " D1 SIN DISCO: ABRE LA FUENTE 1");
+    rig.step();
+    TEST_ASSERT_TRUE(rig.controller->menuOnD1());
+}
+
+// Review of PR #104: replacing the tape on C: and the deck not answering leaves nobody knowing which tape
+// it holds: C: keeps its name, A does not boot until a tape is mounted again and confirmed.
+void test_a_after_an_unconfirmed_replacement_does_not_boot()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    mountTape(rig, KC);  // KARATE.CAS, Ready
+    deck.result = TapeState::Unconfirmed;
+    mountTape(rig, KD);  // nave.Cas: no reply
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", rig.controller->tapeName());
+    const MenuReply refused = rig.press(KA);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, refused.action());
+    assert_line(refused, kMainMessage, " D1 SIN DISCO: ABRE LA FUENTE 1");
+    rig.step();
+    TEST_ASSERT_TRUE(rig.controller->menuOnD1());
+    deck.result = TapeState::Ready;
+    mountTape(rig, KC);  // mounted again, the deck says Ready: A boots it
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionBoot, rig.press(KA).action());
+}
+
+// A restore puts a remembered tape on C: that the deck has not confirmed, whatever was confirmed before: A
+// waits for the deck (here it does not answer).
+void test_a_after_a_restore_over_a_confirmed_tape_does_not_boot()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    mountTape(rig, KC);  // KARATE.CAS, Ready
+    deck.result = TapeState::Unconfirmed;
+    restoreWith(rig, tapeMemory("nave.Cas"));
+    for (int i = 0; i < 5; ++i) {
+        rig.step();
+    }
+    TEST_ASSERT_EQUAL_STRING("nave.Cas", rig.controller->tapeName());
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, rig.press(KA).action());
+}
+
+// A replacement the deck refuses (invalid, no memory) leaves the deck holding the tape it had (AC6, tape_deck.hpp):
+// that tape is still confirmed, so A boots it.
+void test_a_after_a_refused_replacement_boots_the_tape_it_had()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    mountTape(rig, KC);
+    deck.result = TapeState::Invalid;
+    mountTape(rig, KD);
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", rig.controller->tapeName());
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionBoot, rig.press(KA).action());
+}
+
+// Review of PR #104: the OS disk boot after a tape boot, through the real SIO dispatcher. With the menu on D1
+// the READ of sector 1 completes; after A with a tape, D1 has no disk and answers ERROR.
+void test_after_a_tape_boot_the_os_disk_boot_gets_error_from_d1()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    mountTape(rig, KC);
+    TEST_ASSERT_EQUAL_HEX8(rb::sio::code::kComplete, bootRead(rig));  // the menu is served
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionBoot, rig.press(KA).action());
+    rig.step();
+    TEST_ASSERT_EQUAL_HEX8(rb::sio::code::kError, bootRead(rig));
+}
+
 int main(void)
 {
     writeFolder();
@@ -671,5 +777,10 @@ int main(void)
     RUN_TEST(test_a_cold_reset_after_a_tape_boot_brings_the_menu_back);
     RUN_TEST(test_a_with_a_remembered_tape_not_confirmed_does_not_boot);
     RUN_TEST(test_a_while_the_tape_is_read_does_not_boot);
+    RUN_TEST(test_a_remembered_tape_left_unconfirmed_does_not_boot);
+    RUN_TEST(test_a_after_an_unconfirmed_replacement_does_not_boot);
+    RUN_TEST(test_a_after_a_restore_over_a_confirmed_tape_does_not_boot);
+    RUN_TEST(test_a_after_a_refused_replacement_boots_the_tape_it_had);
+    RUN_TEST(test_after_a_tape_boot_the_os_disk_boot_gets_error_from_d1);
     return UNITY_END();
 }

@@ -348,8 +348,25 @@ Aprobable para T9a.4, sin defecto bloqueante. Dos observaciones pasan a verifica
 - **Mutantes:** 6 de 6 detectados: nunca arranca la cinta, sin mirar el nombre, sin mirar la restauración, sin
   puertas, D1 sin vaciar y `menuOnD1()` verdadero tras el arranque de cinta. «Sin mirar la lectura en curso» era
   equivalente (`key()` no llega a `boot()` durante un trabajo): la comprobación se quitó.
+- **Revisión del PR #104 (2026-11-24).** Hallazgo confirmado con RED: una cinta restaurada que terminaba en
+  `Unconfirmed` (o un reemplazo sin respuesta) dejaba `tapeRestore_ = None` y el nombre en `C:`, así que `A`
+  arrancaba sin saber qué cinta tenía la casetera.
+  - **Corrección.** `tapeLoaded_` separa «nombre en `C:`» de «cinta confirmada». Solo `Ready` (montaje o
+    restauración) lo pone verdadero; `Unconfirmed`, una restauración y la expulsión lo ponen falso. Un reemplazo
+    rechazado (`Invalid`, `NoMemory`) o cancelado no lo cambia: la casetera conserva su cinta (AC6,
+    `tape_deck.hpp`). `tapeOnC()` = casetera presente y `tapeLoaded_`. El nombre recordado no se borra.
+  - **Pruebas nuevas (5):** restauración `Unconfirmed` no arranca; reemplazo `Unconfirmed` no arranca (y al montar
+    otra vez con `Ready`, sí); restauración sobre una cinta confirmada no arranca; reemplazo rechazado arranca la
+    cinta que había; y el arranque de disco del OS por el despachador SIO real (`READ` del sector 1 de D1):
+    `COMPLETE` con el menú en D1 y `ERROR` tras `A` con cinta.
+  - **RED:** con el código anterior fallan las 2 de `Unconfirmed`. **GREEN:** host 98/98 (`test_menu_cinta` 32/32);
+    herramientas 300/300; capas OK.
+  - **Mutantes:** 7 de 8 detectados (arranca sin confirmación; `Unconfirmed` no la quita; `Ready` de montaje o de
+    restauración no la pone; la expulsión o la restauración no la quitan; un reemplazo rechazado la quita).
+    Equivalente: quitar `tape_ != nullptr` de `tapeOnC()`, porque `tapeLoaded_` solo se pone con una respuesta de
+    la casetera.
 - **Lo que no prueba.** El 65XE real: que el OS, con START+OPTION, haga el arranque de disco, reciba el ERROR de
-  D1 y cargue la cinta (banco T9b).
+  D1 y cargue la cinta (banco T9b). El ERROR de D1 ya se prueba en host con el despachador SIO real.
 
 ## Siguiente
 

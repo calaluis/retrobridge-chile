@@ -380,6 +380,10 @@ private:
     // refuses it, C: is emptied and that is saved; Ready ends it.
     enum class TapeRestore : uint8_t { None, Ask, Read };
     TapeRestore tapeRestore_ = TapeRestore::None;
+    // T9a.5, review of PR #104: the deck said Ready for the tape on C: (a mount or a restore), so A may boot it.
+    // The name on C: alone is not enough: an Unconfirmed reply keeps the name but nobody knows what the deck holds.
+    // A refused or cancelled replacement leaves it as it was (the deck keeps its tape, AC6).
+    bool tapeLoaded_ = false;
     bool tapeBusyLogged_ = false;
     uint8_t percent_ = 0;
 

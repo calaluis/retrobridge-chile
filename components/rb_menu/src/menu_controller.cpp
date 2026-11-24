@@ -745,6 +745,7 @@ void MenuController::tapeDone(TapeState state)
     switch (state) {
     case TapeState::Ready: {
         std::memcpy(tapeName_, tapeIncoming_, sizeof tapeName_);
+        tapeLoaded_ = true;
         const bool gates = tape_->gatesOpen();
         say(gates ? " CINTA EN C:, ENCIENDE CON START" : " CINTA EN C:, AUN NO PUEDE CARGARSE");
         std::snprintf(detail, sizeof detail, "C: name=%s mounted gates=%d", tapeName_, gates ? 1 : 0);
@@ -756,6 +757,7 @@ void MenuController::tapeDone(TapeState state)
         std::snprintf(detail, sizeof detail, "C: name=%s refused: no memory", tapeIncoming_);
         break;
     case TapeState::Unconfirmed:  // review 2 of PR #85: nobody knows; C: stays as it was
+        tapeLoaded_ = false;      // review of PR #104: ...but it is no longer known to be loaded
         say(" CASETERA NO RESPONDE, REPITE EN UN RATO");
         std::snprintf(detail, sizeof detail, "C: name=%s unconfirmed: no reply", tapeIncoming_);
         break;
@@ -781,6 +783,7 @@ void MenuController::ejectTape()
     char detail[MenuCatalog::kMaxName + 32];
     std::snprintf(detail, sizeof detail, "C: name=%s unmounted", tapeName_);
     tapeName_[0] = '\0';
+    tapeLoaded_ = false;
     tapeRestore_ = TapeRestore::None;
     message_[0] = '\0';
     event("menu_select", detail);
@@ -798,6 +801,7 @@ void MenuController::restoreTape(const char* name)
         return;
     }
     std::snprintf(tapeName_, sizeof tapeName_, "%s", name);
+    tapeLoaded_ = false;  // shown at once, loaded only when the deck says Ready
     ++restored_;
     // "remembered": shown on C: from power-up; "restored" only once the deck says Ready (review of
     // PR #85), or "remembered, no cassette" when this package has none to ask.
@@ -839,6 +843,7 @@ void MenuController::serviceRestoredTape()
     }
     tapeRestore_ = TapeRestore::None;
     if (state == TapeState::Ready) {
+        tapeLoaded_ = true;
         char done[MenuCatalog::kMaxName + 32];
         std::snprintf(done, sizeof done, "C: name=%s restored", tapeName_);
         event("menu_restore", done);
@@ -1027,11 +1032,12 @@ bool MenuController::boot()
     return true;
 }
 
-// T9a.5 (plan requirements 3 and 4): a tape the deck holds now, not one still being read or restored.
+// T9a.5 (plan requirements 3 and 4): a tape the deck confirmed (Ready), not one only remembered, still
+// restored or left unconfirmed (review of PR #104). While a tape is read (Job::Tape) key() answers onLoading()
+// and A never gets here.
 bool MenuController::tapeOnC() const noexcept
 {
-    // While a tape is read (Job::Tape) key() answers onLoading() and A never gets here.
-    return tape_ != nullptr && tapeName_[0] != '\0' && tapeRestore_ == TapeRestore::None;
+    return tape_ != nullptr && tapeLoaded_;
 }
 
 // A with D1 empty and a tape on C:. The OS boots the tape with START+OPTION (COLDSV reads them), but first

@@ -181,8 +181,12 @@ driver.
 - **Si la HAL no da la ocupación de la FIFO** en la versión de ESP-IDF del proyecto, se usa la alternativa de abajo
   (escribir solo con la FIFO vacía). Las dos dan la misma cota de 32 bytes.
 - **Alternativa, si el banco muestra que el anillo cambia los tiempos del SIO.** Se deja el disco sin anillo. La
-  cinta escribe entonces solo con la FIFO vacía (`uart_wait_tx_done(UART2, 0) == ESP_OK`) y como mucho 64 bytes,
-  la mitad de la FIFO. El coste es un hueco de hasta 2 ms entre ráfagas, que el registro de T9b tendría que medir.
+  cinta escribe entonces solo con la FIFO vacía y el transmisor parado (`uart_wait_tx_done(UART2, 0) == ESP_OK`), y
+  como mucho `kSharedInFlight` = 32 bytes por escritura (revisión 4). Como la FIFO y el registro están vacíos al
+  escribir, en vuelo quedan como mucho 32 bytes: la misma cota y el mismo `kReleaseTimeoutUs` = 600 ms. Sin anillo,
+  `uart_write_bytes()` copia los 32 bytes directo a la FIFO de 128, así que tampoco bloquea. El coste es un hueco de
+  hasta 2 ms (un tick) entre ráfagas de 32 bytes, que el registro de T9b tendría que medir. La prueba de T9a.2
+  cubre también este modo: la misma suma ≤ 32 y el mismo `release` ≤ 600 ms.
 
 **Decisión 2: contrato asíncrono con estados explícitos.** Un objeto compartido, `DataInHandover`, lleva el estado
 del permiso. Usa solo atómicos, sin cerrojos ni memoria dinámica:

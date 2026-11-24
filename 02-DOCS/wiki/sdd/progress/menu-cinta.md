@@ -71,6 +71,8 @@ Plan: [`plans/menu-cinta.md`](../plans/menu-cinta.md). T1–T7 se hicieron en el
 - **`DiskLine.resume()`.** Devuelve `Done` o `Failed`. `Done` solo con 19 200 baudios (±2 %) y 8N1 verificados y la
   entrada vaciada. `Failed` deja el árbitro en `DiskFault`: D1 en silencio, ningún evento de recuperación,
   reintento cada 100 ms. Riesgo nuevo R12.
+- **Revisión 4.** La alternativa sin anillo escribía hasta 64 bytes y contradecía la cota de 32. Ahora escribe
+  como mucho 32 bytes con la FIFO vacía: misma cota, mismo `kReleaseTimeoutUs` = 600 ms.
 
 ## Siguiente
 

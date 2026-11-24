@@ -1,7 +1,8 @@
-// DataInArbiter (spec menu-cinta, plan §2.3, T4): who owns the DATA IN line, the disk (SIO,
-// EspSioUart) or the tape (EspDataIn). Both install UART2 on GPIO21, so they are never installed
-// at once: the disk ends before the tape takes, the tape releases before the disk begins. The
-// lines here are fakes that write every call to one shared log, so the order is checked.
+// DataInArbiter (spec menu-cinta, plan §2.3 and §2.4): who owns the DATA IN line, the disk (SIO,
+// EspSioUart) or the tape (EspDataIn). Both drive UART2 TX on GPIO21, so never both at once: the
+// disk parks before the tape is asked, and resumes only after the tape gave the line back. The lines
+// here are fakes that answer at once and write every call to one shared log, so the order and the
+// rules are checked; the asynchronous answers (T9a.1) are in test_data_in_handover.
 
 #include <string>
 #include <vector>
@@ -20,49 +21,56 @@ std::vector<std::string> g_calls;
 
 class FakeDisk final : public rb::host::DiskLine {
 public:
-    bool begin() noexcept override
+    bool park() noexcept override
     {
-        g_calls.push_back("disk.begin");
-        if (failBegins > 0) {
-            --failBegins;
+        g_calls.push_back("disk.park");
+        if (busyParks > 0) {  // the disk's TX is not empty yet
+            --busyParks;
             return false;
         }
-        installed = true;
+        active = false;
         return true;
     }
-    void end() noexcept override
+    rb::host::LineResult resume() noexcept override
     {
-        g_calls.push_back("disk.end");
-        installed = false;
+        g_calls.push_back("disk.resume");
+        if (failResumes > 0) {
+            --failResumes;
+            return rb::host::LineResult::Failed;
+        }
+        active = true;
+        return rb::host::LineResult::Done;
     }
-    int failBegins = 0;
-    bool installed = true;  // the SIO line is up before the arbiter starts
+    int busyParks = 0;
+    int failResumes = 0;
+    bool active = true;  // the SIO line serves frames before the arbiter starts
 };
 
 class FakeTape final : public rb::host::TapeLine {
 public:
-    bool take() noexcept override
+    rb::host::LineResult take() noexcept override
     {
         g_calls.push_back("tape.take");
         if (failTake) {
-            return false;
+            return rb::host::LineResult::Failed;
         }
-        installed = true;
-        return true;
+        driving = true;
+        return rb::host::LineResult::Done;
     }
-    bool release() noexcept override
+    rb::host::LineResult release() noexcept override
     {
         g_calls.push_back("tape.release");
         if (failReleases > 0) {
             --failReleases;
-            return false;
+            return rb::host::LineResult::Failed;
         }
-        installed = false;
-        return true;
+        driving = false;
+        return rb::host::LineResult::Done;
     }
+    void abandon() noexcept override { g_calls.push_back("tape.abandon"); }
     bool failTake = false;
     int failReleases = 0;
-    bool installed = false;
+    bool driving = false;
 };
 
 struct Rig {
@@ -71,12 +79,12 @@ struct Rig {
     DataInArbiter arbiter{disk, tape};
     uint64_t now = 0;
 
-    // One step of the SIO loop, 10 ms after the last. Never both lines installed.
+    // One step of the SIO loop, 10 ms after the last. Never both transmitters.
     DataInChange step(const DataInInputs& in)
     {
         now += 10000;
         const DataInChange change = arbiter.step(in, now);
-        TEST_ASSERT_FALSE_MESSAGE(disk.installed && tape.installed, "UART2 installed twice");
+        TEST_ASSERT_FALSE_MESSAGE(disk.active && tape.driving, "two transmitters on GPIO21");
         return change;
     }
 };
@@ -119,13 +127,13 @@ void test_the_disk_owns_the_line_at_start()
     assertCalls({});
 }
 
-// Rule 1: MOTOR on, a tape ready and both gates: the disk ends, then the tape takes the line.
+// Rule 1: MOTOR on, a tape ready and both gates: the disk parks, then the tape takes the line.
 void test_motor_on_with_a_ready_tape_hands_the_line_to_the_tape_in_order()
 {
     Rig rig;
     TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::ToTape);
     TEST_ASSERT_TRUE(rig.arbiter.owner() == DataInOwner::Tape);
-    assertCalls({"disk.end", "tape.take"});
+    assertCalls({"disk.park", "tape.take"});
 }
 
 // Rule 4 (AC8): without M3a/H4 the line never leaves the disk, whatever MOTOR does.
@@ -167,7 +175,7 @@ void test_motor_already_on_hands_the_line_when_the_tape_becomes_ready()
     }
     in.tapeReady = true;  // MOTOR stays on: no edge
     TEST_ASSERT_TRUE(rig.step(in) == DataInChange::ToTape);
-    assertCalls({"disk.end", "tape.take"});
+    assertCalls({"disk.park", "tape.take"});
 }
 
 // Rule 2: MOTOR pauses between blocks; the tape keeps the line.
@@ -182,10 +190,10 @@ void test_the_tape_keeps_the_line_while_motor_pauses()
     }
     TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::None);
     TEST_ASSERT_TRUE(rig.arbiter.owner() == DataInOwner::Tape);
-    assertCalls({"disk.end", "tape.take"});
+    assertCalls({"disk.park", "tape.take"});
 }
 
-// Rule 3: COMMAND low with MOTOR off (the Atari wants the disk): release, then begin.
+// Rule 3: COMMAND low with MOTOR off (the Atari wants the disk): release, then resume.
 void test_command_with_motor_off_gives_the_line_back_to_the_disk()
 {
     Rig rig;
@@ -195,7 +203,7 @@ void test_command_with_motor_off_gives_the_line_back_to_the_disk()
     in.commandLow = true;
     TEST_ASSERT_TRUE(rig.step(in) == DataInChange::ToDisk);
     TEST_ASSERT_TRUE(rig.arbiter.owner() == DataInOwner::Disk);
-    assertCalls({"disk.end", "tape.take", "tape.release", "disk.begin"});
+    assertCalls({"disk.park", "tape.take", "tape.release", "disk.resume"});
 }
 
 // COMMAND low while MOTOR is still on: the tape is playing; nothing changes.
@@ -228,7 +236,7 @@ void test_end_of_tape_power_off_or_eject_give_the_line_back()
         }
         TEST_ASSERT_TRUE(rig.step(in) == DataInChange::ToDisk);
         TEST_ASSERT_TRUE(rig.arbiter.owner() == DataInOwner::Disk);
-        assertCalls({"disk.end", "tape.take", "tape.release", "disk.begin"});
+        assertCalls({"disk.park", "tape.take", "tape.release", "disk.resume"});
     }
 }
 
@@ -241,45 +249,48 @@ void test_the_tape_can_take_the_line_again()
     off.poweredOff = true;
     rig.step(off);
     TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::ToTape);
-    assertCalls({"disk.end", "tape.take", "tape.release", "disk.begin", "disk.end", "tape.take"});
+    assertCalls({"disk.park", "tape.take", "tape.release", "disk.resume", "disk.park", "tape.take"});
 }
 
-// Rule 5: take() fails: the disk begins again at once; the next step may try again.
+// Rule 5: take() is refused: the disk resumes at once; the next try waits 100 ms.
 void test_a_failed_take_gives_the_line_back_to_the_disk()
 {
     Rig rig;
     rig.tape.failTake = true;
     TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::TakeFailed);
     TEST_ASSERT_TRUE(rig.arbiter.owner() == DataInOwner::Disk);
-    assertCalls({"disk.end", "tape.take", "disk.begin"});
+    assertCalls({"disk.park", "tape.take", "disk.resume"});
 }
 
-// Rule 5: begin() fails: no owner, retried every 100 ms until the disk is back; never the tape.
-void test_a_failed_begin_is_retried_every_100_ms()
+// Plan §2.4, «Reanudar el disco»: resume() fails after the tape gave the line back. DiskFault: D1
+// stays silent (no ToDisk), resume() is retried every 100 ms, and MOTOR cannot take the tape meanwhile.
+void test_a_failed_resume_is_a_disk_fault_retried_every_100_ms()
 {
     Rig rig;
     rig.step(playing());
-    rig.disk.failBegins = 2;
+    rig.disk.failResumes = 2;
     DataInInputs off = gated();
     off.poweredOff = true;
-    TEST_ASSERT_TRUE(rig.step(off) == DataInChange::BeginFailed);
-    TEST_ASSERT_TRUE(rig.arbiter.owner() == DataInOwner::None);
+    TEST_ASSERT_TRUE(rig.step(off) == DataInChange::ResumeFailed);
+    TEST_ASSERT_TRUE(rig.arbiter.owner() == DataInOwner::DiskFault);
+    TEST_ASSERT_FALSE(rig.disk.active);
     DataInInputs idle = gated();
     for (int i = 0; i < 9; ++i) {  // 90 ms: not yet
         TEST_ASSERT_TRUE(rig.step(idle) == DataInChange::None);
     }
-    TEST_ASSERT_TRUE(rig.step(idle) == DataInChange::BeginFailed);  // 100 ms: the second try fails
-    TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::None);   // no owner: the tape cannot take it
-    for (int i = 0; i < 9; ++i) {
+    TEST_ASSERT_TRUE(rig.step(idle) == DataInChange::None);       // 100 ms: the second try fails, same state
+    TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::None);  // DiskFault: MOTOR never asks for the tape
+    for (int i = 0; i < 8; ++i) {
         rig.step(idle);
     }
+    TEST_ASSERT_TRUE(rig.step(idle) == DataInChange::ToDisk);  // 200 ms: the third try works
     TEST_ASSERT_TRUE(rig.arbiter.owner() == DataInOwner::Disk);
-    assertCalls({"disk.end", "tape.take", "tape.release", "disk.begin", "disk.begin", "disk.begin"});
+    assertCalls({"disk.park", "tape.take", "tape.release", "disk.resume", "disk.resume", "disk.resume"});
 }
 
-// release() fails: the tape may still hold UART2, so the disk does not begin; release is retried
-// every 100 ms, and the disk begins only after it succeeds.
-void test_a_failed_release_never_begins_the_disk_until_it_succeeds()
+// release() is refused: the tape may still drive GPIO21, so the disk stays parked (Fault); the release
+// is asked again every 100 ms, and the disk resumes only after it is done.
+void test_a_refused_release_is_a_fault_and_never_resumes_the_disk_until_done()
 {
     Rig rig;
     rig.step(playing());
@@ -287,12 +298,26 @@ void test_a_failed_release_never_begins_the_disk_until_it_succeeds()
     DataInInputs off = gated();
     off.poweredOff = true;
     TEST_ASSERT_TRUE(rig.step(off) == DataInChange::ReleaseFailed);
-    TEST_ASSERT_TRUE(rig.arbiter.owner() == DataInOwner::Tape);
+    TEST_ASSERT_TRUE(rig.arbiter.owner() == DataInOwner::Fault);
+    TEST_ASSERT_FALSE(rig.disk.active);
     for (int i = 0; i < 9; ++i) {
         TEST_ASSERT_TRUE(rig.step(gated()) == DataInChange::None);
     }
     TEST_ASSERT_TRUE(rig.step(gated()) == DataInChange::ToDisk);
-    assertCalls({"disk.end", "tape.take", "tape.release", "tape.release", "disk.begin"});
+    assertCalls({"disk.park", "tape.take", "tape.release", "tape.release", "disk.resume"});
+}
+
+// Plan §2.4 step 1: the disk parks only with its TX empty. A busy park is tried again next step,
+// and the tape is not asked before the disk has parked.
+void test_a_busy_disk_parks_on_a_later_step_before_the_tape_is_asked()
+{
+    Rig rig;
+    rig.disk.busyParks = 2;
+    TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::None);
+    TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::None);
+    TEST_ASSERT_TRUE(rig.arbiter.owner() == DataInOwner::Disk);
+    TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::ToTape);
+    assertCalls({"disk.park", "disk.park", "disk.park", "tape.take"});
 }
 
 // A gate withdrawn while the tape plays (a package without them, or a fault): back to the disk.
@@ -303,7 +328,7 @@ void test_losing_the_gates_gives_the_line_back()
     DataInInputs in = playing();
     in.gates = false;
     TEST_ASSERT_TRUE(rig.step(in) == DataInChange::ToDisk);
-    assertCalls({"disk.end", "tape.take", "tape.release", "disk.begin"});
+    assertCalls({"disk.park", "tape.take", "tape.release", "disk.resume"});
 }
 
 // Review of PR #85 (T4): take() keeps failing while MOTOR stays on with the tape ready. The disk
@@ -313,19 +338,19 @@ void test_a_take_that_keeps_failing_is_retried_every_100_ms_with_the_disk_up()
     Rig rig;
     rig.tape.failTake = true;
     TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::TakeFailed);
-    for (int i = 0; i < 9; ++i) {  // 90 ms: the disk stays installed, nothing is called
+    for (int i = 0; i < 9; ++i) {  // 90 ms: the disk stays active, nothing is called
         TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::None);
-        TEST_ASSERT_TRUE(rig.disk.installed);
+        TEST_ASSERT_TRUE(rig.disk.active);
     }
-    assertCalls({"disk.end", "tape.take", "disk.begin"});
+    assertCalls({"disk.park", "tape.take", "disk.resume"});
     TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::TakeFailed);  // 100 ms: the second try
     rig.tape.failTake = false;
     for (int i = 0; i < 9; ++i) {
         TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::None);
     }
     TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::ToTape);  // 100 ms later: it works
-    assertCalls({"disk.end", "tape.take", "disk.begin", "disk.end", "tape.take", "disk.begin",
-                 "disk.end", "tape.take"});
+    assertCalls({"disk.park", "tape.take", "disk.resume", "disk.park", "tape.take", "disk.resume",
+                 "disk.park", "tape.take"});
 }
 
 // ---- T7: the readings of the SIO task become the arbiter's inputs ----
@@ -422,8 +447,9 @@ int main(void)
     RUN_TEST(test_the_tape_can_take_the_line_again);
     RUN_TEST(test_a_failed_take_gives_the_line_back_to_the_disk);
     RUN_TEST(test_a_take_that_keeps_failing_is_retried_every_100_ms_with_the_disk_up);
-    RUN_TEST(test_a_failed_begin_is_retried_every_100_ms);
-    RUN_TEST(test_a_failed_release_never_begins_the_disk_until_it_succeeds);
+    RUN_TEST(test_a_failed_resume_is_a_disk_fault_retried_every_100_ms);
+    RUN_TEST(test_a_refused_release_is_a_fault_and_never_resumes_the_disk_until_done);
+    RUN_TEST(test_a_busy_disk_parks_on_a_later_step_before_the_tape_is_asked);
     RUN_TEST(test_losing_the_gates_gives_the_line_back);
     RUN_TEST(test_the_readings_become_the_inputs);
     RUN_TEST(test_command_idle_and_an_empty_deck);

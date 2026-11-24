@@ -74,6 +74,73 @@ Plan: [`plans/menu-cinta.md`](../plans/menu-cinta.md). T1–T7 se hicieron en el
 - **Revisión 4.** La alternativa sin anillo escribía hasta 64 bytes y contradecía la cota de 32. Ahora escribe
   como mucho 32 bytes con la FIFO vacía: misma cota, mismo `kReleaseTimeoutUs` = 600 ms.
 
+## T9a.1 — traspaso asíncrono (2026-11-24)
+
+- **Hecho.**
+  - `DataInHandover` (`rb_menu`): dos palabras atómicas de 32 bits. La tarea SIO escribe la petición (`Take` o
+    `Release` con una secuencia de 30 bits que nunca es 0) y la casetera escribe la confirmación (`Disk`, `Tape`,
+    `Released` o `Refused` con la secuencia que contesta). Sin cerrojos ni memoria dinámica.
+  - `HandoverTapeLine`: el lado SIO. Publica una vez y luego consulta; pedir el otro tipo, o `abandon()`, crea una
+    secuencia nueva, así que una confirmación vieja se ignora.
+  - `DataInArbiter`: estados `Disk`, `TakePending`, `Tape`, `ReleasePending`, `Fault`, `Released` y `DiskFault`.
+    `DiskLine` pasa a `park()`/`resume()`; `TapeLine` a `Done`/`Pending`/`Failed`/`Released`. Plazos:
+    `kTakeTimeoutUs` = 20 ms, `kReleaseTimeoutUs` = 600 ms, reintentos cada 100 ms.
+  - `menu_sio.cpp`: adaptadores con el comportamiento de hoy, nunca alcanzados con `kTapeOutput = false`. T9a.7
+    los reemplaza.
+- **Decisiones de implementación.**
+  - El «estado» único del plan se guarda como dos palabras, para que ninguna tarea pise la última escritura de la
+    otra. `TakeRequested`/`ReleaseRequested` = una petición sin confirmar.
+  - El plazo se mira **antes** que la confirmación: una confirmación que llega justo al vencer se ignora.
+  - `Fault` y `Released` reintentan sin emitir eventos; solo un cambio de estado emite uno.
+  - El dueño `None` desaparece: sin `begin()` no hay «fallo al instalar». Lo que el plan llamaba «el árbitro queda
+    en None» es el dueño `Released`.
+- **Pruebas.**
+  - `test_data_in_arbiter` (20): las reglas 1–5 portadas al contrato nuevo, más `DiskFault`, `Fault` por rechazo y
+    `park()` con el TX ocupado.
+  - `test_data_in_handover` (15, nueva): casetera falsa que confirma tarde, nunca, con otra secuencia, rechazando o
+    soltando sin UART2. En cada paso: nunca dos transmisores en GPIO21 y el disco atiende solo en `Disk`. Cero
+    reservas en la ruta SIO (contador de `operator new`).
+  - RED visto: 14/20 y 15/15 fallaban con el stub. GREEN: 20/20 y 15/15. Host completo 96/96.
+  - Cinco mutantes detectados: confirmación aceptada al vencer (2 fallos), `release` vencido que reanuda el disco
+    (3), un evento por reintento (2), confirmación sin mirar la secuencia (15), `resume()` fallido tomado como
+    `Disk` (3).
+- **Atómicos en Xtensa: resuelto con el código objeto (revisión del PR #100).**
+  - **Por qué hacía falta.** El GCC del ESP32 no da `std::atomic<uint32_t>` como «siempre sin cerrojo», así que el
+    `static_assert` quedó solo en host (604a9ba). Que compile no prueba que no haya cerrojo.
+  - **El `.elf` no sirve como prueba.** En `retrobridge.elf` (paquete `menu-sio` de 604a9ba) aparecen los símbolos de
+    `DataInArbiter`, pero no los de `DataInHandover`: el firmware todavía no lo usa (T9a.7) y el enlazador lo quita.
+    Se inspecciona el objeto `data_in_handover.cpp.obj`.
+  - **La comprobación** (`tools/ci/check_atomic_calls.py`, paso de CI «DataInHandover atomics without locks on
+    Xtensa»):
+    1. **Control negativo:** compila una carga atómica de 64 bits con el mismo comando de `compile_commands.json` y
+       exige ver la llamada. Resultado: `R_XTENSA_32 __atomic_load_8`.
+    2. Falla si el objeto llama a `__atomic_*`, `__sync_*`, `vPortEnterCritical*`, `spinlock_acquire*` o
+       `esp_cpu_compare_and_set*`.
+    3. Falla si falta alguna de las cuatro funciones, o si no muestra su acceso: carga de adquisición = `l32i`
+       seguido de `memw`; almacén de liberación = `memw` seguido de `s32i`.
+
+    Autopruebas: 10, incluidas las que deben fallar (objeto vacío, función ausente, almacén sin `memw` antes, carga
+    sin `memw` después).
+  - **Desensamblado real** (CI 45413310899, ESP-IDF 6.1, `xtensa-esp32-elf`, `-Og`, extracto):
+
+    ```text
+    rb::host::DataInHandover::request(HandoverRequest):   23: memw / 26: s32i.n a8, a2, 0  / 2a: memw
+    rb::host::DataInHandover::confirm(unsigned long, HandoverAck):  c: memw /  f: s32i.n a3, a2, 4 / 11: memw
+    rb::host::DataInHandover::ackFor(unsigned long, HandoverAck&) const:  3: memw / 6: l32i.n a8, a2, 4 / 8: memw
+    rb::host::DataInHandover::pending() const:              3: memw / 6: l32i.n a3, a2, 0 / 8: memw
+    ```
+
+    `request_` está en el desplazamiento 0 y `ack_` en el 4. Cada acceso es una instrucción de 32 bits alineada, con
+    `memw` (barrera de memoria de Xtensa) antes y después. No hay ninguna llamada a `libatomic` ni a secciones
+    críticas.
+  - **Una llamada que no es cerrojo:** con `-Og`, `pending()` llama a `memset` para poner a cero el `Pending` que
+    devuelve. No toma cerrojo ni reserva memoria, y corre en la tarea de la casetera, no en la ruta SIO.
+  - **Conclusión:** en el ESP32, el traspaso cumple «solo atómicos, sin cerrojos». No hace falta otra
+    implementación.
+- **Queda para otras tareas.** Contar llamadas a `uart_driver_*` y `rmt_*` necesita el `DiskLine` real: T9a.7.
+  T9a.7 debe volver a ver `DataInHandover` en el `.elf`, ya enlazado.
+  `rb_menu` no incluye cabeceras de drivers. Hardware libre y `Released` en la casetera: T9a.2.
+
 ## Siguiente
 
 Revisar este PR de documentos. Los PR de código de T9a empiezan solo después de aprobarlo, uno por tarea.

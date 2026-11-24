@@ -8,6 +8,7 @@ set(rb_srcs
     "src/cas_tape_deck.cpp"
     "src/create_atr.cpp"
     "src/data_in_arbiter.cpp"
+    "src/data_in_handover.cpp"
     "src/drive_memory.cpp"
     "src/drive_memory_link.cpp"
     "src/drive_slot_store.cpp"

@@ -1068,6 +1068,12 @@ int read() { return uart_read_bytes(kUart, out, n, ticks); }
 int write() { (void)uart_write_bytes(kUart, b, n); return uart_wait_tx_done(kUart, 10); }
 void flushInput() { (void)uart_flush_input(kUart); }
 void idleLine() { (void)uart_wait_tx_done(kUart, 2); }
+bool park() { return uart_wait_tx_done(kUart, 0) == ESP_OK; }
+bool resume() {
+    return uart_set_baudrate(kUart, 19200) == ESP_OK && uart_get_baudrate(kUart, &baud) == ESP_OK &&
+           uart_get_word_length(kUart, &bits) == ESP_OK && uart_get_parity(kUart, &parity) == ESP_OK &&
+           uart_get_stop_bits(kUart, &stop) == ESP_OK;
+}
 """
 MENU_MAIN_SOURCE = """constexpr gpio_num_t kButtonA = GPIO_NUM_0;  // "gpio_set_level(" in a string is ignored
 void task() { const bool down = gpio_get_level(kButtonA) == 0; }

@@ -248,7 +248,11 @@ esp_err_t uart_get_tx_buffer_free_size(uart_port_t, size_t* size)
 
 esp_err_t uart_param_config(uart_port_t, const uart_config_t* config)
 {
-    fake_idf::state().uartBaud = config->baud_rate;
+    auto& s = fake_idf::state();
+    s.uartBaud = config->baud_rate;
+    s.uartWordLength = static_cast<int>(config->data_bits);
+    s.uartParity = static_cast<int>(config->parity);
+    s.uartStopBits = static_cast<int>(config->stop_bits);
     return ESP_OK;
 }
 
@@ -302,7 +306,37 @@ esp_err_t uart_wait_tx_done(uart_port_t, uint32_t ticks)
 
 esp_err_t uart_set_baudrate(uart_port_t, uint32_t baud)
 {
-    fake_idf::state().uartBaud = static_cast<int>(baud);
+    auto& s = fake_idf::state();
+    ++s.uartSetBaudrates;
+    if (s.failUartSetBaudrate) {
+        return ESP_FAIL;
+    }
+    s.uartBaud = static_cast<int>(baud);
+    return ESP_OK;
+}
+
+esp_err_t uart_get_baudrate(uart_port_t, uint32_t* baudrate)
+{
+    const auto& s = fake_idf::state();
+    *baudrate = static_cast<uint32_t>(s.uartBaudReadback > 0 ? s.uartBaudReadback : s.uartBaud);
+    return ESP_OK;
+}
+
+esp_err_t uart_get_word_length(uart_port_t, uart_word_length_t* data_bit)
+{
+    *data_bit = static_cast<uart_word_length_t>(fake_idf::state().uartWordLength);
+    return ESP_OK;
+}
+
+esp_err_t uart_get_parity(uart_port_t, uart_parity_t* parity_mode)
+{
+    *parity_mode = static_cast<uart_parity_t>(fake_idf::state().uartParity);
+    return ESP_OK;
+}
+
+esp_err_t uart_get_stop_bits(uart_port_t, uart_stop_bits_t* stop_bit)
+{
+    *stop_bit = static_cast<uart_stop_bits_t>(fake_idf::state().uartStopBits);
     return ESP_OK;
 }
 

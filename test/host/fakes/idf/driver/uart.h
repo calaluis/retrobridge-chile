@@ -30,6 +30,11 @@ esp_err_t uart_wait_tx_done(uart_port_t port, uint32_t ticks);
 esp_err_t uart_set_baudrate(uart_port_t port, uint32_t baud);
 int uart_write_bytes(uart_port_t port, const void* src, size_t size);
 esp_err_t uart_get_tx_buffer_free_size(uart_port_t port, size_t* size);  // menu-cinta T9a.2
+// DiskLine resume() checks (menu-cinta T9a.7b, plan "Reanudar el disco").
+esp_err_t uart_get_baudrate(uart_port_t port, uint32_t* baudrate);
+esp_err_t uart_get_word_length(uart_port_t port, uart_word_length_t* data_bit);
+esp_err_t uart_get_parity(uart_port_t port, uart_parity_t* parity_mode);
+esp_err_t uart_get_stop_bits(uart_port_t port, uart_stop_bits_t* stop_bit);
 
 // SIO line adapter (menu-sio-fisico T4): reception.
 int uart_read_bytes(uart_port_t port, void* buf, uint32_t length, uint32_t ticks);

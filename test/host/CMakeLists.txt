@@ -318,11 +318,12 @@ target_link_libraries(test_esp_data_in_recovery PRIVATE fake_idf rb_cassette rb_
 # menu-cinta T9a.7 (requirements 1 and 2): the cassette task's tick end to end, with the firmware's ports
 # (main/cassette_ports.hpp) over the real DataInHandover, TapeProgress and DataInArbiter, and EspDataIn.
 rb_add_host_test(test_cassette_tick esp_cassette/test_cassette_tick.cpp ${rb_root}/main/cassette_ports.cpp
+                 ${rb_root}/main/sio_disk_line.cpp ${rb_root}/components/rb_esp_sio/src/esp_sio_uart.cpp
                  ${rb_root}/components/rb_esp_cassette/src/esp_data_in.cpp
                  fakes/idf/fake_gpio_route.cpp
                  ${rb_root}/components/rb_menu/src/data_in_arbiter.cpp
                  ${rb_root}/components/rb_menu/src/data_in_handover.cpp)
-target_include_directories(test_cassette_tick PRIVATE ${rb_root}/components/rb_esp_cassette/include
+target_include_directories(test_cassette_tick PRIVATE ${rb_root}/components/rb_esp_cassette/include ${rb_root}/components/rb_esp_sio/include
                            ${rb_root}/components/rb_menu/include ${rb_root}/main)
 target_link_libraries(test_cassette_tick PRIVATE fake_idf rb_cassette rb_board)
 

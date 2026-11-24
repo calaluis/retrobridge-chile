@@ -15,6 +15,7 @@ namespace {
 constexpr const char* kTag = "rb_sio_line";
 constexpr uart_port_t kUart = UART_NUM_2;
 constexpr uint32_t kFinePollUs = 50;
+constexpr uint32_t kBaudTolerancePct = 2;  // the ESP32's divisor does not give 19200 exactly
 
 uint32_t ticksFor(uint32_t timeoutUs) noexcept { return pdMS_TO_TICKS((timeoutUs + 999u) / 1000u); }
 
@@ -62,7 +63,43 @@ void EspSioUart::end() noexcept
     if (ready_) {
         (void)uart_driver_delete(kUart);
         ready_ = false;
+        parked_ = false;
     }
+}
+
+bool EspSioUart::park() noexcept
+{
+    // Plan §2.4 step 1: the disk's last answer must be out before the cassette may drive GPIO21.
+    if (!ready_ || uart_wait_tx_done(kUart, 0) != ESP_OK) {
+        return false;
+    }
+    parked_ = true;
+    return true;
+}
+
+bool EspSioUart::resume() noexcept
+{
+    if (!ready_) {
+        return false;
+    }
+    // Plan «Reanudar el disco»: the cassette gave GPIO21 back; the line must be the disk's again.
+    const uint32_t baud = rb::sio::SioLineTransport::kBaud;
+    uint32_t actual = 0;
+    if (uart_set_baudrate(kUart, baud) != ESP_OK || uart_get_baudrate(kUart, &actual) != ESP_OK ||
+        actual * 100u < baud * (100u - kBaudTolerancePct) || actual * 100u > baud * (100u + kBaudTolerancePct)) {
+        return false;
+    }
+    uart_word_length_t bits{};
+    uart_parity_t parity{};
+    uart_stop_bits_t stop{};
+    if (uart_get_word_length(kUart, &bits) != ESP_OK || bits != UART_DATA_8_BITS ||
+        uart_get_parity(kUart, &parity) != ESP_OK || parity != UART_PARITY_DISABLE ||
+        uart_get_stop_bits(kUart, &stop) != ESP_OK || stop != UART_STOP_BITS_1) {
+        return false;
+    }
+    flushInput();  // what came in at the tape's rate is garbage for the disk
+    parked_ = false;
+    return true;
 }
 
 bool EspSioUart::commandHigh() const noexcept { return gpio_get_level(static_cast<gpio_num_t>(pins_.command)) != 0; }
@@ -94,6 +131,10 @@ rb::core::Result<std::size_t> EspSioUart::read(rb::core::Span<uint8_t> out, uint
     if (!ready_) {
         return rb::core::Failure{rb::core::ErrorCode::TransportError};
     }
+    if (parked_) {  // the tape owns DATA IN: no frame is the disk's; wait as a read would, take nothing
+        vTaskDelay(ticksFor(timeoutUs));
+        return std::size_t{0};
+    }
     const int n = uart_read_bytes(kUart, out.data(), static_cast<uint32_t>(out.size()), ticksFor(timeoutUs));
     if (n < 0) {
         return rb::core::Failure{rb::core::ErrorCode::TransportError};
@@ -103,7 +144,7 @@ rb::core::Result<std::size_t> EspSioUart::read(rb::core::Span<uint8_t> out, uint
 
 rb::core::Result<void> EspSioUart::write(rb::core::Span<const uint8_t> bytes)
 {
-    if (!ready_) {
+    if (!ready_ || parked_) {  // parked: never transmit over the tape
         return rb::core::Failure{rb::core::ErrorCode::TransportError};
     }
     const int n = uart_write_bytes(kUart, bytes.data(), bytes.size());
@@ -126,7 +167,7 @@ void EspSioUart::idleLine()
 {
     // The UART rests at mark after the last stop bit: DATA IN is released once
     // nothing is left to send.
-    if (ready_) {
+    if (ready_ && !parked_) {  // parked: the bytes going out are the tape's
         (void)uart_wait_tx_done(kUart, pdMS_TO_TICKS(kTxDoneMarginMs));
     }
 }

@@ -479,6 +479,50 @@ Aprobable para T9a.4, sin defecto bloqueante. Dos observaciones pasan a verifica
 - **Mutantes:** 14 de 14 detectados, más el cuerpo RED. Nuevos: `Lost` apaga `returning_` y la toma nueva no lo
   apaga.
 
+## T9a.7b — lado SIO de la integración (2026-11-24)
+
+Rama `feat/menu-cinta-t9a7b`, sacada de main `6f5be96` (PR #106 fusionado).
+
+- **`EspSioUart::park()`/`resume()`** (decisión 1, «Reanudar el disco»):
+  - `park()` aparca solo con el TX vacío (`uart_wait_tx_done(UART2, 0)`); si no, `false` y se reintenta en el
+    paso siguiente;
+  - aparcada, la línea no escribe; `read()` espera su plazo sin leer nada; `idleLine()` no espera los bytes de la
+    cinta;
+  - `resume()` vuelve a 19 200 baudios, verifica la velocidad (±2 %) y el formato 8N1, y vacía la entrada. Si falla
+    un paso, devuelve `false` y el disco sigue aparcado;
+  - ninguna de las dos instala ni borra UART2.
+- **`main/sio_disk_line.{hpp,cpp}`:** `UartDiskLine`, el `DiskLine` del árbitro sobre `EspSioUart`. Sin línea,
+  `park()` es `false`.
+- **`CassetteService::shareDataIn()`:** modo compartido de `EspDataIn` más el prestamista, antes de `start()`.
+- **`menu_sio.cpp`:**
+  - `UartDiskLine` y `HandoverTapeLine` sobre `g_handover` sustituyen a `SioDiskLine` (que borraba e instalaba
+    UART2) y a `PendingTapeLine`;
+  - `HandoverLender` sobre el mismo `g_handover`;
+  - la tarea SIO lee `readings.tapeEnded = tapeEnded(g_progress)` en cada paso;
+  - **detrás de `kTapeOutput`, que sigue en `false`:** el anillo de TX de 2048 (decisión 3) y `shareDataIn()`.
+    Con `false`, UART2 se instala como hoy y la casetera nunca comparte DATA IN; el árbitro sigue con las puertas
+    cerradas.
+- **Comprobación de puertas (`firmware_package.py`):** la lista de `menu-sio` admite en `esp_sio_uart.cpp` las
+  llamadas nuevas al mismo UART2: un tercer `uart_wait_tx_done` (`park`), `uart_set_baudrate`, `uart_get_baudrate`,
+  `uart_get_word_length`, `uart_get_parity` y `uart_get_stop_bits`. Sin `uart_set_pin`, `uart_driver_install` ni
+  `uart_driver_delete` nuevos. `resume()` reusa `flushInput()`. Comprobado sobre el árbol: 54 llamadas en
+  `menu-sio` y 29 en el resto, OK. No se tocan `puertas.json` ni ADR-012.
+- **Pruebas nuevas:**
+  - `test_esp_sio_uart` (+7): `park` espera el TX vacío; aparcada no escribe ni lee tramas; `resume` restaura y
+    verifica; acepta el divisor (19 100) y rechaza 18 500 y 19 900; cualquier fallo deja el disco aparcado (velocidad,
+    paridad, bits de parada, bits de datos); sin línea, ni `park` ni `resume`; `end()` + `begin()` no queda aparcada;
+  - `test_cassette_tick` (+2): la cadena completa con `EspSioUart` y `EspDataIn` reales sobre el mismo UART2 (D1
+    responde, MOTOR aparca el disco, la cinta sale a 600, al final el disco vuelve a 19 200 verificado, entrada
+    vaciada, un solo `uart_driver_install` y ningún `uart_driver_delete`); y la observación de la tercera revisión
+    del PR #106: `Released → Uart` con un nuevo `Release`, sin toma nueva, vuelve a publicar el fin.
+- **RED:** con `park()`/`resume()` vacíos fallan 5 de las 7 de `test_esp_sio_uart` y la cadena completa. La de «sin
+  línea» es de no regresión. La de `Released → Uart` pasa desde el principio: cubre código del PR #106.
+- **GREEN:** host 99/99 (17 en `test_esp_sio_uart`, 10 en `test_cassette_tick`); herramientas 307/307; capas OK.
+- **Mutantes:** 19 de 19 detectados en `esp_sio_uart.cpp` y `sio_disk_line.cpp`.
+- **Lo que no prueba:** la compilación de ESP-IDF y el paquete `menu-sio` (los comprueba la CI); `menu_sio.cpp` no
+  tiene prueba de host (código ESP); el 65XE real (banco T9b, que además debe medir los tiempos del SIO con el
+  anillo, riesgo R9).
+
 ## Siguiente
 
 Revisar este PR de documentos. Los PR de código de T9a empiezan solo después de aprobarlo, uno por tarea.

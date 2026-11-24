@@ -444,6 +444,22 @@ Aprobable para T9a.4, sin defecto bloqueante. Dos observaciones pasan a verifica
   comprueba la CI). La elección exclusivo/compartido de `CassetteService::start()` no tiene prueba de host (es
   código ESP). El 65XE real (banco T9b).
 
+### Revisión del PR #106 (2026-11-24)
+
+- **Hallazgo:** el fin de cinta se confirmaba antes de vaciar UART2. Tras `select(false)`, `ended()` miraba las
+  salidas de descarte, que siempre están vacías. Con un byte de la cinta aún en UART2, `TapeProgress` ya decía
+  `true`.
+- **Corrección:** `CassetteTick` guarda `returning_`. Se activa al soltar una salida viva en el paso 6. Se apaga
+  cuando `giveBack()` devuelve `Uart` o `Lost`. Mientras está activo, el fin se publica como `false`. El fin real
+  aparece en el tick siguiente a la devolución de la línea.
+- **Prueba nueva:** `test_a_release_with_bytes_left_in_uart2_does_not_publish_the_end`, con el `EspDataIn` real
+  compartido (600 baudios). Cinta al final, último byte en UART2, MOTOR apagado y COMMAND bajo (regla 3). Mientras
+  UART2 no se vacía, `tapeEnded` es `false`; después llega `Disk` y luego `true`.
+- **RED:** falló con «end published with a tape byte in UART2». **GREEN:** host 99/99 (6 pruebas en
+  `test_cassette_tick`); herramientas 307/307; capas OK.
+- **Mutantes:** 12 de 12 detectados, más el cuerpo RED. Nuevos: publicar sin mirar `returning_`, `returning_`
+  nunca activado y `returning_` no apagado con `Uart`.
+
 ## Siguiente
 
 Revisar este PR de documentos. Los PR de código de T9a empiezan solo después de aprobarlo, uno por tarea.

@@ -94,6 +94,9 @@ private:
     DataInLender* lender_ = nullptr;
     EndSink* sink_ = nullptr;
     uint32_t answered_ = 0;  // the last request confirmed
+    // From select(false) of live outputs until giveBack() has the line back (Uart or Lost): the tape's bytes
+    // may still be going out on the live line, so the end is not published (review of PR #106).
+    bool returning_ = false;
 };
 
 }  // namespace rb::cassette

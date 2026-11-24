@@ -433,6 +433,78 @@ void test_the_published_end_waits_for_uart2_and_then_gives_the_line_back()
     TEST_ASSERT_TRUE(s.written == all);
 }
 
+// Review of PR #106: the tape at its end with its last byte still in UART2, and the Atari talks to a disk
+// (MOTOR off, COMMAND low: rule 3 releases at once). After select(false) the player looks at the discard
+// outputs, which are always drained: TapeProgress must still say "not ended" until giveBack() has the line
+// back, because the tape's byte is still going out on GPIO21.
+void test_a_release_with_bytes_left_in_uart2_does_not_publish_the_end()
+{
+    fake_idf::reset();
+    auto& s = fake_idf::state();
+    s.txModel = true;
+    s.uartBaud = 600;
+    (void)uart_driver_install(UART_NUM_2, 1024, 2048, 0, nullptr, 0);
+    (void)uart_set_pin(UART_NUM_2, 21, 33, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    auto* dataIn = new (g_dataInStorage) rb::esp::EspDataIn();
+    TEST_ASSERT_TRUE(dataIn->attachShared(granted(), 2048));
+
+    rb::cassette::DiscardByteOut discardBytes;
+    rb::cassette::DiscardWaveOut discardWave;
+    PlayerOutputs outputs{discardBytes, discardWave};
+    outputs.setLive(*dataIn, *dataIn);
+    FakeMotor motor;
+    Tape tape(fuji() + chunk("data", 0, {0x11, 0x22, 0x33}), discardWave);
+    CassetteTick tick{tape.player, outputs, motor};
+    DataInHandover handover;
+    rb::menusio::HandoverLender lender{handover};
+    rb::host::TapeProgress progress;
+    rb::menusio::ProgressSink sink{progress};
+    tick.lend(lender, *dataIn);
+    tick.report(sink);
+    FakeDisk disk;
+    HandoverTapeLine tapeLine{handover};
+    DataInArbiter arbiter{disk, tapeLine};
+
+    bool commandLow = false;
+    auto step = [&]() {
+        tape.produce();
+        tick.tick(static_cast<uint64_t>(s.nowUs));
+        fake_idf::tx_advance(static_cast<int64_t>(kTickUs));
+        DataInInputs in = inputs(motor.motor);
+        in.commandLow = commandLow;
+        in.tapeEnded = rb::menusio::tapeEnded(progress);
+        return arbiter.step(in, static_cast<uint64_t>(s.nowUs));
+    };
+    for (int i = 0; i < 400 && arbiter.owner() != DataInOwner::Tape; ++i) {
+        (void)step();
+    }
+    TEST_ASSERT_TRUE(arbiter.owner() == DataInOwner::Tape);
+    for (int i = 0; i < 20000 && !tape.player.atEnd(); ++i) {
+        (void)step();
+    }
+    TEST_ASSERT_TRUE(tape.player.atEnd());
+    TEST_ASSERT_FALSE(dataIn->drained());  // the last byte is still on its way out
+    motor.motor = false;
+    commandLow = true;
+    DataInChange change = step();
+    TEST_ASSERT_TRUE(change == DataInChange::ReleaseRequested);
+    int owed = 0;
+    for (int i = 0; i < 200 && change != DataInChange::ToDisk; ++i) {
+        if (!dataIn->drained()) {
+            ++owed;
+            TEST_ASSERT_FALSE_MESSAGE(rb::menusio::tapeEnded(progress), "end published with a tape byte in UART2");
+        }
+        change = step();
+    }
+    TEST_ASSERT_TRUE(owed >= 2);  // the release was answered while the byte was still going out
+    TEST_ASSERT_TRUE(change == DataInChange::ToDisk);
+    TEST_ASSERT_FALSE(outputs.live());
+    tick.tick(static_cast<uint64_t>(s.nowUs));  // the line came back after this tick's publish
+    TEST_ASSERT_TRUE(rb::menusio::tapeEnded(progress));  // the line is back: now the end is real
+    const Bytes all{0x11, 0x22, 0x33};
+    TEST_ASSERT_TRUE(s.written == all);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -441,5 +513,6 @@ int main(void)
     RUN_TEST(test_a_release_selects_discard_first_and_confirms_disk_once_the_line_is_back);
     RUN_TEST(test_a_lost_line_is_confirmed_released);
     RUN_TEST(test_the_published_end_waits_for_uart2_and_then_gives_the_line_back);
+    RUN_TEST(test_a_release_with_bytes_left_in_uart2_does_not_publish_the_end);
     return UNITY_END();
 }

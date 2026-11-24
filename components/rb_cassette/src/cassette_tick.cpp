@@ -9,7 +9,8 @@ void CassetteTick::tick(uint64_t nowUs) noexcept
         line_->pump();
     }
     if (sink_ != nullptr) {
-        sink_->publish(player_.ended(outputs_.bytes(), outputs_.wave()));  // the outputs of this tick
+        // The outputs of this tick; never the discard outputs while the live line still holds tape bytes.
+        sink_->publish(!returning_ && player_.ended(outputs_.bytes(), outputs_.wave()));
     }
     if (lender_ != nullptr) {
         answer();
@@ -33,15 +34,20 @@ void CassetteTick::answer() noexcept
         answered_ = ask.seq;
         return;
     }
+    if (outputs_.live()) {
+        returning_ = true;  // the live line may still hold the tape's bytes
+    }
     (void)outputs_.select(false, player_);  // step 6: the player discards from the next tick on
     switch (line_->giveBack()) {
     case LiveLine::GiveBack::Uart:
         lender_->confirm(ask.seq, DataInLender::Ack::Disk);
         answered_ = ask.seq;
+        returning_ = false;
         break;
     case LiveLine::GiveBack::Lost:
         lender_->confirm(ask.seq, DataInLender::Ack::Released);
         answered_ = ask.seq;
+        returning_ = false;
         break;
     case LiveLine::GiveBack::Busy:
         break;

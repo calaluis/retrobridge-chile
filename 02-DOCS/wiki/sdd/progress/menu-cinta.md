@@ -62,6 +62,16 @@ Plan: [`plans/menu-cinta.md`](../plans/menu-cinta.md). T1–T7 se hicieron en el
   un patrón fijo de 2 s activado por consola, MOTOR comprobado en 0 V y medido con osciloscopio, después de C5. No
   aprueba H4 ni M3a.
 
+## Revisión 3 del PR #99 (2026-11-24)
+
+- **Bytes en vuelo.** `uart_get_tx_buffer_free_size()` mide solo el anillo, y la interrupción pasa hasta 128 bytes
+  a la FIFO. Ahora la cinta cuenta anillo + FIFO + registro de desplazamiento, leídos en el orden que sobrestima, y
+  escribe solo por debajo de 32 en total. `kReleaseTimeoutUs` = 600 ms. La prueba incluye un mutante que mira solo
+  el anillo y deja 160 bytes en vuelo.
+- **`DiskLine.resume()`.** Devuelve `Done` o `Failed`. `Done` solo con 19 200 baudios (±2 %) y 8N1 verificados y la
+  entrada vaciada. `Failed` deja el árbitro en `DiskFault`: D1 en silencio, ningún evento de recuperación,
+  reintento cada 100 ms. Riesgo nuevo R12.
+
 ## Siguiente
 
 Revisar este PR de documentos. Los PR de código de T9a empiezan solo después de aprobarlo, uno por tarea.

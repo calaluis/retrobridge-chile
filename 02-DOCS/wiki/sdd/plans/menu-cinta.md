@@ -140,7 +140,8 @@ driver.
 
 - `DiskLine` en T9a:
   - `park()` deja de transmitir y de leer tramas;
-  - `resume()` vuelve a fijar su velocidad, vacía la entrada (`uart_flush_input`) y atiende tramas otra vez;
+  - `resume()` devuelve `Done` o `Failed` y no declara D1 recuperado hasta comprobarlo (revisión 3, ver «Reanudar
+    el disco» abajo);
   - ninguna de las dos instala ni borra nada.
 - La casetera usa ese mismo driver con su velocidad (600 baudios como regla). Lo hace con un modo «UART compartido»
   de `EspDataIn`, que no instala ni borra UART2.
@@ -160,12 +161,25 @@ driver.
 - **El disco conserva sus tiempos.** `EspSioUart::write()` sigue llamando a `uart_write_bytes()` y después a
   `uart_wait_tx_done()` con el plazo de la línea. La respuesta termina en el mismo instante que hoy. Lo único que
   cambia es que el relleno de la FIFO pasa a la interrupción del driver.
-- **La cinta nunca bloquea.** En el modo compartido, `send()` escribe solo si en el anillo quedan menos de
-  `kSharedQueue` = 32 bytes. Eso son unos 0,53 s a 600 baudios: bastante más que un tick de 2 ms, así que el flujo
-  no se corta. Además, escribe como mucho `uart_get_tx_buffer_free_size()` bytes. Lo que no cabe se queda en el
-  reproductor, que ya lo tiene en el banco PSRAM, y sale en los ticks siguientes.
-- **Consecuencia para los plazos.** Como mucho hay 32 bytes en vuelo. Por eso `kReleaseTimeoutUs` queda acotado
-  en unos 0,6 s: 32 × 16,7 ms, más la parada del RMT, más 20 ms. Antes podía llegar a 8,6 s.
+- **La cinta nunca bloquea, y cuenta todo lo que está en vuelo (revisión 3).** `uart_get_tx_buffer_free_size()`
+  mide solo el anillo. La interrupción del driver pasa bytes del anillo a la FIFO de hardware (hasta 128), así que
+  «anillo casi vacío» no acota lo que falta por salir. Por eso la cinta calcula los bytes en vuelo como la suma de:
+  - **anillo:** tamaño del anillo − `uart_get_tx_buffer_free_size()`. Incluye las cabeceras que el driver guarda
+    por cada escritura, así que sobrestima: es seguro;
+  - **FIFO:** 128 − huecos libres de la FIFO de TX (`uart_ll_get_txfifo_len()` de la HAL de ESP-IDF);
+  - **registro de desplazamiento:** 1 byte, el que sale en ese momento.
+
+  Se lee primero el anillo y después la FIFO. Si la interrupción mueve bytes entre las dos lecturas, se cuentan dos
+  veces: otra vez sobrestima, nunca subestima.
+- **La regla.** En el modo compartido, `send()` escribe solo si los bytes en vuelo son menos de
+  `kSharedInFlight` = 32, y escribe como mucho `kSharedInFlight − en vuelo − 1` bytes. Tras escribir, la suma solo
+  baja. Lo que no cabe se queda en el reproductor, que ya lo tiene en el banco PSRAM, y sale en los ticks
+  siguientes. 32 bytes son unos 0,53 s a 600 baudios: mucho más que un tick de 2 ms, así que el flujo no se corta.
+- **Consecuencia para los plazos.** Como mucho hay 32 bytes en vuelo **entre anillo, FIFO y registro**. Por eso
+  `kReleaseTimeoutUs` = 32 × 16,7 ms (≈ 533 ms) + la parada del RMT (≤ 20 ms) + 20 ms de margen ≈ **575 ms**; se
+  fija en 600 ms. Antes podía llegar a 8,6 s.
+- **Si la HAL no da la ocupación de la FIFO** en la versión de ESP-IDF del proyecto, se usa la alternativa de abajo
+  (escribir solo con la FIFO vacía). Las dos dan la misma cota de 32 bytes.
 - **Alternativa, si el banco muestra que el anillo cambia los tiempos del SIO.** Se deja el disco sin anillo. La
   cinta escribe entonces solo con la FIFO vacía (`uart_wait_tx_done(UART2, 0) == ESP_OK`) y como mucho 64 bytes,
   la mitad de la FIFO. El coste es un hueco de hasta 2 ms entre ráfagas, que el registro de T9b tendría que medir.
@@ -189,7 +203,7 @@ TapeLine::release() -> Done | Pending | Failed     // reemplaza al bool actual
 | 4 | Tarea SIO | `take()` ve `Tape` con su secuencia y devuelve `Done`. El árbitro pasa a `Tape` | — |
 | 5 | Tarea SIO | Quiere el disco (regla 3). Publica `ReleaseRequested`. `release()` devuelve `Pending`. El árbitro pasa a **`ReleasePending`**: hoy ese estado significa «falló»; ahora significa «esperando» | — |
 | 6 | Tarea de la casetera | Pasa el reproductor a «descartar». Llama a `stop()` del RMT (el pin vuelve al UART). Espera a que el hardware esté libre | Publica `Disk` con esa secuencia |
-| 7 | Tarea SIO | `release()` ve `Disk` y devuelve `Done`. Llama a `DiskLine.resume()`. El árbitro pasa a `Disk` | — |
+| 7 | Tarea SIO | `release()` ve `Disk` y devuelve `Done`. Llama a `DiskLine.resume()`. El árbitro pasa a `Disk` **solo si** `resume()` devuelve `Done`; si devuelve `Failed`, pasa a `DiskFault` (abajo) | — |
 
 **Hardware libre** es la condición para confirmar en los pasos 3 y 6. Cambiar entre dos ticks no basta: hay que
 mirar el hardware. Las tres condiciones son:
@@ -208,7 +222,7 @@ Si algo sigue ocupado, la tarea de la casetera no confirma y vuelve a mirar en e
   - cuenta como `TakeFailed` y se reintenta cada 100 ms, como hoy (regla 5).
 - `kReleaseTimeoutUs` es el tiempo de vaciar lo que haya en la cola de TX, más un margen:
   - lo normal es un byte, unos 17 ms a 600 baudios;
-  - con la decisión 3, como mucho quedan 32 bytes en vuelo: unos 0,6 s en total;
+  - con la decisión 3, como mucho quedan 32 bytes en vuelo entre anillo, FIFO y registro: `kReleaseTimeoutUs` = 600 ms;
   - el valor exacto se fija y se prueba en T9a.2.
 
 **Recuperación.**
@@ -245,6 +259,25 @@ solo cuando se cumplen las tres condiciones:
 
 Así la regla 3 («fin de cinta y MOTOR apagado → disco») nunca pide la línea con bytes o FSK todavía en camino. La
 condición «hardware libre» del paso 6 sigue igual: es una segunda barrera, no la única.
+
+**Reanudar el disco (revisión 3 del PR #99).** Que la casetera confirme `Disk` dice que GPIO21 volvió a UART2.
+No dice que la línea del disco esté como la necesita D1. `DiskLine.resume()` lo comprueba él mismo:
+
+1. vuelve a poner la velocidad del disco, `SioLineTransport::kBaud` = 19 200 baudios (`uart_set_baudrate`);
+2. la **verifica**: `uart_get_baudrate()` devuelve un valor dentro de ±2 % de 19 200 (el divisor del ESP32 no da
+   el valor exacto);
+3. verifica el formato de trama: 8 bits, sin paridad, 1 bit de parada (`uart_get_word_length`, `uart_get_parity`,
+   `uart_get_stop_bits`). La cinta no lo cambia, pero `resume()` no lo supone;
+4. vacía la entrada (`uart_flush_input`): lo que entró a 600 baudios es basura para el disco;
+5. solo entonces vuelve a atender tramas y devuelve `Done`.
+
+Si falla cualquier paso, `resume()` devuelve `Failed` y:
+
+- el disco **no** atiende tramas: D1 sigue en silencio y el Atari reintenta;
+- el árbitro pasa a **`DiskFault`**, un estado nuevo. No es `Disk`: no se emite ningún evento de D1 recuperado;
+- la tarea SIO reintenta `resume()` cada 100 ms. Son llamadas sin reservas ni `uart_driver_*`;
+- la consola lo dice una vez por cambio de estado;
+- `DiskFault` no vuelve a pedir la cinta: el MOTOR la pide solo con el árbitro en `Disk`.
 
 **Sin memoria dinámica en la ruta SIO.**
 
@@ -288,9 +321,10 @@ DataInArbiter.step(motorOn, commandLow, tapeReady, tapeEnded, poweredOff, gates)
   - con gates == false devuelve siempre Keep con owner == Disk
 
 T9a (§2.4):
-DataInArbiter.owner()     -> Disk | TakePending | Tape | ReleasePending | Fault | Released | None
+DataInArbiter.owner()     -> Disk | TakePending | Tape | ReleasePending | Fault | Released | DiskFault | None
 TapeLine.take()/release() -> Done | Pending | Failed
-DiskLine.park()/resume()  -> sin instalar ni borrar UART2
+DiskLine.park()          -> sin instalar ni borrar UART2
+DiskLine.resume()        -> Done | Failed; Done solo con 19 200 baudios ±2 %, 8N1 verificados y la entrada vacía
 DataInHandover            -> estado + secuencia, solo atómicos; la tarea SIO escribe las peticiones y la
                              tarea de la casetera las confirmaciones
 TapeProgress.ended()      -> bool atómico que publica la casetera: fin de la última parte Y salida vacía; lo lee
@@ -346,7 +380,8 @@ TapeProgress.ended()      -> bool atómico que publica la casetera: fin de la ú
 | T9a.1 | unidad (`test_data_in_arbiter`, `test_data_in_handover`, nuevo) | `take` `Pending` → `TakePending` sin transmisor activo; `Done` solo con la secuencia propia; una confirmación vieja se ignora; `take` vencido a los 20 ms → `release` → el disco reanuda solo tras `Disk`; `release` vencido → `Fault` sin `resume()`, reintento cada 100 ms; nunca `resume()` con la cinta en `Tape` | casetera falsa que confirma en el tick N, nunca, o con otra secuencia |
 | T9a.1, R10 | unidad | en la tarea SIO, `step()`, `park()`, `resume()`, `take()` y `release()` hacen **cero** reservas (contador de `operator new`, como `menu_tnfs_rig.hpp`) y **cero** llamadas a `uart_driver_*` y `rmt_new_*`/`rmt_del_*` | dobles de ESP-IDF del host que registran la llamada y la tarea |
 | T9a.2, R11 | unidad (`test_esp_data_in`) | modo compartido sin `uart_driver_install`/`delete`; no confirma con TX ocupado, con una pasada FSK activa, con `releasePending()` ni con `faulted()`; confirma cuando todo queda libre; las reservas del RMT ocurren solo en la tarea de la casetera, una por pasada (comportamiento documentado) | dobles de `uart_wait_tx_done` y RMT ocupados o libres |
-| T9a.2, R9 | unidad (`test_esp_data_in`, `test_esp_sio_uart`) | con un doble de UART que modela el anillo, la FIFO de 128 bytes y el tiempo por byte: `send()` del modo compartido **nunca** bloquea (0 µs en `uart_write_bytes`), nunca deja más de 32 bytes en vuelo y deja el resto en el reproductor; con 512 bytes pendientes, el `release` confirma en ≤ 0,6 s; `EspSioUart::write()` termina en el mismo tiempo de línea con anillo que sin él (respuesta de 129 bytes a 19200 baudios incluida) | anillo, FIFO y reloj del doble |
+| T9a.2, R9 | unidad (`test_esp_data_in`, `test_esp_sio_uart`) | con un doble de UART que modela el anillo, la FIFO de 128 bytes y el tiempo por byte: `send()` del modo compartido **nunca** bloquea (0 µs en `uart_write_bytes`), la suma anillo + FIFO + registro nunca pasa de 32 bytes, **también** cuando el doble mueve bytes del anillo a la FIFO entre las dos lecturas y cuando el anillo está vacío pero la FIFO llena; con 512 bytes pendientes, el `release` confirma en ≤ 600 ms; un mutante que mira solo `uart_get_tx_buffer_free_size()` deja hasta 160 bytes en vuelo y la prueba falla; `EspSioUart::write()` termina en el mismo tiempo de línea con anillo que sin él (respuesta de 129 bytes a 19200 baudios incluida) | anillo (con cabeceras por escritura), FIFO, registro de desplazamiento, interrupción que mueve bytes y reloj del doble |
+| T9a.1 (`resume`) | unidad (`test_esp_sio_uart`, `test_data_in_handover`) | `resume()` devuelve `Done` solo con la velocidad leída dentro de ±2 % de 19 200, 8N1 y la entrada vaciada; `uart_set_baudrate` fallido, velocidad leída en 600 o formato distinto → `Failed`, árbitro en `DiskFault`, ninguna trama atendida y ningún evento de D1 recuperado; un reintento que funciona a los 100 ms → `Disk` una sola vez; en `DiskFault` el MOTOR no pide la cinta | doble de UART con `set_baudrate`, `get_baudrate` y formato programables |
 | T9a.2 (`Fault`) | unidad | `Disk` se confirma solo tras `uart_set_pin` correcto **y** la matriz GPIO leída como `U2TXD_OUT_IDX` con salida habilitada; `uart_set_pin` fallido o lectura distinta → `Released`, ningún `resume()`, reintento cada 100 ms; una recuperación que funciona al segundo intento → un solo `resume()`; confirmación con secuencia vieja o tras el plazo → ignorada | doble de la matriz GPIO (registro de `out_sel` y `enable`) y de `uart_set_pin` con fallo programable |
 | T9a.4 | unidad | `ended()` sigue falso con el reproductor al final pero con bytes en el anillo o con una pasada FSK activa; pasa a verdadero solo al vaciarse todo; con MOTOR apagado, el árbitro no pide `release` antes | reproductor al final y doble de UART/RMT ocupados |
 | T9a.3 | unidad (`test_cassette_player`) | el cambio de salida espera a que la escritura en curso termine; ningún byte partido; tras soltar, la salida es «descartar» | salidas falsas |
@@ -431,9 +466,10 @@ Cada tarea de riesgo 2 pide flasheo y banco con aprobación.
 | R6 | El juego lee disco tras la cinta y pierde una trama | regla 3 de §2.3 | un reintento del OS | El OS reintenta; se verifica en T9 con un caso real si existe |
 | R7 | AC9–AC12 dependen de puertas no aprobadas | M3a/H4 en `false` | el objetivo final queda pendiente | T9 fuera de este PR; T4 y T7 dejan la lógica probada e inerte |
 | R8 | La casetera no confirma a tiempo | casetera bloqueada o hardware ocupado | D1 en pausa | Plazos de §2.4; un `take` vencido sigue como `release`; el disco reanuda solo con confirmación (T9a.1) |
-| R9 | `release` tarda segundos, o la cinta bloquea su tarea | UART2 sin anillo de TX: 512 bytes bloquean unos 6,4 s | casetera sin confirmar; D1 en pausa | Decisión 3: anillo de 2048 al arrancar y como mucho 32 bytes en vuelo (≈ 0,6 s); prueba de bloqueo cero (T9a.2); tiempos del SIO comprobados en host y en el banco del disco |
+| R9 | `release` tarda segundos, o la cinta bloquea su tarea | UART2 sin anillo de TX: 512 bytes bloquean unos 6,4 s; o contar solo el anillo y dejar la FIFO llena (160 bytes, ≈ 2,7 s) | casetera sin confirmar; D1 en pausa | Decisión 3: anillo de 2048 al arrancar y como mucho 32 bytes en vuelo contando anillo + FIFO + registro (600 ms); prueba de bloqueo cero (T9a.2); tiempos del SIO comprobados en host y en el banco del disco |
 | R10 | Memoria dinámica en la tarea SIO | un `uart_driver_*` o `rmt_*` llamado desde `step()` | viola ADR-011 | Decisión 1 de §2.4; prueba de host que cuenta reservas y llamadas por tarea (§5) |
 | R11 | Cambio de salida con bytes o FSK en vuelo | cambiar solo «entre ticks» | bytes partidos o dos transmisores | Condición «hardware libre» de §2.4; prueba con el UART y el RMT ocupados (T9a.2) |
+| R12 | D1 «recuperado» con la línea mal configurada | `resume()` sin verificar la velocidad tras la cinta a 600 baudios | D1 no responde o responde basura y nadie lo ve | «Reanudar el disco»: `resume()` verifica 19 200 baudios, 8N1 y vacía la entrada; `Failed` → `DiskFault` visible y reintento (T9a.1) |
 
 **Decisiones abiertas:** ninguna bloquea T1–T8. El tamaño del banco PSRAM solo se revisa si R3 se dispara.
 

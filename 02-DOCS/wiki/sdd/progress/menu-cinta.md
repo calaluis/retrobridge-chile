@@ -225,6 +225,64 @@ Plan: [`plans/menu-cinta.md`](../plans/menu-cinta.md). T1–T7 se hicieron en el
   contado como vacío, sin el coste de 28, `release()` sin `giveBack()`, `release()` con `Busy` y `recover()` sin
   matriz. Sigue sobreviviendo el equivalente «`hardwareFree` sin el canal RMT».
 
+## T9a.3 — salida en marcha (2026-11-24)
+
+- **Hecho.**
+  - `CassettePlayer::changeOutputs(previous)`: el dueño pasa otras salidas a `tick()` desde el tick siguiente.
+    Se llama entre dos ticks, así que ningún `send()` ni `push()` está a medias: cada byte va entero a una sola
+    salida.
+  - `PlayerOutputs` (`rb/cassette/player_outputs.hpp`, nuevo): «descartar» hasta que la casetera toma DATA IN; las
+    salidas vivas (`EspDataIn` en el ESP32) solo tras `select(true)`; «descartar» otra vez con `select(false)`.
+    `select(true)` sin salidas vivas devuelve `false` y sigue en «descartar». No reserva memoria.
+- **Decisiones de implementación.**
+  - **Registros:** el registro sigue desde el byte donde está; nada se pierde ni se repite. La velocidad se vuelve a
+    enviar a la salida nueva antes de su primer byte (sin esto, `EspDataIn` sacaría los bytes a la velocidad que
+    dejó el disco, 19 200).
+  - **FSK ya empezado** (`FskPlay`, o `FskDrain` con la salida vieja sin vaciar): se corta en la salida vieja
+    (`stop()`, DATA IN a marca) y la pasada se repite entera desde su hueco en la salida nueva, como un corte de
+    MOTOR (PR #1804). La salida nueva nunca recibe media pasada. Esperar al final de la pasada no cabe en los plazos
+    (`kTakeTimeoutUs` = 20 ms, `kReleaseTimeoutUs` = 600 ms).
+  - **FSK que ya sonó entero** (`FskDrain` con la salida vieja vacía): no se repite; la cinta sigue.
+  - **FSK esperando la puerta de inicio:** no ha sonado nada; no se corta y el cargador conserva su trabajo.
+  - Quién llama a `select()` (la tarea de la casetera, en los pasos 3 y 6 del traspaso) es T9a.7; esta tarea deja la
+    pieza lista y probada. `CassetteService` no cambia.
+- **Pruebas** (`test_cassette_player`, 8 nuevas): registro partido entre salidas sin perder ni repetir bytes y con la
+  velocidad en la nueva; envío rechazado por la vieja que sale por la nueva; pasada drenando y pasada a medias
+  cortadas y repetidas enteras, sin reservas; pasada ya sonada sin repetir; puerta cerrada sin corte; `PlayerOutputs`
+  con toma y suelta a mitad de registro y suelta a mitad de pasada (la salida viva se para y no recibe más).
+- **RED** (con `changeOutputs` vacío): 6 de 8 fallan. Pasan ya antes, como pruebas de no regresión, «pasada ya
+  sonada» y «puerta cerrada».
+- **GREEN:** 34/34 en `test_rb_cassette_player`; host 98/98; herramientas 300/300; capas OK.
+- **Mutantes:** 7 de 7 detectados: velocidad no reenviada, pasada sonada repetida, `FskPlay` sin corte, `FskDrain`
+  sin corte, `select()` que corta la salida nueva en vez de la vieja, `select(true)` sin salidas vivas y `select()`
+  sin avisar al reproductor.
+- **Lo que no prueba.** El cambio con el hardware real (UART2 y RMT); eso lo cubren `hardwareFree()` de T9a.2 y el
+  banco de T9b.
+
+### Revisión del PR #102 (2026-11-24)
+
+- **Riesgo confirmado.** El reproductor seguía con MOTOR mientras DATA IN aún no era de la casetera: durante
+  `TakePending` un registro sin hueco se iba entero a «descartar», y una pasada FSK corta «sonaba» en
+  `DiscardWaveOut` (siempre `idle()`) y al tomar no se repetía. Se perdía contenido.
+- **Corrección (en T9a.3).**
+  - `PlayerOutputs::tapeMayMove()` y `GatedMotor`: con salida viva configurada, la cinta se mueve solo mientras
+    está seleccionada; el reproductor ve MOTOR apagado en `TakePending`, tras soltar o con la toma fallando (la
+    pasada FSK sigue precargándose en su hueco). Sin salida viva (`kTapeOutput = false`) nada cambia: la cinta va
+    con MOTOR a «descartar» y `cas status` sigue el intento.
+  - Defensa debajo de la puerta: `changeOutputs(previous, previousDrove)`. Desde una salida que no llegaba a DATA
+    IN, un registro o una pasada ya empezados se repiten enteros desde su hueco, aunque «descartar» los diera por
+    sonados.
+  - La política de UART2 (decisión 3, `hardwareFree()`) y las puertas M3a/H4 no cambian.
+- **Contrato con T9a.7** (plan, requisito 1): `setLive()` al arrancar, cada tick con `GatedMotor`,
+  `select(true)`/`select(false)` en los pasos 3 y 6. Prueba de integración obligatoria antes de `kTapeOutput = true`.
+- **RED** (API con `tapeMayMove()` siempre verdadero y `previousDrove` ignorado): 6 fallan;
+  `a_record_with_no_gap_waits_for_the_take` (3 bytes en «descartar») y
+  `a_fsk_run_ending_during_take_pending_is_not_lost` (3 partes en «descartar») reproducen los dos escenarios.
+- **GREEN:** 41/41 en `test_rb_cassette_player`; host 98/98; herramientas 300/300; capas OK.
+- **Mutantes:** 14 de 14 detectados (7 nuevos: puerta siempre abierta, cinta parada sin salida viva, `GatedMotor`
+  sin puerta, `previousDrove` ignorado, pasada o registro desde «descartar» sin repetir, `select()` que da el lado
+  nuevo como viejo).
+
 ## Siguiente
 
 Revisar este PR de documentos. Los PR de código de T9a empiezan solo después de aprobarlo, uno por tarea.

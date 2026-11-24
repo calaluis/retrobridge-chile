@@ -420,7 +420,7 @@ instalados a la vez es el fallo que más cuesta en el equipo).
 | T9a.4 | `tapeEnded` real: `TapeProgress.ended()` publicado por la casetera solo con la salida vacía, leído sin bloquear | AC9–AC12 (lógica), requisito 2 | 1 | T9a.1 | sí | `ctest -R data_in_handover` verde: la regla 3 («fin + MOTOR apagado → disco») con el valor publicado |
 | T9a.5 | `A` sin disco en D1 con una cinta en `C:` arranca (`COLDSV`); D1 tras el arranque de cinta según la pregunta abierta de la spec | requisitos 3 y 4 | 1 | — | sí | `ctest -R menu_cinta` verde |
 | T9a.6 | Línea de ayuda con `A`, OPTION, START+OPTION y `C`, dentro de 40 columnas | requisito 5 | 0 | — | sí | `ctest -R menu_cinta` verde; texto literal |
-| T9a.7 | Firmware: UART2 con anillo de TX de 2048 bytes al arrancar (decisión 3), `DiskLine` con `park`/`resume`, `EspTapeLine` en lugar de `PendingTapeLine` y `DataInHandover` en `menu_sio.cpp`. **`kTapeOutput` sigue en `false`** | — | 2 | T9a.1–T9a.4 | no | CI verde: ESP-IDF, paquete `menu-sio` y comprobaciones de puertas **sin cambios** |
+| T9a.7 | Firmware: UART2 con anillo de TX de 2048 bytes al arrancar (decisión 3), `DiskLine` con `park`/`resume`, `EspTapeLine` en lugar de `PendingTapeLine` y `DataInHandover` en `menu_sio.cpp`; `CassetteService` con `PlayerOutputs` y `GatedMotor` según el contrato del requisito 1. **`kTapeOutput` sigue en `false`** | — | 2 | T9a.1–T9a.4 | no | CI verde: ESP-IDF, paquete `menu-sio` y comprobaciones de puertas **sin cambios**; prueba de integración del contrato del requisito 1 en verde |
 | T9b | Banco AC9–AC12 con MOTOR activo y salida de casetera | AC9–AC12 | 2 | T8, T9a y los **requisitos previos** (abajo) | no | registro con las tres cintas de `cassette-cas` cargadas desde el menú |
 
 **Requisitos previos de T9b (enmienda del 2026-11-24).** Hacen falta todos. Ninguna aceptación de riesgo
@@ -446,6 +446,22 @@ Requisitos de código de T9 antes de poner `kTapeOutput = true` (revisión de T7
 1. **Salidas de la casetera en marcha.** `CassetteService` elige en `start()` si reproduce por `EspDataIn` o
    descarta; tiene que poder pasar a `EspDataIn` cuando el árbitro llama a `TapeLine.take()` y volver a descartar
    con `release()`, sin reiniciar el servicio. Hasta entonces `PendingTapeLine::take()` devuelve `false`.
+
+   **Contrato con T9a.7 (revisión del PR #102, 2026-11-24).** T9a.3 deja la pieza (`PlayerOutputs`,
+   `GatedMotor`, `CassettePlayer::changeOutputs`); la garantía de no perder contenido depende de cómo la cablee
+   T9a.7, que **debe** cumplir:
+   - `PlayerOutputs::setLive()` se llama en `start()`, antes de cargar ninguna cinta, cuando hay salida viva;
+   - cada tick pasa a `CassettePlayer::tick()` un `GatedMotor` (MOTOR real + `PlayerOutputs`), `outs.bytes()` y
+     `outs.wave()`; nunca el MOTOR real directamente;
+   - `select(true)` solo en el paso 3 del traspaso (tras ver hardware libre, antes de confirmar `Tape`) y
+     `select(false)` en el paso 6 (antes de esperar hardware libre y confirmar `Disk`), en la tarea de la casetera.
+
+   Con eso, mientras DATA IN no es de la casetera (`TakePending`, tras soltar o con la toma fallando) la cinta no
+   se mueve: nada se pierde en «descartar». Si aun así un segmento empezó en «descartar», al tomar se repite entero
+   desde su hueco. **Verificación obligatoria antes de `kTapeOutput = true`:** una prueba de integración de T9a.7
+   con el `CassetteService` real (o su bucle) que, con MOTOR encendido y la toma pendiente varios ticks, compruebe
+   cero bytes y cero partes FSK en «descartar» y la cinta entera en la salida viva tras `Tape`, con un registro sin
+   hueco y con una pasada FSK corta.
 2. **`tapeEnded` real.** `DataInReadings.tapeEnded` vale siempre `false` en `menu_sio.cpp`; tiene que llegar del
    reproductor (fin de la última parte de la cinta) sin bloquear el bucle SIO, para que la regla 3 («fin de cinta y
    MOTOR apagado → disco») funcione.

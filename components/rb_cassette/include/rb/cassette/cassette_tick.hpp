@@ -94,8 +94,10 @@ private:
     DataInLender* lender_ = nullptr;
     EndSink* sink_ = nullptr;
     uint32_t answered_ = 0;  // the last request confirmed
-    // From select(false) of live outputs until giveBack() has the line back (Uart or Lost): the tape's bytes
-    // may still be going out on the live line, so the end is not published (review of PR #106).
+    // From select(false) of live outputs until giveBack() has the line back with TX empty (Uart), or until a
+    // new take is confirmed: the tape's bytes may still be going out on the live line, so the end is not
+    // published. Lost does not clear it: the line was freed for safety, with no proof the bytes left
+    // (reviews of PR #106).
     bool returning_ = false;
 };
 

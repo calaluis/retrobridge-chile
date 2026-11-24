@@ -32,6 +32,7 @@ void CassetteTick::answer() noexcept
         }
         lender_->confirm(ask.seq, DataInLender::Ack::Tape);
         answered_ = ask.seq;
+        returning_ = false;  // a new take: the live line is the tape's again
         return;
     }
     if (outputs_.live()) {
@@ -46,8 +47,7 @@ void CassetteTick::answer() noexcept
         break;
     case LiveLine::GiveBack::Lost:
         lender_->confirm(ask.seq, DataInLender::Ack::Released);
-        answered_ = ask.seq;
-        returning_ = false;
+        answered_ = ask.seq;  // returning_ stays: Lost frees the line for safety, the bytes may never have left
         break;
     case LiveLine::GiveBack::Busy:
         break;

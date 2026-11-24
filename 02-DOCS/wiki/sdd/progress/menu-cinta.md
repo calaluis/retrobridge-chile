@@ -460,6 +460,25 @@ Aprobable para T9a.4, sin defecto bloqueante. Dos observaciones pasan a verifica
 - **Mutantes:** 12 de 12 detectados, más el cuerpo RED. Nuevos: publicar sin mirar `returning_`, `returning_`
   nunca activado y `returning_` no apagado con `Uart`.
 
+### Segunda revisión del PR #106 (2026-11-24)
+
+- **Hallazgo:** `Lost` también apagaba `returning_`. Pero `EspDataIn::giveBack()` devuelve `Lost` cuando falla
+  la ruta GPIO, antes de mirar UART2. En el tick siguiente se publicaba un fin falso.
+- **Corrección:**
+  - `Uart` significa línea recuperada y TX vacío, así que apaga `returning_`.
+  - `Lost` significa línea liberada por seguridad, sin garantía de que la transmisión terminó. No apaga
+    `returning_`. Tras `Lost`, el fin no se publica, ni siquiera cuando UART2 ya está vacío.
+  - Una nueva toma confirmada (`Tape`) apaga `returning_`.
+- **Pruebas nuevas:**
+  - `test_a_lost_line_with_bytes_left_in_uart2_never_publishes_the_end`: `EspDataIn` real con `failUartSetPin`.
+    `Released` se confirma con el byte aún en UART2. En 300 ticks, nunca `ToDisk` ni fin publicado.
+  - `test_a_new_take_after_a_lost_line_publishes_the_end_again`: tras `Lost`, una nueva toma vuelve a publicar
+    el fin real.
+- **RED:** falló con «end published after a lost line». **GREEN:** 8 de 8 en `test_cassette_tick`; host 99/99;
+  herramientas 307/307; capas OK.
+- **Mutantes:** 14 de 14 detectados, más el cuerpo RED. Nuevos: `Lost` apaga `returning_` y la toma nueva no lo
+  apaga.
+
 ## Siguiente
 
 Revisar este PR de documentos. Los PR de código de T9a empiezan solo después de aprobarlo, uno por tarea.

@@ -161,18 +161,24 @@ driver.
 - **El disco conserva sus tiempos.** `EspSioUart::write()` sigue llamando a `uart_write_bytes()` y después a
   `uart_wait_tx_done()` con el plazo de la línea. La respuesta termina en el mismo instante que hoy. Lo único que
   cambia es que el relleno de la FIFO pasa a la interrupción del driver.
-- **La cinta nunca bloquea, y cuenta todo lo que está en vuelo (revisión 3).** `uart_get_tx_buffer_free_size()`
-  mide solo el anillo. La interrupción del driver pasa bytes del anillo a la FIFO de hardware (hasta 128), así que
-  «anillo casi vacío» no acota lo que falta por salir. Por eso la cinta calcula los bytes en vuelo como la suma de:
-  - **anillo:** tamaño del anillo − `uart_get_tx_buffer_free_size()`. Incluye las cabeceras que el driver guarda
-    por cada escritura, así que sobrestima: es seguro;
+- **La cinta nunca bloquea, y cuenta todo lo que está en vuelo (revisión 3; corregida en la revisión del PR #101).**
+  La interrupción del driver pasa bytes del anillo a la FIFO de hardware (hasta 128), así que «anillo casi vacío» no
+  acota lo que falta por salir. Por eso la cinta calcula los bytes en vuelo como la suma de:
+  - **anillo:** 0 si está vacío; si está ocupado, o si la lectura falla, cuenta como **lleno** (su tamaño).
+    `uart_get_tx_buffer_free_size()` no da el espacio libre: en ESP-IDF 6.1 (`esp_driver_uart/src/uart.c`) es una
+    cota conservadora para la siguiente escritura en un anillo NOSPLIT. Cada `uart_write_bytes()` mete dos
+    elementos (descripción: 8 + 12; datos: 8 + datos redondeados a 4). Con el anillo vacío devuelve tamaño − 8 − 20
+    (2020 con 2048); con un solo elemento dentro ya baja a 996. Por eso solo se usa para saber si está vacío:
+    `libre + 28 ≥ tamaño`. Una versión de IDF con otros tamaños se lee como «nunca vacío» y la cinta se para, que
+    es seguro;
   - **FIFO:** 128 − huecos libres de la FIFO de TX (`uart_ll_get_txfifo_len()` de la HAL de ESP-IDF);
   - **registro de desplazamiento:** 1 byte, el que sale en ese momento.
 
   Se lee primero el anillo y después la FIFO. Si la interrupción mueve bytes entre las dos lecturas, se cuentan dos
   veces: otra vez sobrestima, nunca subestima.
 - **La regla.** En el modo compartido, `send()` escribe solo si los bytes en vuelo son menos de
-  `kSharedInFlight` = 32, y escribe como mucho `kSharedInFlight − en vuelo − 1` bytes. Tras escribir, la suma solo
+  `kSharedInFlight` = 32, y escribe como mucho `kSharedInFlight − en vuelo − 1` bytes. Como el anillo ocupado
+  cuenta como lleno, en la práctica solo escribe con el anillo vacío. Tras escribir, la suma solo
   baja. Lo que no cabe se queda en el reproductor, que ya lo tiene en el banco PSRAM, y sale en los ticks
   siguientes. 32 bytes son unos 0,53 s a 600 baudios: mucho más que un tick de 2 ms, así que el flujo no se corta.
 - **Consecuencia para los plazos.** Como mucho hay 32 bytes en vuelo **entre anillo, FIFO y registro**. Por eso

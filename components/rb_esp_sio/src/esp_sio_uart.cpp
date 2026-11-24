@@ -36,7 +36,7 @@ bool EspSioUart::begin() noexcept
         ESP_LOGE(kTag, "COMMAND (GPIO%d) not set as input", pins_.command);
         return false;
     }
-    if (uart_driver_install(kUart, kUartRxBuffer, kUartTxBuffer, 0, nullptr, 0) != ESP_OK) {
+    if (uart_driver_install(kUart, kUartRxBuffer, txRing_, 0, nullptr, 0) != ESP_OK) {
         ESP_LOGE(kTag, "UART2 driver not installed: SIO line off");
         return false;
     }

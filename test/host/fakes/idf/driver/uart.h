@@ -29,6 +29,7 @@ esp_err_t uart_set_pin(uart_port_t port, int tx, int rx, int rts, int cts);
 esp_err_t uart_wait_tx_done(uart_port_t port, uint32_t ticks);
 esp_err_t uart_set_baudrate(uart_port_t port, uint32_t baud);
 int uart_write_bytes(uart_port_t port, const void* src, size_t size);
+esp_err_t uart_get_tx_buffer_free_size(uart_port_t port, size_t* size);  // menu-cinta T9a.2
 
 // SIO line adapter (menu-sio-fisico T4): reception.
 int uart_read_bytes(uart_port_t port, void* buf, uint32_t length, uint32_t ticks);

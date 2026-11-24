@@ -141,6 +141,90 @@ Plan: [`plans/menu-cinta.md`](../plans/menu-cinta.md). T1–T7 se hicieron en el
   T9a.7 debe volver a ver `DataInHandover` en el `.elf`, ya enlazado.
   `rb_menu` no incluye cabeceras de drivers. Hardware libre y `Released` en la casetera: T9a.2.
 
+## T9a.2 — `EspDataIn` en UART compartido (2026-11-24)
+
+- **Hecho.**
+  - `EspDataIn::attachShared(pins, txRing)`: usa UART2 tal como lo instaló el disco al arrancar. No instala, no
+    borra y no enruta nada; `release()` en este modo solo se desengancha.
+  - `send()` en modo compartido (decisión 3): cuenta los bytes en vuelo como anillo (0 si está vacío, su tamaño
+    si no: ver «Revisión del PR #101») + FIFO (128 − huecos, `uart_ll_get_txfifo_len()` de `esp_hal_uart`) + 1 del registro. Escribe solo
+    si todo cabe por debajo de 32; si no, devuelve `false` sin tomar nada (el contrato de `ByteOut`). Sin anillo
+    (la alternativa): como mucho 32 bytes y solo con la línea vacía.
+  - `hardwareFree()`: la condición «hardware libre» de §2.4 (TX vacío, sin pasada FSK ni porciones en cola, RMT
+    sin `releasePending()`, sin fallo).
+  - `giveBack()` → `Busy`, `Uart` o `Lost`: termina la pasada, devuelve el pin a UART2 y, en modo compartido,
+    **lee la matriz GPIO** (`U2TXD_OUT_IDX` con la salida habilitada). Si `uart_set_pin` falla o la matriz dice otra
+    cosa: `gpio_reset_pin`, `faulted()` y `Lost` (la casetera confirma `Released`). El error se registra una vez
+    por fallo.
+  - La lectura de la matriz pasa a `rb/esp/gpio_route.hpp`; el banco C8 (`main/bench_c8.cpp`) la usa.
+  - `EspSioUart(pins, txRing)`: el anillo de TX es un parámetro; el valor por defecto sigue en 0. El firmware no
+    cambia: el anillo de 2048 (`kSharedTxRing`) lo pone T9a.7.
+- **Decisiones de implementación.**
+  - `send()` es «todo o nada» en vez de partir la escritura: el reproductor, tras un rechazo, pide un solo byte
+    en el tick siguiente, así que nunca se atasca.
+  - La comprobación de la matriz solo corre en modo compartido; el modo propio (paquetes `cassette` y `bench-c8`)
+    se comporta igual que antes.
+  - Lista exacta de llamadas del empaquetador (`tools/ci/firmware_package.py`): `uart_wait_tx_done` 2 → 3,
+    `uart_get_tx_buffer_free_size` 1 y `uart_ll_get_txfifo_len` 1, nuevas; el resto igual (`uart_set_pin` 3,
+    `gpio_reset_pin` 2). La lista de antes de C8 (paquete `cassette-lectura`, f405106) no cambia. `puertas.json`
+    no se toca.
+- **Pruebas.**
+  - `fake_idf` con un modelo de TX: anillo con cabeceras por escritura, FIFO de 128, registro, 10 bits por byte e
+    interrupción que mueve bytes (también entre las dos lecturas). Y la matriz GPIO del pin.
+  - `test_esp_data_in_shared` (17, nueva): ninguna llamada a `uart_driver_install`/`delete`; un canal RMT por
+    pasada; `send()` sin bloqueo (0 µs) y ≤ 32 bytes en vuelo, también con la interrupción entre lecturas y con la
+    FIFO llena y el anillo vacío; con 512 bytes debidos la línea vuelve en ≤ 600 ms, con anillo y sin él; hardware
+    libre; `giveBack()` con TX ocupado, RMT que no suelta, `uart_set_pin` fallido y matriz distinta.
+  - `test_esp_data_in_recovery` (5, nueva): árbitro + traspaso + `EspDataIn` reales. `Disk` solo tras
+    `uart_set_pin` y matriz correctos; si no, `Released`, ningún `resume()` y reintento cada 100 ms; al
+    recuperarse, un solo `resume()`; confirmación vieja o tras el plazo, ignorada.
+  - `test_esp_sio_uart`: `write()` termina en el mismo tiempo con anillo de 2048 que sin él (1, 4, 128 y 129
+    bytes a 19 200).
+  - Mutantes (10): 9 detectados (FIFO sin contar, sin control de espacio, `hardwareFree` sin UART, sin matriz,
+    `releasePending` ignorado, confirmar con bytes en vuelo, más de 32 sin anillo, error en cada reintento).
+    Sobrevive «`hardwareFree` sin mirar el canal RMT»: es equivalente, porque un canal vivo implica `sending_` o
+    `releasePending_` tras cada `pump()`/`stop()`. Se deja como barrera defensiva (`!fskActive()` del plan).
+- **Lo que no prueba.** Que el driver y la HAL reales se comporten como el modelo: lo ve el banco de T9b. La
+  compilación con ESP-IDF 6.1 la confirma la CI.
+
+### Revisión del PR #101 (2026-11-24)
+
+- **1. `uart_get_tx_buffer_free_size()` no es el espacio libre.** En ESP-IDF 6.1
+  (`components/esp_driver_uart/src/uart.c`, release/v6.1) devuelve una cota conservadora para la siguiente
+  escritura en un anillo NOSPLIT:
+  - cada `uart_write_bytes()` mete dos elementos: la descripción (cabecera de 8 + `uart_tx_data_t`, 12 bytes) y los
+    datos (8 + datos redondeados a 4);
+  - anillo vacío: tamaño − 8 − 20 (2020 con 2048). Con un elemento dentro, la cota baja al tamaño máximo de
+    elemento − 20 (996): `txRing − free` daba 28 con el anillo vacío y 1052 con un byte dentro;
+  - la interrupción devuelve el elemento de datos solo cuando lo copió entero a la FIFO.
+- **Corrección.** La lectura solo dice si el anillo está vacío: `free + 28 ≥ txRing`. Vacío cuenta 0; no vacío (o
+  ilegible) cuenta como lleno. `send()` escribe solo con el anillo vacío y la suma FIFO + registro + bytes ≤ 31, así
+  que en vuelo nunca hay más de 32. Otra versión de IDF con otros tamaños se lee como «nunca vacío»: la cinta se
+  para, que es seguro; la CI fija la 6.1.
+- **El doble** (`fake_idf`) ahora sigue `uart.c`: anillo NOSPLIT con posiciones, los dos elementos por escritura,
+  la interrupción que devuelve elementos en orden y la misma fórmula de `uart_get_tx_buffer_free_size()`.
+- **2. `release()` y `recover()` en modo compartido.**
+  - `release()` se desengancha solo si `giveBack()` devuelve `Uart` (pin en UART2 TX, comprobado en la matriz, y
+    nada por salir). Con TX pendiente devuelve `false` y sigue enganchado; con `uart_set_pin` fallido o ruta
+    incorrecta devuelve `false`, el pin queda reseteado y el driver en fallo y enganchado.
+  - `recover()` pasa por `pinToUart()`, que lee la matriz: sin `U2TXD_OUT_IDX` con salida habilitada, el pin se
+    resetea otra vez y sigue el fallo. Con bytes aún en UART2 restaura la ruta en el acto; esos bytes salen por
+    UART2 y `hardwareFree()` sigue falso hasta que salen.
+  - La lista de llamadas del empaquetador no cambia: ninguna llamada nueva.
+- **RED (antes de corregir, 1f5ee49 con el doble nuevo):** 7 de 26 fallan en `test_esp_data_in_shared`:
+  `give_back_is_busy_while_bytes_go_out` (8 bytes rechazados con la línea vacía), `an_empty_line_takes_a_30_byte_
+  catch_up` (`inFlight()` = 29 con la línea vacía), `release_waits_for_the_bytes_going_out`, `release_after_a_
+  failed_uart_set_pin_refuses_and_stays_safe`, `release_with_a_wrong_route_refuses`, `recover_checks_the_matrix_
+  in_shared_mode` y `recover_with_bytes_pending_restores_the_route_and_keeps_the_line_busy`. Pasan ya antes:
+  `the_free_size_follows_esp_idf_6_1` (prueba del doble), `a_write_still_in_the_ring_blocks_the_next` y
+  `records_flow_at_600_baud_without_loss`.
+- **GREEN:** 26/26 en `test_esp_data_in_shared`; host 98/98; herramientas 300/300.
+- **Progreso a 600 baudios:** 10 s con el reproductor al ritmo del reloj: 600 bytes aceptados, todos llegan al
+  driver, al menos 599 ya salieron por la línea, 0 µs bloqueado y nunca más de 32 en vuelo.
+- **Mutantes:** 14 detectados de 15 ejecutados. Los 6 nuevos: lectura vieja `txRing − free`, anillo no vacío
+  contado como vacío, sin el coste de 28, `release()` sin `giveBack()`, `release()` con `Busy` y `recover()` sin
+  matriz. Sigue sobreviviendo el equivalente «`hardwareFree` sin el canal RMT».
+
 ## Siguiente
 
 Revisar este PR de documentos. Los PR de código de T9a empiezan solo después de aprobarlo, uno por tarea.

@@ -66,7 +66,54 @@ struct State {
     unsigned uartFlushes = 0;
     unsigned uartWaitTxDone = 0;
     unsigned taskDelays = 0;
+
+    // --- UART2 TX timing model (menu-cinta T9a.2, decision 3) --------------------------------
+    // Off by default: the older tests keep their simple UART. On, it follows ESP-IDF 6.1
+    // (components/esp_driver_uart/src/uart.c, release/v6.1):
+    // - with a TX ring, uart_write_bytes() puts two items in a NOSPLIT ring buffer: the description
+    //   (8-byte item header + uart_tx_data_t, 12 bytes on the ESP32) and the data (8 + data rounded up
+    //   to 4). It blocks only while an item does not fit;
+    // - the TX interrupt takes items in order: the description is returned at once, the data is copied
+    //   into the FIFO and its item returned only once all of it is copied;
+    // - uart_get_tx_buffer_free_size() is the driver's conservative bound for the next write, computed
+    //   as uart.c does (empty ring: size - 8 - 20; otherwise from the free segments, each capped at the
+    //   ring's max item size, minus 20). It is not the free room: an empty 2048 ring reads 2020, and one
+    //   item in it already drops the bound to 996;
+    // - without a ring, the caller copies into the 128-byte FIFO and blocks until all of it is in.
+    // The shift register sends one byte every 10 bits at uartBaud; uart_wait_tx_done() waits on that.
+    struct RingItem {
+        int off;      // where it starts in the ring
+        int len;      // what it takes: 8-byte header + payload rounded up to 4
+        int data;     // payload bytes for the wire (0 for the description item)
+        int copied;   // payload bytes already in the FIFO
+    };
+    bool txModel = false;
+    int txRing = 0;                      // TX ring size (uart_driver_install's tx_buffer_size)
+    std::vector<RingItem> txItems;       // items not yet returned by the interrupt, oldest first
+    int txWp = 0;                        // where the next item goes
+    uint64_t txBytesOut = 0;             // bytes the shift register finished sending
+    int txFifo = 0;                      // bytes in the hardware FIFO (0..128)
+    int64_t txShiftLeftUs = 0;           // > 0: a byte is in the shift register for this long
+    bool txIsrHeld = false;              // the interrupt does not move ring -> FIFO (until released)
+    bool txIsrAfterRingRead = false;     // the interrupt runs right after uart_get_tx_buffer_free_size()
+    int64_t txWriteBlockedUs = 0;        // the longest single uart_write_bytes() call, in model time
+    int txMaxInFlight = 0;               // most data bytes ever in ring + FIFO + shift register
+    unsigned uartInstalls = 0;
+    unsigned uartDeletes = 0;
+
+    // --- GPIO matrix of the DATA IN pin (menu-cinta T9a.2, Fault recovery) --------------------
+    uint32_t outSel = 256;               // GPIO_FUNCn_OUT_SEL: 256 = SIG_GPIO_OUT (plain GPIO)
+    bool outEnabled = false;
+    bool routeForced = false;            // readOutputRoute() returns the forced values instead
+    uint32_t forcedSel = 0;
+    bool forcedEnabled = false;
 };
+
+constexpr int kTxFifo = 128;
+constexpr int kRingItemHeader = 8;       // ESP-IDF ringbuf: header of every item
+constexpr int kTxDescItem = 8 + 12;      // uart.c: header + uart_tx_data_t (12 bytes on the ESP32)
+constexpr uint32_t kU2TxdOutIdx = 198;   // U2TXD_OUT_IDX on the ESP32
+constexpr uint32_t kRmtOut0Idx = 87;     // RMT_SIG_OUT0_IDX on the ESP32
 
 extern int g_channel;
 extern int g_encoder;
@@ -78,5 +125,14 @@ void reset();
 std::size_t play_all();
 // True when DATA IN is at mark: nothing drives it low. A run in flight may drive it.
 bool line_released();
+// TX model: lets `us` of line time pass (the shift register sends, the interrupt refills the FIFO).
+void tx_advance(int64_t us);
+// TX model: data bytes not yet on the wire (ring + FIFO + shift register), headers not counted.
+int tx_in_flight();
+bool tx_empty();
+void tx_hardware_now();  // runs the interrupt and the hardware once, without time passing
+// TX model: uart_get_tx_buffer_free_size() as ESP-IDF 6.1 computes it for the current ring.
+int tx_free_size();
+void put_item(int payload, int data);  // TX model: one ring item (blocks while it does not fit)
 
 }  // namespace fake_idf

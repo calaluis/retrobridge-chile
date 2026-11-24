@@ -5,6 +5,8 @@
 #include "driver/rmt_tx.h"
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "hal/uart_ll.h"
+#include "rb/esp/gpio_route.hpp"
 
 namespace rb::esp {
 
@@ -17,6 +19,12 @@ constexpr int kUartTxBuffer = 2048;  // records are paced by the player, at most
 constexpr uint32_t kRmtResolutionHz = 1000000;  // 1 tick = 1 us, FskPortion's unit
 constexpr std::size_t kRmtMemSymbols = 64 * 8;  // as the owner's beta: all of the ESP32's RMT RAM
 constexpr std::size_t kChunk = 32;
+// What uart_get_tx_buffer_free_size() reads with the TX ring empty: its size minus 28 (ESP-IDF 6.1, uart.c:
+// 8 for the ring's item header, and 8 + 12 for the description item, uart_tx_data_t, each write puts first).
+// Any item still in the ring caps the bound at the ring's max item size (about half the ring) minus 20, so
+// "empty" can be told apart exactly. Another IDF with other sizes reads as never empty: send() then refuses
+// and the tape stalls, which is safe; CI pins ESP-IDF 6.1.
+constexpr std::size_t kTxRingIdleCost = 8 + 8 + 12;
 
 rmt_channel_handle_t as_channel(void* p) { return static_cast<rmt_channel_handle_t>(p); }
 rmt_encoder_handle_t as_encoder(void* p) { return static_cast<rmt_encoder_handle_t>(p); }
@@ -92,6 +100,77 @@ bool EspDataIn::configure(const rb::board::CassetteOutputAssignment& pins) noexc
     return true;
 }
 
+bool EspDataIn::attachShared(const rb::board::CassetteOutputAssignment& pins, std::size_t txRing) noexcept
+{
+    if (enabled()) {
+        return shared_;
+    }
+    // UART2 and its pins are the disk's, set once at boot: nothing is installed, deleted or routed here.
+    pin_ = pins.dataIn();
+    shared_ = true;
+    txRing_ = txRing;
+    baud_ = 0;  // unknown (the disk's rate): the first setBaud() sets it
+    ESP_LOGI(kTag, "DATA IN on GPIO%d: shared UART2 (TX ring %u), FSK by RMT", pin_, static_cast<unsigned>(txRing));
+    return true;
+}
+
+std::size_t EspDataIn::inFlight() const noexcept
+{
+    // Ring first, FIFO second: a byte the interrupt moves in between is counted twice, never missed.
+    // uart_get_tx_buffer_free_size() is the driver's bound for the next write, not the free room, so it only
+    // says whether the ring is empty. Not empty (or unreadable): counted as full.
+    std::size_t ring = 0;
+    if (txRing_ > 0) {
+        std::size_t free = 0;
+        if (uart_get_tx_buffer_free_size(kUart, &free) != ESP_OK || free + kTxRingIdleCost < txRing_) {
+            ring = txRing_;
+        }
+    }
+    const uint32_t fifoFree = uart_ll_get_txfifo_len(UART_LL_GET_HW(kUart));
+    const std::size_t fifo = fifoFree < kTxFifo ? kTxFifo - fifoFree : 0;
+    return ring + fifo + 1;  // + the shift register, counted as busy
+}
+
+bool EspDataIn::sharedRoom(std::size_t bytes) const noexcept
+{
+    if (txRing_ == 0) {
+        // No ring (the alternative of decision 3): at most 32 bytes, written only with the FIFO and the shift
+        // register empty, so uart_write_bytes() copies them straight into the FIFO and returns.
+        return bytes <= kSharedInFlight && txEmpty();
+    }
+    const std::size_t busy = inFlight();
+    return busy < kSharedInFlight && bytes <= kSharedInFlight - busy - 1;
+}
+
+bool EspDataIn::hardwareFree() const noexcept
+{
+    return enabled() && !faulted_ && channel_ == nullptr && !releasePending_ && !sending_ && feed_.empty() &&
+           txEmpty();
+}
+
+EspDataIn::GiveBack EspDataIn::giveBack() noexcept
+{
+    if (!enabled()) {
+        return GiveBack::Lost;
+    }
+    stop();  // any FSK run ends; the RMT lets go of the pin (or keeps it: releasePending)
+    if (releasePending_) {
+        return GiveBack::Busy;  // the RMT still has the pin: never route the UART over it
+    }
+    // Route DATA IN to UART2 TX; in shared mode pinToUart() also reads the GPIO matrix (ESP_OK alone is
+    // not proof). It resets the pin and faults when either fails.
+    if (!pinToUart()) {
+        return GiveBack::Lost;
+    }
+    if (faulted_) {
+        faulted_ = false;
+        ESP_LOGI(kTag, "DATA IN back on UART2 (GPIO%d), checked in the GPIO matrix", pin_);
+    }
+    return txEmpty() ? GiveBack::Uart : GiveBack::Busy;
+}
+
+bool EspDataIn::txEmpty() const noexcept { return uart_wait_tx_done(kUart, 0) == ESP_OK; }
+
 bool EspDataIn::setBaud(uint32_t baud)
 {
     if (!enabled() || faulted_ || baud == 0) {
@@ -117,6 +196,9 @@ bool EspDataIn::send(rb::core::Span<const uint8_t> bytes)
     }
     if (bytes.size() == 0) {
         return true;
+    }
+    if (shared_ && !sharedRoom(bytes.size())) {
+        return false;  // busy, nothing taken: the player keeps the bytes for a later tick
     }
     const int written = uart_write_bytes(kUart, bytes.data(), bytes.size());
     const bool all = written == static_cast<int>(bytes.size());
@@ -308,7 +390,10 @@ void EspDataIn::discardIfDue() noexcept
 
 bool EspDataIn::pinToUart() noexcept
 {
-    if (traced("uart_set_pin", uart_set_pin(kUart, pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE)) == ESP_OK) {
+    // Shared mode (menu-cinta T9a.2): the disk gets the line back only once the GPIO matrix reads U2TXD with
+    // the output on. The own mode keeps its behaviour (bench test C8 checks the matrix from outside).
+    if (traced("uart_set_pin", uart_set_pin(kUart, pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE)) == ESP_OK &&
+        (!shared_ || drivenByUart2Tx(pin_))) {
         return true;
     }
     // Nobody may drive DATA IN now: gpio_reset_pin() turns its output off with a pull-up, so the 74LS07 lets the line go.
@@ -317,10 +402,12 @@ bool EspDataIn::pinToUart() noexcept
     sending_ = false;
     started_ = false;
     lastSize_ = 0;
+    if (!faulted_) {  // once per fault: giveBack() retries every 100 ms while it lasts
+        ++pinFaults_;
+        ESP_LOGE(kTag, "UART2 did not take GPIO%d back: DATA IN %s, output off until recover()", pin_,
+                 safe ? "released (output off, pull-up)" : "NOT reset");
+    }
     faulted_ = true;
-    ++pinFaults_;
-    ESP_LOGE(kTag, "UART2 did not take GPIO%d back: DATA IN %s, output off until recover()", pin_,
-             safe ? "released (output off, pull-up)" : "NOT reset");
     return false;
 }
 
@@ -330,6 +417,16 @@ bool EspDataIn::recover() noexcept
         return false;
     }
     if (!faulted_) {
+        return true;
+    }
+    if (shared_) {
+        // Routed and checked in the GPIO matrix, or the pin is reset again and the fault stays. Bytes still
+        // in UART2 go out on DATA IN afterwards; hardwareFree() stays false until they have.
+        if (!pinToUart()) {
+            return false;
+        }
+        faulted_ = false;
+        ESP_LOGI(kTag, "recover: DATA IN back on UART2 (GPIO%d), checked in the GPIO matrix", pin_);
         return true;
     }
     if (traced("uart_set_pin", uart_set_pin(kUart, pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE)) != ESP_OK) {
@@ -350,6 +447,19 @@ bool EspDataIn::release() noexcept
     if (releasePending_) {
         ESP_LOGE(kTag, "DATA IN not released: the RMT still has GPIO%d; release() again later", pin_);
         return false;  // UART2 and the pin stay as they are
+    }
+    if (shared_) {
+        // Detach only with DATA IN back on UART2 TX (checked in the GPIO matrix) and nothing left to send.
+        // Busy: stays attached, release() again later. Lost: the pin is reset, the driver stays faulted and
+        // attached, so nobody takes the line for good while it is not the disk's.
+        const GiveBack line = giveBack();
+        if (line != GiveBack::Uart) {
+            return false;
+        }
+        ESP_LOGI(kTag, "DATA IN detached from the shared UART2 (GPIO%d)", pin_);
+        pin_ = -1;
+        shared_ = false;
+        return true;
     }
     (void)traced("uart_driver_delete", uart_driver_delete(kUart));
     // No peripheral keeps the pin: output off, pull-up, so the 74LS07 lets DATA IN go.

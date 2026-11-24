@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <vector>
 
 #include "fake_idf.hpp"
 #include "rb/esp/esp_sio_uart.hpp"
@@ -195,6 +196,34 @@ void test_a_late_fall_still_keeps_the_first_bytes()
     TEST_ASSERT_EQUAL_UINT8_ARRAY(frame, received.value().bytes.data(), 5);
 }
 
+// menu-cinta decision 3 (R9): with the TX ring of the shared mode, write() ends at the same line time as
+// without it (a 129-byte answer at 19200 included: one more than the FIFO). The model sends 10 bits a byte.
+int64_t writeTime(int ring, std::size_t size)
+{
+    fake_idf::reset();
+    fake_idf::state().commandPin = 39;
+    fake_idf::state().txModel = true;
+    EspSioUart line{kPins, ring};
+    TEST_ASSERT_TRUE(line.begin());
+    TEST_ASSERT_EQUAL_INT(ring, fake_idf::state().txRing);
+    std::vector<uint8_t> bytes(size, 0x41);
+    const int64_t start = fake_idf::state().nowUs;
+    TEST_ASSERT_TRUE(line.write(Span<const uint8_t>{bytes.data(), bytes.size()}).ok());
+    TEST_ASSERT_EQUAL_INT(0, fake_idf::tx_in_flight());  // the last bit is out when write() returns
+    return fake_idf::state().nowUs - start;
+}
+
+void test_write_ends_at_the_same_line_time_with_the_tx_ring()
+{
+    for (const std::size_t size : {std::size_t{1}, std::size_t{4}, std::size_t{128}, std::size_t{129}}) {
+        const int64_t without = writeTime(EspSioUart::kUartTxBuffer, size);
+        const int64_t with = writeTime(EspSioUart::kSharedTxRing, size);
+        TEST_ASSERT_EQUAL_INT64(without, with);
+        const int64_t byteUs = (10 * 1000000 + 19199) / 19200;
+        TEST_ASSERT_EQUAL_INT64(static_cast<int64_t>(size) * byteUs, with);
+    }
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -207,5 +236,6 @@ int main()
     RUN_TEST(test_flush_and_idle_reach_the_driver);
     RUN_TEST(test_a_whole_frame_through_the_transport);
     RUN_TEST(test_a_late_fall_still_keeps_the_first_bytes);
+    RUN_TEST(test_write_ends_at_the_same_line_time_with_the_tx_ring);
     return UNITY_END();
 }

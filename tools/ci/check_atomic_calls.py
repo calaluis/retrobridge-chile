@@ -55,17 +55,76 @@ def disassemble(objdump, obj):
     return subprocess.run([objdump, "-dr", "-C", str(obj)], check=True, capture_output=True, text=True).stdout
 
 
+# The DataInHandover functions that must be in the object, and the atomic access each one must show:
+# an acquire load is `l32i` followed by `memw`; a release store is `memw` followed by `s32i`.
+REQUIRED = {
+    "rb::host::DataInHandover::request(": "store",
+    "rb::host::DataInHandover::confirm(": "store",
+    "rb::host::DataInHandover::ackFor(": "load",
+    "rb::host::DataInHandover::pending(": "load",
+}
+FUNCTION = re.compile(r"^[0-9a-f]+ <(.+)>:$")
+INSTRUCTION = re.compile(r"^\s*[0-9a-f]+:\s+[0-9a-f]+\s+([a-z0-9.]+)")
+
+
+def functions(disassembly):
+    """{demangled name: [mnemonics]} for every function in an `objdump -dr -C` listing."""
+    result, current = {}, None
+    for line in disassembly.splitlines():
+        header = FUNCTION.match(line.strip())
+        if header:
+            current = header.group(1)
+            result[current] = []
+            continue
+        instruction = INSTRUCTION.match(line)
+        if current is not None and instruction:
+            result[current].append(instruction.group(1))
+    return result
+
+
+def has_access(mnemonics, kind):
+    """A 32-bit acquire load (l32i then memw) or release store (memw then s32i) in this function."""
+    for i in range(len(mnemonics) - 1):
+        first, second = mnemonics[i], mnemonics[i + 1]
+        if kind == "load" and first in ("l32i", "l32i.n") and second == "memw":
+            return True
+        if kind == "store" and first == "memw" and second in ("s32i", "s32i.n"):
+            return True
+    return False
+
+
+def missing_accesses(disassembly):
+    """What the required DataInHandover functions lack: absent, or without their access and barrier."""
+    found = functions(disassembly)
+    problems = []
+    for prefix, kind in REQUIRED.items():
+        names = [name for name in found if name.startswith(prefix)]
+        if not names:
+            problems.append(f"{prefix}...) no está en el objeto")
+        elif not any(has_access(found[name], kind) for name in names):
+            what = "l32i seguido de memw" if kind == "load" else "memw seguido de s32i"
+            problems.append(f"{names[0]}: falta {what}")
+    return problems
+
+
 def check(objdump, obj):
     listing = disassemble(objdump, obj)
     print(listing)
     calls = lock_calls(listing)
+    problems = missing_accesses(listing)
     print(f"accesos directos: {plain_accesses(listing)}")
     if calls:
         print(f"FALLO: {obj} llama a rutinas con cerrojo o de libatomic:")
         for line in calls:
             print(f"  {line}")
+    if problems:
+        print(f"FALLO: {obj} no muestra los accesos atómicos esperados:")
+        for line in problems:
+            print(f"  {line}")
+    if calls or problems:
         return 1
-    print(f"OK: {obj} no llama a __atomic_*, __sync_* ni a secciones críticas")
+    print(f"OK: {obj}: las cuatro funciones de DataInHandover usan l32i/s32i con memw; ninguna llamada a "
+          "__atomic_*, __sync_* ni a secciones críticas")
     return 0
 
 

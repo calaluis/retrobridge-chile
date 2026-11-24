@@ -104,10 +104,41 @@ Plan: [`plans/menu-cinta.md`](../plans/menu-cinta.md). T1–T7 se hicieron en el
   - Cinco mutantes detectados: confirmación aceptada al vencer (2 fallos), `release` vencido que reanuda el disco
     (3), un evento por reintento (2), confirmación sin mirar la secuencia (15), `resume()` fallido tomado como
     `Disk` (3).
-- **Punto abierto (CI del PR #100).** En el ESP32, GCC no da `std::atomic<uint32_t>` como «siempre sin
-  cerrojo», así que la comprobación queda solo en host. Solo se usan cargas y almacenes de 32 bits alineados. T9a.7
-  comprueba cómo se compilan en el ESP32 (instrucciones directas o `libatomic`).
+- **Atómicos en Xtensa: resuelto con el código objeto (revisión del PR #100).**
+  - **Por qué hacía falta.** El GCC del ESP32 no da `std::atomic<uint32_t>` como «siempre sin cerrojo», así que el
+    `static_assert` quedó solo en host (604a9ba). Que compile no prueba que no haya cerrojo.
+  - **El `.elf` no sirve como prueba.** En `retrobridge.elf` (paquete `menu-sio` de 604a9ba) aparecen los símbolos de
+    `DataInArbiter`, pero no los de `DataInHandover`: el firmware todavía no lo usa (T9a.7) y el enlazador lo quita.
+    Se inspecciona el objeto `data_in_handover.cpp.obj`.
+  - **La comprobación** (`tools/ci/check_atomic_calls.py`, paso de CI «DataInHandover atomics without locks on
+    Xtensa»):
+    1. **Control negativo:** compila una carga atómica de 64 bits con el mismo comando de `compile_commands.json` y
+       exige ver la llamada. Resultado: `R_XTENSA_32 __atomic_load_8`.
+    2. Falla si el objeto llama a `__atomic_*`, `__sync_*`, `vPortEnterCritical*`, `spinlock_acquire*` o
+       `esp_cpu_compare_and_set*`.
+    3. Falla si falta alguna de las cuatro funciones, o si no muestra su acceso: carga de adquisición = `l32i`
+       seguido de `memw`; almacén de liberación = `memw` seguido de `s32i`.
+
+    Autopruebas: 10, incluidas las que deben fallar (objeto vacío, función ausente, almacén sin `memw` antes, carga
+    sin `memw` después).
+  - **Desensamblado real** (CI 45413310899, ESP-IDF 6.1, `xtensa-esp32-elf`, `-Og`, extracto):
+
+    ```text
+    rb::host::DataInHandover::request(HandoverRequest):   23: memw / 26: s32i.n a8, a2, 0  / 2a: memw
+    rb::host::DataInHandover::confirm(unsigned long, HandoverAck):  c: memw /  f: s32i.n a3, a2, 4 / 11: memw
+    rb::host::DataInHandover::ackFor(unsigned long, HandoverAck&) const:  3: memw / 6: l32i.n a8, a2, 4 / 8: memw
+    rb::host::DataInHandover::pending() const:              3: memw / 6: l32i.n a3, a2, 0 / 8: memw
+    ```
+
+    `request_` está en el desplazamiento 0 y `ack_` en el 4. Cada acceso es una instrucción de 32 bits alineada, con
+    `memw` (barrera de memoria de Xtensa) antes y después. No hay ninguna llamada a `libatomic` ni a secciones
+    críticas.
+  - **Una llamada que no es cerrojo:** con `-Og`, `pending()` llama a `memset` para poner a cero el `Pending` que
+    devuelve. No toma cerrojo ni reserva memoria, y corre en la tarea de la casetera, no en la ruta SIO.
+  - **Conclusión:** en el ESP32, el traspaso cumple «solo atómicos, sin cerrojos». No hace falta otra
+    implementación.
 - **Queda para otras tareas.** Contar llamadas a `uart_driver_*` y `rmt_*` necesita el `DiskLine` real: T9a.7.
+  T9a.7 debe volver a ver `DataInHandover` en el `.elf`, ya enlazado.
   `rb_menu` no incluye cabeceras de drivers. Hardware libre y `Released` en la casetera: T9a.2.
 
 ## Siguiente

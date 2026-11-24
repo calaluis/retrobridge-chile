@@ -74,6 +74,39 @@ Plan: [`plans/menu-cinta.md`](../plans/menu-cinta.md). T1–T7 se hicieron en el
 - **Revisión 4.** La alternativa sin anillo escribía hasta 64 bytes y contradecía la cota de 32. Ahora escribe
   como mucho 32 bytes con la FIFO vacía: misma cota, mismo `kReleaseTimeoutUs` = 600 ms.
 
+## T9a.1 — traspaso asíncrono (2026-11-24)
+
+- **Hecho.**
+  - `DataInHandover` (`rb_menu`): dos palabras atómicas de 32 bits. La tarea SIO escribe la petición (`Take` o
+    `Release` con una secuencia de 30 bits que nunca es 0) y la casetera escribe la confirmación (`Disk`, `Tape`,
+    `Released` o `Refused` con la secuencia que contesta). Sin cerrojos ni memoria dinámica.
+  - `HandoverTapeLine`: el lado SIO. Publica una vez y luego consulta; pedir el otro tipo, o `abandon()`, crea una
+    secuencia nueva, así que una confirmación vieja se ignora.
+  - `DataInArbiter`: estados `Disk`, `TakePending`, `Tape`, `ReleasePending`, `Fault`, `Released` y `DiskFault`.
+    `DiskLine` pasa a `park()`/`resume()`; `TapeLine` a `Done`/`Pending`/`Failed`/`Released`. Plazos:
+    `kTakeTimeoutUs` = 20 ms, `kReleaseTimeoutUs` = 600 ms, reintentos cada 100 ms.
+  - `menu_sio.cpp`: adaptadores con el comportamiento de hoy, nunca alcanzados con `kTapeOutput = false`. T9a.7
+    los reemplaza.
+- **Decisiones de implementación.**
+  - El «estado» único del plan se guarda como dos palabras, para que ninguna tarea pise la última escritura de la
+    otra. `TakeRequested`/`ReleaseRequested` = una petición sin confirmar.
+  - El plazo se mira **antes** que la confirmación: una confirmación que llega justo al vencer se ignora.
+  - `Fault` y `Released` reintentan sin emitir eventos; solo un cambio de estado emite uno.
+  - El dueño `None` desaparece: sin `begin()` no hay «fallo al instalar». Lo que el plan llamaba «el árbitro queda
+    en None» es el dueño `Released`.
+- **Pruebas.**
+  - `test_data_in_arbiter` (20): las reglas 1–5 portadas al contrato nuevo, más `DiskFault`, `Fault` por rechazo y
+    `park()` con el TX ocupado.
+  - `test_data_in_handover` (15, nueva): casetera falsa que confirma tarde, nunca, con otra secuencia, rechazando o
+    soltando sin UART2. En cada paso: nunca dos transmisores en GPIO21 y el disco atiende solo en `Disk`. Cero
+    reservas en la ruta SIO (contador de `operator new`).
+  - RED visto: 14/20 y 15/15 fallaban con el stub. GREEN: 20/20 y 15/15. Host completo 96/96.
+  - Cinco mutantes detectados: confirmación aceptada al vencer (2 fallos), `release` vencido que reanuda el disco
+    (3), un evento por reintento (2), confirmación sin mirar la secuencia (15), `resume()` fallido tomado como
+    `Disk` (3).
+- **Queda para otras tareas.** Contar llamadas a `uart_driver_*` y `rmt_*` necesita el `DiskLine` real: T9a.7.
+  `rb_menu` no incluye cabeceras de drivers. Hardware libre y `Released` en la casetera: T9a.2.
+
 ## Siguiente
 
 Revisar este PR de documentos. Los PR de código de T9a empiezan solo después de aprobarlo, uno por tarea.

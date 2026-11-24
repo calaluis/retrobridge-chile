@@ -2,77 +2,184 @@
 
 namespace rb::host {
 
+bool DataInArbiter::wantsTape(const DataInInputs& in) noexcept
+{
+    // Rule 1, by state: MOTOR on (already, or now), a ready tape and both gates.
+    return in.gates && in.motorOn && in.tapeReady && !in.tapeEnded && !in.poweredOff && !in.tapeStopped;
+}
+
+bool DataInArbiter::givesBack(const DataInInputs& in) noexcept
+{
+    // Rule 2: MOTOR pauses keep the tape. Rule 3: these give the line back to the disk.
+    return !in.gates || in.poweredOff || in.tapeStopped || (!in.motorOn && (in.commandLow || in.tapeEnded));
+}
+
 DataInChange DataInArbiter::step(const DataInInputs& in, uint64_t nowUs) noexcept
 {
     switch (owner_) {
-    case DataInOwner::None:
-        // Rule 5: a failed begin. Only the disk may come back, every 100 ms; never the tape.
-        return due(nowUs) ? beginDisk(nowUs) : DataInChange::None;
-
-    case DataInOwner::Tape: {
-        if (releasePending_) {
-            return due(nowUs) ? toDisk(nowUs) : DataInChange::None;
-        }
-        // Rule 2: MOTOR pauses keep the tape. Rule 3: these give the line back to the disk.
-        const bool giveBack = !in.gates || in.poweredOff || in.tapeStopped
-                              || (!in.motorOn && (in.commandLow || in.tapeEnded));
-        return giveBack ? toDisk(nowUs) : DataInChange::None;
-    }
-
-    case DataInOwner::Disk:
-    default: {
-        // Rule 1, by state: MOTOR on (already, or now), a ready tape and both gates.
-        const bool wantTape = in.gates && in.motorOn && in.tapeReady && !in.tapeEnded
-                              && !in.poweredOff && !in.tapeStopped;
-        if (!wantTape) {
+    case DataInOwner::Disk: {
+        if (!wantsTape(in)) {
             return DataInChange::None;  // takeFailed_ stays: a MOTOR flicker must not skip the wait
         }
-        // Review of PR #85: after a failed take the disk keeps UART2; one new attempt per 100 ms,
-        // never an end/take/begin every step (each one drops SIO frames).
+        // Review of PR #85: after a failed take, one new attempt per 100 ms, never one per step.
         if (takeFailed_ && !due(nowUs)) {
             return DataInChange::None;
         }
-        return toTape(nowUs);
+        // Plan §2.4 step 1: the disk parks only with its TX empty; otherwise, next step.
+        if (!disk_.park()) {
+            return DataInChange::None;
+        }
+        owner_ = DataInOwner::TakePending;
+        sinceUs_ = nowUs;
+        const LineResult taken = tape_.take();
+        return taken == LineResult::Pending ? DataInChange::TakeRequested : onTake(taken, nowUs);
     }
+
+    case DataInOwner::TakePending: {
+        // The deadline first: an ack that comes at or after it is ignored (plan §2.4).
+        if (nowUs - sinceUs_ >= kTakeTimeoutUs) {
+            takeFailed_ = true;
+            lastTryUs_ = nowUs;
+            const DataInChange released = startRelease(nowUs);  // the take becomes a release
+            return released == DataInChange::ReleaseRequested ? DataInChange::TakeTimedOut : released;
+        }
+        if (givesBack(in)) {
+            return startRelease(nowUs);
+        }
+        const LineResult taken = tape_.take();
+        return taken == LineResult::Pending ? DataInChange::None : onTake(taken, nowUs);
+    }
+
+    case DataInOwner::Tape:
+        return givesBack(in) ? startRelease(nowUs) : DataInChange::None;
+
+    case DataInOwner::ReleasePending: {
+        if (nowUs - sinceUs_ >= kReleaseTimeoutUs) {
+            // Never resume the disk: the tape may still drive GPIO21 (R1). Ask again every 100 ms.
+            tape_.abandon();
+            owner_ = DataInOwner::Fault;
+            retrying_ = false;
+            lastTryUs_ = nowUs;
+            return DataInChange::ReleaseTimedOut;
+        }
+        const LineResult released = tape_.release();
+        return released == LineResult::Pending ? DataInChange::None : onRelease(released, nowUs);
+    }
+
+    case DataInOwner::Fault:
+    case DataInOwner::Released:
+        return retryRelease(nowUs);
+
+    case DataInOwner::DiskFault:
+    default:
+        // The tape gave the line back, but the disk's line is not right yet: D1 silent, retry.
+        // MOTOR is not looked at: only Disk may ask for the tape.
+        if (!due(nowUs)) {
+            return DataInChange::None;
+        }
+        if (disk_.resume() == LineResult::Done) {
+            owner_ = DataInOwner::Disk;
+            return DataInChange::ToDisk;
+        }
+        lastTryUs_ = nowUs;
+        return DataInChange::None;
     }
 }
 
-DataInChange DataInArbiter::toTape(uint64_t nowUs) noexcept
+DataInChange DataInArbiter::onTake(LineResult taken, uint64_t nowUs) noexcept
 {
-    disk_.end();
-    if (tape_.take()) {
+    if (taken == LineResult::Done) {
         takeFailed_ = false;
         owner_ = DataInOwner::Tape;
         return DataInChange::ToTape;
     }
+    // Rule 5: refused (the tape never took the line): the disk resumes at once.
     takeFailed_ = true;
     lastTryUs_ = nowUs;
-    // Rule 5: the tape could not install the line: the disk begins again at once.
-    const DataInChange begun = beginDisk(nowUs);
-    return begun == DataInChange::ToDisk ? DataInChange::TakeFailed : begun;
+    return resumeDisk(nowUs, DataInChange::TakeFailed);
 }
 
-DataInChange DataInArbiter::toDisk(uint64_t nowUs) noexcept
+DataInChange DataInArbiter::startRelease(uint64_t nowUs) noexcept
 {
-    if (!tape_.release()) {
-        // The tape may still hold UART2: the disk must not begin. Retry the release.
-        releasePending_ = true;
+    owner_ = DataInOwner::ReleasePending;
+    sinceUs_ = nowUs;
+    const LineResult released = tape_.release();
+    return released == LineResult::Pending ? DataInChange::ReleaseRequested : onRelease(released, nowUs);
+}
+
+DataInChange DataInArbiter::onRelease(LineResult released, uint64_t nowUs) noexcept
+{
+    retrying_ = false;
+    switch (released) {
+    case LineResult::Done:
+        return resumeDisk(nowUs, DataInChange::ToDisk);
+    case LineResult::Released:
         lastTryUs_ = nowUs;
+        if (owner_ == DataInOwner::Released) {
+            return DataInChange::None;  // one event per change of state, not per retry
+        }
+        owner_ = DataInOwner::Released;
+        return DataInChange::Released;
+    case LineResult::Failed:
+    case LineResult::Pending:
+    default:
+        lastTryUs_ = nowUs;
+        if (owner_ == DataInOwner::Fault) {
+            return DataInChange::None;
+        }
+        owner_ = DataInOwner::Fault;
         return DataInChange::ReleaseFailed;
     }
-    releasePending_ = false;
-    return beginDisk(nowUs);
 }
 
-DataInChange DataInArbiter::beginDisk(uint64_t nowUs) noexcept
+DataInChange DataInArbiter::retryRelease(uint64_t nowUs) noexcept
 {
-    if (disk_.begin()) {
-        owner_ = DataInOwner::Disk;
-        return DataInChange::ToDisk;
+    if (!retrying_) {
+        if (!due(nowUs)) {
+            return DataInChange::None;
+        }
+        retrying_ = true;  // release() publishes a new request: the expired one is ignored
+        sinceUs_ = nowUs;
+    } else if (nowUs - sinceUs_ >= kReleaseTimeoutUs) {
+        tape_.abandon();
+        retrying_ = false;
+        lastTryUs_ = nowUs;
+        return DataInChange::None;  // still Fault or Released: the console already knows
     }
-    owner_ = DataInOwner::None;
+    const LineResult released = tape_.release();
+    return released == LineResult::Pending ? DataInChange::None : onRelease(released, nowUs);
+}
+
+DataInChange DataInArbiter::resumeDisk(uint64_t nowUs, DataInChange onDone) noexcept
+{
+    if (disk_.resume() == LineResult::Done) {
+        owner_ = DataInOwner::Disk;
+        return onDone;
+    }
+    owner_ = DataInOwner::DiskFault;
     lastTryUs_ = nowUs;
-    return DataInChange::BeginFailed;
+    return DataInChange::ResumeFailed;
+}
+
+const char* dataInOwnerName(DataInOwner owner) noexcept
+{
+    switch (owner) {
+    case DataInOwner::Disk:
+        return "disco";
+    case DataInOwner::TakePending:
+        return "esperando a la cinta";
+    case DataInOwner::Tape:
+        return "cinta";
+    case DataInOwner::ReleasePending:
+        return "esperando que la cinta suelte";
+    case DataInOwner::Fault:
+        return "FALLO: la cinta no suelta (reintento cada 100 ms)";
+    case DataInOwner::Released:
+        return "SUELTA: nadie transmite (reintento cada 100 ms)";
+    case DataInOwner::DiskFault:
+    default:
+        return "FALLO del disco: D1 en silencio (reintento cada 100 ms)";
+    }
 }
 
 }  // namespace rb::host

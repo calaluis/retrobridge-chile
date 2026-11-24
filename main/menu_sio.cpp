@@ -176,21 +176,29 @@ rb::esp::EspMotorIn* g_motor = nullptr;            // finish(), before publishTa
 // gates closed until then: the disk never lets go and the SIO UART is never ended (AC8, rule 4).
 constexpr bool kTapeOutput = false;
 
+// T9a.1 changed the line contract (park/resume, asynchronous take/release). These adapters keep
+// today's behaviour and are never reached while kTapeOutput is false (the gates stay closed). T9a.7
+// replaces them: park/resume without deleting the UART2 driver, and the cassette over DataInHandover.
 class SioDiskLine final : public rb::host::DiskLine {
 public:
-    bool begin() noexcept override { return g_line != nullptr && g_line->begin(); }
-    void end() noexcept override
+    bool park() noexcept override
     {
         if (g_line != nullptr) {
             g_line->end();
         }
+        return true;
+    }
+    rb::host::LineResult resume() noexcept override
+    {
+        return g_line != nullptr && g_line->begin() ? rb::host::LineResult::Done : rb::host::LineResult::Failed;
     }
 };
 
 class PendingTapeLine final : public rb::host::TapeLine {
 public:
-    bool take() noexcept override { return false; }  // T9: never reached while kTapeOutput is false
-    bool release() noexcept override { return true; }
+    rb::host::LineResult take() noexcept override { return rb::host::LineResult::Failed; }  // never reached
+    rb::host::LineResult release() noexcept override { return rb::host::LineResult::Done; }
+    void abandon() noexcept override {}
 };
 
 SioDiskLine g_diskLine;
@@ -484,9 +492,7 @@ void sioTask(void*)
                 g_arbiter.step(rb::host::dataInInputs(readings), static_cast<uint64_t>(now));
             if (change != rb::host::DataInChange::None) {
                 ESP_LOGW(kTag, "DATA IN: cambio %d, ahora %s", static_cast<int>(change),
-                         g_arbiter.owner() == rb::host::DataInOwner::Disk   ? "disco"
-                         : g_arbiter.owner() == rb::host::DataInOwner::Tape ? "cinta"
-                                                                            : "NADIE (reintento cada 100 ms)");
+                         rb::host::dataInOwnerName(g_arbiter.owner()));
             }
         }
         if (poweredOnUs != 0 && framesSoFar() != framesAtPowerOn) {

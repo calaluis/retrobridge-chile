@@ -10,6 +10,7 @@
 #include <string>
 
 #include "menu_tnfs_rig.hpp"
+#include "rb/menu/cas_tape_deck.hpp"
 #include "rb/menu/tape_deck.hpp"
 #include "rb/sio/sio_checksum.hpp"
 #include "rb/sio/sio_codes.hpp"
@@ -103,6 +104,36 @@ std::string tapeLine(const char* name)
     line.resize(40, ' ');
     return line;
 }
+
+// The cassette service's side of the `cas` commands (as in test_cas_tape_deck): records what is sent and
+// hands back the replies the test queues.
+class FakeCasChannel final : public rb::host::CasChannel {
+public:
+    bool available() const noexcept override { return true; }
+    bool send(const char* args) noexcept override
+    {
+        if (inFlight) {
+            return false;
+        }
+        std::snprintf(last, sizeof last, "%s", args);
+        inFlight = true;
+        return true;
+    }
+    bool receive(char* reply, std::size_t size) noexcept override
+    {
+        if (!inFlight || next == nullptr) {
+            return false;
+        }
+        std::snprintf(reply, size, "%s", next);
+        next = nullptr;
+        inFlight = false;
+        return true;
+    }
+
+    bool inFlight = false;
+    const char* next = nullptr;  // the reply to the command in flight, handed out once
+    char last[96] = {};
+};
 
 // The OS disk boot: READ sector 1 of D1, as the SIO dispatcher answers it from the drive bay.
 uint8_t bootRead(Rig& rig)
@@ -746,6 +777,83 @@ void test_after_a_tape_boot_the_os_disk_boot_gets_error_from_d1()
     TEST_ASSERT_EQUAL_HEX8(rb::sio::code::kError, bootRead(rig));
 }
 
+// Review 2 of PR #104: KARATE.CAS on C:, nave.Cas being read, Esc. The deck puts the old tape back on its own
+// and the menu does not see how that ends: KARATE.CAS stays on the C: line but A does not boot until a tape is
+// mounted again and confirmed.
+void test_a_after_a_cancelled_replacement_does_not_boot()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    mountTape(rig, KC);
+    deck.pendingFor = 1000;
+    rig.press(K1);
+    rig.press(KD);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionWait, rig.press(KC).action());
+    rig.press(KESC);
+    TEST_ASSERT_EQUAL_INT(1, deck.cancels);
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", rig.controller->tapeName());
+    const MenuReply refused = rig.press(KA);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, refused.action());
+    assert_line(refused, kMainMessage, " D1 SIN DISCO: ABRE LA FUENTE 1");
+    rig.step();
+    TEST_ASSERT_TRUE(rig.controller->menuOnD1());
+    deck.pendingFor = 1;
+    mountTape(rig, KC);  // mounted again, the deck says Ready: A boots it
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionBoot, rig.press(KA).action());
+}
+
+// The same with Break.
+void test_a_after_a_replacement_cancelled_with_break_does_not_boot()
+{
+    Rig rig;
+    FakeTapeDeck deck;
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    mountTape(rig, KC);
+    deck.pendingFor = 1000;
+    rig.press(K1);
+    rig.press(KD);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionWait, rig.press(KC).action());
+    rig.press(rb::host::kMenuBreakKey);
+    TEST_ASSERT_EQUAL_INT(1, deck.cancels);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, rig.press(KA).action());
+    rig.step();
+    TEST_ASSERT_TRUE(rig.controller->menuOnD1());
+}
+
+// Review 2 of PR #104, with the real CasTapeDeck: OLD (KARATE.CAS) on C:, NEW (nave.Cas) pending, Esc; the
+// cassette takes NEW anyway, the deck asks for OLD back and the cassette cannot open it, so the deck ejects
+// NEW. The deck holds no tape: A must not boot.
+void test_a_after_a_cancel_whose_old_tape_does_not_come_back_does_not_boot()
+{
+    Rig rig;
+    FakeCasChannel channel;
+    rb::host::CasTapeDeck deck(channel, true);
+    rig.start();
+    rig.controller->setTapeDeck(&deck);
+    channel.next = "mounted KARATE.CAS: 1 data, 0 fsk";
+    mountTape(rig, KC);
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", deck.loaded());
+    rig.press(K1);
+    rig.press(KD);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionWait, rig.press(KC).action());
+    TEST_ASSERT_EQUAL_STRING("mount nave.Cas", channel.last);
+    rig.press(KESC);
+    channel.next = "mounted nave.Cas: 1 data, 0 fsk";
+    deck.pump();
+    TEST_ASSERT_EQUAL_STRING("mount KARATE.CAS", channel.last);
+    channel.next = "cannot open KARATE.CAS";
+    deck.pump();
+    TEST_ASSERT_EQUAL_STRING("eject", channel.last);
+    TEST_ASSERT_EQUAL_STRING("", deck.loaded());
+    TEST_ASSERT_EQUAL_STRING("KARATE.CAS", rig.controller->tapeName());
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuActionShow, rig.press(KA).action());
+    rig.step();
+    TEST_ASSERT_TRUE(rig.controller->menuOnD1());
+}
+
 int main(void)
 {
     writeFolder();
@@ -782,5 +890,8 @@ int main(void)
     RUN_TEST(test_a_after_a_restore_over_a_confirmed_tape_does_not_boot);
     RUN_TEST(test_a_after_a_refused_replacement_boots_the_tape_it_had);
     RUN_TEST(test_after_a_tape_boot_the_os_disk_boot_gets_error_from_d1);
+    RUN_TEST(test_a_after_a_cancelled_replacement_does_not_boot);
+    RUN_TEST(test_a_after_a_replacement_cancelled_with_break_does_not_boot);
+    RUN_TEST(test_a_after_a_cancel_whose_old_tape_does_not_come_back_does_not_boot);
     return UNITY_END();
 }

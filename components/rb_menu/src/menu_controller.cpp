@@ -1599,6 +1599,9 @@ void MenuController::cancelJob() noexcept
 {
     if (job_ == Job::Tape) {
         tape_->cancel();  // the tape on C: stays
+        // Review 2 of PR #104: the deck puts the old tape back on its own and that may fail; the menu does not
+        // see how it ends, so the tape on C: is no longer known to be loaded.
+        tapeLoaded_ = false;
         tapeIncoming_[0] = '\0';
         job_ = Job::None;
     } else if (job_ != Job::None) {

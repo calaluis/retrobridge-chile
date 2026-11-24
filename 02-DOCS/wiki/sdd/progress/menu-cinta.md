@@ -353,8 +353,8 @@ Aprobable para T9a.4, sin defecto bloqueante. Dos observaciones pasan a verifica
   arrancaba sin saber qué cinta tenía la casetera.
   - **Corrección.** `tapeLoaded_` separa «nombre en `C:`» de «cinta confirmada». Solo `Ready` (montaje o
     restauración) lo pone verdadero; `Unconfirmed`, una restauración y la expulsión lo ponen falso. Un reemplazo
-    rechazado (`Invalid`, `NoMemory`) o cancelado no lo cambia: la casetera conserva su cinta (AC6,
-    `tape_deck.hpp`). `tapeOnC()` = casetera presente y `tapeLoaded_`. El nombre recordado no se borra.
+    rechazado (`Invalid`, `NoMemory`) no lo cambia: la casetera conserva su cinta (AC6, `tape_deck.hpp`). Un
+    reemplazo cancelado sí lo pone falso (segunda revisión, abajo). `tapeOnC()` = casetera presente y `tapeLoaded_`. El nombre recordado no se borra.
   - **Pruebas nuevas (5):** restauración `Unconfirmed` no arranca; reemplazo `Unconfirmed` no arranca (y al montar
     otra vez con `Ready`, sí); restauración sobre una cinta confirmada no arranca; reemplazo rechazado arranca la
     cinta que había; y el arranque de disco del OS por el despachador SIO real (`READ` del sector 1 de D1):
@@ -365,6 +365,19 @@ Aprobable para T9a.4, sin defecto bloqueante. Dos observaciones pasan a verifica
     restauración no la pone; la expulsión o la restauración no la quitan; un reemplazo rechazado la quita).
     Equivalente: quitar `tape_ != nullptr` de `tapeOnC()`, porque `tapeLoaded_` solo se pone con una respuesta de
     la casetera.
+- **Segunda revisión del PR #104 (2026-11-24).** Hallazgo confirmado con RED: `OLD.CAS` en `C:`, `NEW.CAS`
+  leyéndose, Esc o Break. `cancelJob()` soltaba `Job::Tape` con `tapeLoaded_` aún verdadero, pero `CasTapeDeck`
+  vuelve a poner la cinta anterior por su cuenta (`undo()`) y eso puede fallar (`restoreDone(NotTaken)` expulsa).
+  El menú no ve ese resultado y `A` arrancaba.
+  - **Corrección.** Al cancelar una lectura de cinta, `tapeLoaded_` pasa a falso. El nombre sigue en `C:`; `A`
+    no arranca hasta montar una cinta otra vez y que la casetera diga `Ready`.
+  - **Pruebas nuevas (3):** cancelar con Esc no arranca (y al montar otra vez, sí); cancelar con Break no
+    arranca; y con el `CasTapeDeck` real (canal falso): la casetera toma `NEW`, la restauración de `OLD` falla,
+    la casetera expulsa y queda vacía, y `A` no arranca.
+  - **RED:** con el código anterior fallan las 3. **GREEN:** host 98/98 (`test_menu_cinta` 35/35);
+    herramientas 300/300; capas OK.
+  - **Mutantes:** 8 de 9 detectados (los 7 anteriores y «la cancelación no la quita»). Sigue el mismo
+    equivalente (`tape_ != nullptr`).
 - **Lo que no prueba.** El 65XE real: que el OS, con START+OPTION, haga el arranque de disco, reciba el ERROR de
   D1 y cargue la cinta (banco T9b). El ERROR de D1 ya se prueba en host con el despachador SIO real.
 

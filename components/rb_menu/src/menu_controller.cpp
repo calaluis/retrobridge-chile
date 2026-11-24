@@ -257,9 +257,11 @@ void MenuController::collect()
             }
         } else if (inFlight_ == InFlight::Boot) {
             say(" ERROR: D1 NO SE PUDO MONTAR");
+        } else if (inFlight_ == InFlight::TapeBoot) {
+            say(" ERROR: D1 NO SE PUDO VACIAR");
         }
     } else {
-        if (inFlight_ == InFlight::Menu || inFlight_ == InFlight::Boot) {
+        if (inFlight_ == InFlight::Menu || inFlight_ == InFlight::Boot || inFlight_ == InFlight::TapeBoot) {
             menuOnD1_ = inFlight_ == InFlight::Menu;
         } else {
             recycle(previous_);  // the displaced source was closed with the reply
@@ -280,6 +282,7 @@ void MenuController::collect()
         }
         const char* what = inFlight_ == InFlight::Menu    ? "menu"
                            : inFlight_ == InFlight::Boot  ? "image"
+                           : inFlight_ == InFlight::TapeBoot ? "empty (tape boot)"
                            : inFlight_ == InFlight::Mount ? "mounted"
                                                           : "empty";
         std::snprintf(detail, sizeof detail, "D%u=%s", number, what);
@@ -742,6 +745,7 @@ void MenuController::tapeDone(TapeState state)
     switch (state) {
     case TapeState::Ready: {
         std::memcpy(tapeName_, tapeIncoming_, sizeof tapeName_);
+        tapeLoaded_ = true;
         const bool gates = tape_->gatesOpen();
         say(gates ? " CINTA EN C:, ENCIENDE CON START" : " CINTA EN C:, AUN NO PUEDE CARGARSE");
         std::snprintf(detail, sizeof detail, "C: name=%s mounted gates=%d", tapeName_, gates ? 1 : 0);
@@ -753,6 +757,7 @@ void MenuController::tapeDone(TapeState state)
         std::snprintf(detail, sizeof detail, "C: name=%s refused: no memory", tapeIncoming_);
         break;
     case TapeState::Unconfirmed:  // review 2 of PR #85: nobody knows; C: stays as it was
+        tapeLoaded_ = false;      // review of PR #104: ...but it is no longer known to be loaded
         say(" CASETERA NO RESPONDE, REPITE EN UN RATO");
         std::snprintf(detail, sizeof detail, "C: name=%s unconfirmed: no reply", tapeIncoming_);
         break;
@@ -778,6 +783,7 @@ void MenuController::ejectTape()
     char detail[MenuCatalog::kMaxName + 32];
     std::snprintf(detail, sizeof detail, "C: name=%s unmounted", tapeName_);
     tapeName_[0] = '\0';
+    tapeLoaded_ = false;
     tapeRestore_ = TapeRestore::None;
     message_[0] = '\0';
     event("menu_select", detail);
@@ -795,6 +801,7 @@ void MenuController::restoreTape(const char* name)
         return;
     }
     std::snprintf(tapeName_, sizeof tapeName_, "%s", name);
+    tapeLoaded_ = false;  // shown at once, loaded only when the deck says Ready
     ++restored_;
     // "remembered": shown on C: from power-up; "restored" only once the deck says Ready (review of
     // PR #85), or "remembered, no cassette" when this package has none to ask.
@@ -836,6 +843,7 @@ void MenuController::serviceRestoredTape()
     }
     tapeRestore_ = TapeRestore::None;
     if (state == TapeState::Ready) {
+        tapeLoaded_ = true;
         char done[MenuCatalog::kMaxName + 32];
         std::snprintf(done, sizeof done, "C: name=%s restored", tapeName_);
         event("menu_restore", done);
@@ -996,6 +1004,9 @@ bool MenuController::boot()
         return false;
     }
     if (d1.kind == Shown::Kind::None) {
+        if (tapeOnC()) {
+            return bootTape();
+        }
         say(" D1 SIN DISCO: ABRE LA FUENTE 1");
         return false;
     }
@@ -1017,6 +1028,43 @@ bool MenuController::boot()
     shown_[0].locked = mounted.value().writeProtected;
     message_[0] = '\0';
     std::snprintf(detail, sizeof detail, "D1 name=%s", name);
+    event("menu_boot", detail);
+    return true;
+}
+
+// T9a.5 (plan requirements 3 and 4): a tape the deck confirmed (Ready), not one only remembered, still
+// restored or left unconfirmed (review of PR #104). While a tape is read (Job::Tape) key() answers onLoading()
+// and A never gets here.
+bool MenuController::tapeOnC() const noexcept
+{
+    return tape_ != nullptr && tapeLoaded_;
+}
+
+// A with D1 empty and a tape on C:. The OS boots the tape with START+OPTION (COLDSV reads them), but first
+// tries a disk boot: the menu leaves D1, so D1 answers like a drive with no disk (ERROR at once) and the
+// menu is never loaded over the tape's program. A cold reset brings the menu back (service()). With the
+// gates closed the tape cannot play: no boot, and the reason, as when it was mounted (AC8).
+bool MenuController::bootTape()
+{
+    char detail[MenuCatalog::kMaxName + 48];
+    if (!tape_->gatesOpen()) {
+        say(" CINTA EN C:, AUN NO PUEDE CARGARSE");
+        std::snprintf(detail, sizeof detail, "C: name=%s boot refused: gates closed", tapeName_);
+        event("menu_boot", detail);
+        return false;
+    }
+    const rb::core::Result<void> emptied =
+        mailbox_.idle() ? unmount_.execute(drive(1)) : rb::core::Result<void>{rb::core::Failure{ErrorCode::MailboxBusy}};
+    if (!emptied.ok()) {
+        say(" ERROR: %s", reason(emptied.error()));
+        std::snprintf(detail, sizeof detail, "C: name=%s boot refused: error %u", tapeName_,
+                      static_cast<unsigned>(emptied.error()));
+        event("menu_boot", detail);
+        return false;
+    }
+    inFlight_ = InFlight::TapeBoot;
+    message_[0] = '\0';
+    std::snprintf(detail, sizeof detail, "C: name=%s boot: D1 empty", tapeName_);
     event("menu_boot", detail);
     return true;
 }
@@ -1551,6 +1599,9 @@ void MenuController::cancelJob() noexcept
 {
     if (job_ == Job::Tape) {
         tape_->cancel();  // the tape on C: stays
+        // Review 2 of PR #104: the deck puts the old tape back on its own and that may fail; the menu does not
+        // see how it ends, so the tape on C: is no longer known to be loaded.
+        tapeLoaded_ = false;
         tapeIncoming_[0] = '\0';
         job_ = Job::None;
     } else if (job_ != Job::None) {

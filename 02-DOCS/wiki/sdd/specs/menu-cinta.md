@@ -141,6 +141,10 @@ microSD, junto a sus `.ATR` y `.XEX`.
 - **AC12** *(tras M3a y H4)* — Tras cargar una cinta, al encender sin START aparece el menú y D1–D8 siguen
   asignadas.
 
+*Nota (2026-11-24):* T9a prueba en host la lógica de AC9–AC12 (traspaso, plazos, fin de cinta) con
+`kTapeOutput = false`. Esa prueba **no** es evidencia física: AC9–AC12 se cumplen solo en el banco T9b, con los
+requisitos previos del plan (M3a medida, protección validada, H4-C y la aprobación de H4 y M3a).
+
 ## Fuera de alcance
 
 - Cintas desde TNFS (fuentes 2–8). Se verá en otra spec.
@@ -170,6 +174,10 @@ microSD, junto a sus `.ATR` y `.XEX`.
   OPTION arranca D1 sin BASIC; `A` sola, D1 con BASIC; `A` con START+OPTION, la cinta de `C:`. *Base:* el
   responsable lo pidió tras el banco T8 (2026-11-23); `A` ya salta al arranque en frío del sistema operativo
   (`COLDSV`), que lee START y OPTION. *Riesgo:* sin comprobar en el 65XE; se prueba en T9 (requisitos 3–5 del plan).
+- **pregunta abierta** — qué contesta D1 en el arranque de disco que el sistema operativo intenta después de una
+  cinta (requisito 4 del plan). *Recomendación:* con D1 vacía, D1 responde como unidad sin disco (error de estado
+  inmediato), para que el OS no espere ni cargue el menú sobre el programa de la cinta; con un disco en D1, D1 lo
+  sirve como siempre. Se prueba en host en T9a.5 y en el 65XE en T9b.
 - **decisión diferida** — cintas por TNFS.
 - **área no formulable** — cómo convive la línea DATA IN entre disco y cinta si el Atari usa ambos en la misma
   sesión (por ejemplo, un juego de cinta que luego lee disco). Se precisa en el plan con el diseño del traspaso.

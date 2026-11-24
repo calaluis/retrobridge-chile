@@ -27,11 +27,13 @@ en los pines 3 y 8.
 | C2 | Mismos pines y periféricos que la beta del responsable, `v1.6.2-atari-fsk-beta.1`: UART2 y RMT en GPIO21, GPIO36 como entrada | Comparación de código | [F] |
 | C3 | DATA IN pasa por el 74LS07 de colector abierto | Esquema de la FN32ROV-1.3-Q24 | [E] |
 | C4 | Carga turbo completada con MOTOR activo durante 15 min 27 s (G5-2 T5). El Atari usado no está identificado (65XE u 800XL) | Registro histórico WSS | [H], solo funcional |
-| C5 | Pico de MOTOR ≤ 3,3 V medido en el Atari solo, o un adaptador validado | M3a con osciloscopio | **[P] Bloquea la conexión** |
+| C5 | Pico de MOTOR ≤ 3,3 V medido en el Atari solo, o una protección de GPIO36 validada (etapas V de `evaluacion-74lvc4245-motor.md`) | M3a con osciloscopio; ensayo de la protección | **[P] Bloquea la conexión** |
 | C6 | Orden de conexión y criterios de detención escritos | Procedimiento | [P] |
 | C7 | Registro de placa, commit, archivo y resultado | Plantilla | Listo |
-| C8 | DATA IN liberado en reposo, al terminar la reproducción y tras un fallo de UART o RMT (§3) | Prueba de host `test_esp_data_in` | [F]; **la comprobación física sigue [P]** |
-| C9 | VCC_BUF (R7) y corriente del pin 10 (M6): justificar cómo quedan cubiertos en la configuración de prueba, o medirlos | — | **[P] Pendiente de evaluar** |
+| C8 | DATA IN liberado en reposo, al terminar la reproducción y tras un fallo de UART o RMT (§3) | Prueba de host `test_esp_data_in` | [F] en host |
+| C8a | **Matriz GPIO y control de UART2/RMT** en el ESP32: GPIO21 pasa de UART2 al RMT y vuelve, al terminar y al cancelar | Banco C8 (`bench-c8`), por USB y **sin el Atari** | [P]. **No** demuestra niveles eléctricos |
+| C8b | **Nivel eléctrico del pin 3** en reposo, tras un tramo FSK y tras soltar la línea | Medición con el Atari conectado | [P]. Solo **después** de C5 (MOTOR resuelto) |
+| C9 | VCC_BUF (R7) y corriente del pin 10 (M6): justificar cómo quedan cubiertos en la configuración de prueba, o medirlos | — | **[P] Pendiente de evaluar.** `brownout=0` y la lectura del pin 10 por sí solos **no** lo cubren |
 
 La prueba con el 65XE quedará registrada aparte, como evidencia aportada por el responsable.
 
@@ -80,10 +82,17 @@ de ESP-IDF. No mide el pin 3: la verificación eléctrica sigue [P].
 ## 4. Lo que sigue abierto
 
 - **C5:** MOTOR. Medición M3a por un tercero (ficha del responsable) o un adaptador que conserve MOTOR, validado.
-- **C9:** VCC_BUF y pin 10.
-- **C8:** la comprobación física de DATA IN.
+- **C9:** VCC_BUF y pin 10. `brownout=0` o la lectura del pin 10 no bastan.
+- **C8a:** el banco C8 por USB y sin el Atari. Valida la matriz GPIO y el control de UART2/RMT, no los niveles.
+- **C8b:** el nivel eléctrico del pin 3 con el Atari conectado. Va después de C5.
 - **C6:** el procedimiento de conexión.
 - La aprobación de H4-C y su reflejo en el perfil y en `puertas.json`, en un PR aparte con evidencia.
+
+**H4-C no reemplaza a H4 en el empaquetador (2026-11-24).** `tools/ci/firmware_package.py` abre DATA IN y MOTOR
+solo con H4 y M3a aprobadas en `docs/mediciones/puertas.json` (variante `cassette`, `gates=True`); las variantes
+`cassette-lectura`, `bench-c8` y `menu-sio` exigen las dos cerradas. H4-C es el criterio acotado con que el
+responsable podría decidir H4 para la casetera. Mientras no lo haga, en un PR aparte, las puertas siguen
+cerradas y el empaquetador no cambia. T9a de `menu-cinta` (código y host) no depende de H4-C; T9b (banco) sí.
 
 ## 5. Fuentes
 

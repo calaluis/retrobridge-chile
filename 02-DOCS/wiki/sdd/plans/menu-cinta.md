@@ -121,6 +121,102 @@ Caso «cinta que luego lee disco» (p. ej. un juego que carga niveles desde D1):
 apaga MOTOR antes de hablar por SIO; al bajar COMMAND el disco recupera la línea. Se pierde, como mucho, la primera
 trama: el OS la reintenta.
 
+### 2.4 T9a: traspaso entre tareas y salida en marcha (enmienda del 2026-11-24)
+
+Esta sección cambia el traspaso de §2.3 para T9a. Las reglas 1–5 siguen; cambia **cómo** se ejecuta `ToTape` y
+`ToDisk`. Revisión independiente del 2026-11-24.
+
+**Problema.**
+
+- Hoy `DataInArbiter::toTape()` llama a `TapeLine::take()` y espera la respuesta en el mismo paso. Pero el traspaso
+  real necesita la tarea de la casetera (`cas_loop`, un tick cada 2 ms): solo ella maneja el reproductor, el UART de
+  la cinta y el RMT. Una petición a otra tarea no puede confirmar la propiedad de la línea en el mismo paso.
+- Además, `DiskLine::end()` y `DiskLine::begin()` borran e instalan el driver de UART2 (`esp_sio_uart.cpp`). Eso
+  reserva memoria dentro de la tarea SIO.
+
+**Decisión 1: un solo driver de UART2, instalado una vez.** El disco instala UART2 al arrancar, como hoy. Nadie lo
+borra durante el traspaso. Lo que pasa de una tarea a la otra es el **permiso** de transmitir por GPIO21, no el
+driver.
+
+- `DiskLine` en T9a:
+  - `park()` deja de transmitir y de leer tramas;
+  - `resume()` vuelve a fijar su velocidad, vacía la entrada (`uart_flush_input`) y atiende tramas otra vez;
+  - ninguna de las dos instala ni borra nada.
+- La casetera usa ese mismo driver con su velocidad (600 baudios como regla). Lo hace con un modo «UART compartido»
+  de `EspDataIn`, que no instala ni borra UART2.
+- El modo actual de `EspDataIn::configure()` sigue igual para los paquetes `cassette` y `bench-c8`.
+- El RMT sigue como está documentado: crea su canal y su codificador en cada pasada FSK, y eso reserva memoria
+  (`esp_data_in.cpp`, «The RMT driver allocates»). Ocurre en la tarea de la casetera, nunca en la tarea SIO. T9a no
+  lo cambia.
+
+**Decisión 2: contrato asíncrono con estados explícitos.** Un objeto compartido, `DataInHandover`, lleva el estado
+del permiso. Usa solo atómicos, sin cerrojos ni memoria dinámica:
+
+```text
+estado:    Disk | TakeRequested | Tape | ReleaseRequested | Fault
+secuencia: uint32_t, sube con cada petición; una confirmación vale solo para su secuencia
+
+TapeLine::take()    -> Done | Pending | Failed     // reemplaza al bool actual
+TapeLine::release() -> Done | Pending | Failed     // reemplaza al bool actual
+```
+
+| Paso | Quién | Qué hace | Confirmación |
+|---|---|---|---|
+| 1 | Tarea SIO (árbitro) | Quiere la cinta (regla 1). Llama a `DiskLine.park()` solo cuando su TX está vacío (`uart_wait_tx_done(UART2, 0) == ESP_OK`). Si no está vacío, lo intenta en el paso siguiente | — |
+| 2 | Tarea SIO | Publica `TakeRequested` con una secuencia nueva. `take()` devuelve `Pending`. El árbitro pasa a un estado nuevo, **`TakePending`**: el disco está en pausa y la cinta todavía no transmite | — |
+| 3 | Tarea de la casetera, en su tick | Comprueba que su salida está en «descartar» y que el hardware está libre (abajo). Fija su velocidad. Cambia el reproductor a `EspDataIn` | Publica `Tape` con esa secuencia |
+| 4 | Tarea SIO | `take()` ve `Tape` con su secuencia y devuelve `Done`. El árbitro pasa a `Tape` | — |
+| 5 | Tarea SIO | Quiere el disco (regla 3). Publica `ReleaseRequested`. `release()` devuelve `Pending`. El árbitro pasa a **`ReleasePending`**: hoy ese estado significa «falló»; ahora significa «esperando» | — |
+| 6 | Tarea de la casetera | Pasa el reproductor a «descartar». Llama a `stop()` del RMT (el pin vuelve al UART). Espera a que el hardware esté libre | Publica `Disk` con esa secuencia |
+| 7 | Tarea SIO | `release()` ve `Disk` y devuelve `Done`. Llama a `DiskLine.resume()`. El árbitro pasa a `Disk` | — |
+
+**Hardware libre** es la condición para confirmar en los pasos 3 y 6. Cambiar entre dos ticks no basta: hay que
+mirar el hardware. Las tres condiciones son:
+
+- UART2: `uart_wait_tx_done(UART2, 0) == ESP_OK`. Así no quedan bytes en el anillo ni en la FIFO de TX.
+- RMT: `!fskActive()`, `!releasePending()` y ninguna transmisión en vuelo (`sending_ == false` y `txDone_` visto).
+- `EspDataIn` sin fallo (`!faulted()`).
+
+Si algo sigue ocupado, la tarea de la casetera no confirma y vuelve a mirar en el tick siguiente.
+
+**Plazos.** La tarea SIO los mide con el tiempo que ya recibe `step()`.
+
+- `kTakeTimeoutUs` = 20 ms, es decir, 10 ticks de la casetera. Al vencer:
+  - la tarea SIO publica `ReleaseRequested`, y la petición sigue como un `release` normal;
+  - el disco reanuda solo cuando la casetera confirma `Disk`;
+  - cuenta como `TakeFailed` y se reintenta cada 100 ms, como hoy (regla 5).
+- `kReleaseTimeoutUs` es el tiempo de vaciar lo que haya en la cola de TX, más un margen:
+  - lo normal es un byte, unos 17 ms a 600 baudios;
+  - el peor caso es `CassettePlayer::kMaxSend` = 512 bytes, unos 8,6 s, y solo ocurre tras un parón largo del bucle;
+  - el valor exacto (la cola real, más 20 ms, con tope de 9 s) se fija y se prueba en T9a.2.
+
+**Recuperación.**
+
+- Si `release` vence su plazo, el estado pasa a **`Fault`**:
+  - el disco **no** reanuda, porque dos transmisores en GPIO21 es el fallo que más cuesta (R1);
+  - la consola lo dice una vez;
+  - cada 100 ms se vuelve a publicar `ReleaseRequested`.
+- En `Fault`, la casetera aplica el camino de fallo de `EspDataIn`:
+  1. pasa el reproductor a «descartar»;
+  2. llama a `stop()`;
+  3. si el UART no recupera el pin, llama a `gpio_reset_pin(GPIO21)`: la línea queda liberada y `faulted()` es
+     verdadero;
+  4. confirma `Disk`.
+- Mientras dura un `Fault`, D1 queda en silencio. Se ve en la consola, y el Atari reintenta.
+- Un `Failed` de `take()` o de `release()` (petición rechazada, no vencida) sigue la regla 5 de §2.3.
+
+**Sin memoria dinámica en la ruta SIO.**
+
+- En la tarea SIO, `step()`, `park()`, `resume()`, `take()` y `release()` no reservan memoria.
+- Tampoco llaman a `uart_driver_install`, `uart_driver_delete`, `rmt_new_*` ni `rmt_del_*`.
+- Las reservas del RMT (una por pasada FSK) quedan en la tarea de la casetera, como ya está documentado.
+
+**Sin salida física hasta T9b.**
+
+- `kTapeOutput` sigue en `false` en `menu_sio.cpp`.
+- Las puertas del paquete siguen cerradas.
+- Todo T9a se ejercita en host. En el ESP32 compila, pero queda inerte.
+
 ## 3. Interfaces & contracts
 
 ```text
@@ -149,6 +245,14 @@ DriveMemory v2
 DataInArbiter.step(motorOn, commandLow, tapeReady, tapeEnded, poweredOff, gates) -> Keep | ToTape | ToDisk
   - puro, sin reloj propio; quien llama ejecuta end/take o release/begin
   - con gates == false devuelve siempre Keep con owner == Disk
+
+T9a (§2.4):
+DataInArbiter.owner()     -> Disk | TakePending | Tape | ReleasePending | Fault | None
+TapeLine.take()/release() -> Done | Pending | Failed
+DiskLine.park()/resume()  -> sin instalar ni borrar UART2
+DataInHandover            -> estado + secuencia, solo atómicos; la tarea SIO escribe las peticiones y la
+                             tarea de la casetera las confirmaciones
+TapeProgress.ended()      -> bool atómico que publica la casetera (fin de la última parte); lo lee la tarea SIO
 ```
 
 **Textos exactos de la línea de mensajes** (≤ 40 columnas, cierran la suposición tomada de la spec):
@@ -197,6 +301,13 @@ DataInArbiter.step(motorOn, commandLow, tapeReady, tapeEnded, poweredOff, gates)
 | AC7 | CI + banco | paquete `menu-sio` compila con la casetera; `listo_ms` del registro de arranque ≤ valor de hoy + 50 ms; discos, XEX y TNFS como antes | — |
 | AC8 | unidad + CI + banco | `gatesOpen() == false` → `CINTA EN C:, AUN NO PUEDE CARGARSE`; árbitro siempre `Keep`/Disk; las comprobaciones de puertas del paquete siguen verdes | `FakeTapeDeck`, árbitro con `gates=false` |
 | AC9–AC12 | unidad del árbitro ahora; banco tras M3a/H4 | tabla de transiciones de §2.3 completa (MOTOR on/off, pausa, COMMAND, fin, apagado, fallo de `take`/`begin`), incluido **MOTOR ya activo cuando la cinta pasa a `Ready` → `ToTape` en ese paso** | líneas falsas que registran el orden de `end/take/release/begin` |
+| T9a.1 | unidad (`test_data_in_arbiter`, `test_data_in_handover`, nuevo) | `take` `Pending` → `TakePending` sin transmisor activo; `Done` solo con la secuencia propia; una confirmación vieja se ignora; `take` vencido a los 20 ms → `release` → el disco reanuda solo tras `Disk`; `release` vencido → `Fault` sin `resume()`, reintento cada 100 ms; nunca `resume()` con la cinta en `Tape` | casetera falsa que confirma en el tick N, nunca, o con otra secuencia |
+| T9a.1, R10 | unidad | en la tarea SIO, `step()`, `park()`, `resume()`, `take()` y `release()` hacen **cero** reservas (contador de `operator new`, como `menu_tnfs_rig.hpp`) y **cero** llamadas a `uart_driver_*` y `rmt_new_*`/`rmt_del_*` | dobles de ESP-IDF del host que registran la llamada y la tarea |
+| T9a.2, R11 | unidad (`test_esp_data_in`) | modo compartido sin `uart_driver_install`/`delete`; no confirma con TX ocupado, con una pasada FSK activa, con `releasePending()` ni con `faulted()`; confirma cuando todo queda libre; las reservas del RMT ocurren solo en la tarea de la casetera, una por pasada (comportamiento documentado) | dobles de `uart_wait_tx_done` y RMT ocupados o libres |
+| T9a.3 | unidad (`test_cassette_player`) | el cambio de salida espera a que la escritura en curso termine; ningún byte partido; tras soltar, la salida es «descartar» | salidas falsas |
+| T9a.4 | unidad | `ended()` pasa a verdadero al terminar la última parte y vuelve a falso al rebobinar o expulsar | reproductor con una cinta de dos partes |
+| T9a.5, T9a.6 | unidad (`test_menu_cinta`) | `A` con D1 vacía y cinta en `C:` → arranque; sin cinta → `D1 SIN DISCO: ABRE LA FUENTE 1`; la respuesta de D1 tras el arranque de cinta según la decisión; línea de ayuda literal ≤ 40 columnas | `FakeTapeDeck` |
+| AC9–AC12 (lógica) | integración de host | guiones completos: START+OPTION → MOTOR → `TakePending` → `Tape` → pausas sin soltar → fin → `ReleasePending` → `Disk`; turbo `fsk`; COMMAND con MOTOR apagado; apagado del 65XE; **con `tapeOutput = false`, `take()` no se llama nunca** | casetera, disco, MOTOR y COMMAND falsos |
 
 Prueba RED obligatoria del árbitro: el orden `end` antes de `take` y `release` antes de `begin` (dos UART2
 instalados a la vez es el fallo que más cuesta en el equipo).
@@ -213,9 +324,33 @@ instalados a la vez es el fallo que más cuesta en el equipo).
 | T6 | `menu_sio`: arrancar la casetera tras D1, medir PSRAM libre, restaurar `C:` al arrancar | AC5, AC7 | 2 | T3, T5 | no | paquete `menu-sio` verde en CI; consola muestra PSRAM libre y `cas: listo` |
 | T7 | Enchufar el árbitro al bucle SIO (inerte sin puertas): MOTOR solo con M3a, COMMAND por GPIO39 | AC7, AC8 | 2 | T4, T6 | no | CI verde; comprobaciones de puertas del paquete verdes; sin puertas, ningún `uart_driver_delete` del SIO en el registro |
 | T8 | Banco AC1–AC8 en el 65XE; registro en `02-DOCS/raw/` | AC1–AC8 | — | T1–T7 | no | registro con SHA, ZIP, NVS sin cambios y cada AC visto en pantalla |
-| T9 | *(tras M3a y H4, PR aparte del responsable)* banco AC9–AC12 | AC9–AC12 | 2 | T8 + puertas | no | registro con las tres cintas de `cassette-cas` cargadas desde el menú |
+| T9a.1 | `DataInHandover` y el árbitro con `TakePending`, `ReleasePending` (esperando) y `Fault`; `take()`/`release()` con `Done`/`Pending`/`Failed`; plazos de §2.4 | AC9–AC12 (lógica) | 1 | T4 | sí | `ctest -R data_in` verde; las pruebas «T9a.1» de §5 vistas fallar antes |
+| T9a.2 | `EspDataIn` en modo UART compartido; condición «hardware libre»; `kReleaseTimeoutUs` según la cola real | requisito 1 | 2 | T9a.1 | no | `ctest -R esp_data_in` verde; ninguna llamada a `uart_driver_install`/`delete` en el modo compartido |
+| T9a.3 | Salida en marcha: el reproductor cambia entre «descartar» y `EspDataIn` solo cuando la casetera confirma, nunca a media escritura | requisito 1 | 2 | T9a.2 | no | `ctest -R "cassette_player\|data_in_handover"` verde |
+| T9a.4 | `tapeEnded` real: `TapeProgress.ended()` publicado por la casetera, leído sin bloquear | AC9–AC12 (lógica), requisito 2 | 1 | T9a.1 | sí | `ctest -R data_in_handover` verde: la regla 3 («fin + MOTOR apagado → disco») con el valor publicado |
+| T9a.5 | `A` sin disco en D1 con una cinta en `C:` arranca (`COLDSV`); D1 tras el arranque de cinta según la pregunta abierta de la spec | requisitos 3 y 4 | 1 | — | sí | `ctest -R menu_cinta` verde |
+| T9a.6 | Línea de ayuda con `A`, OPTION, START+OPTION y `C`, dentro de 40 columnas | requisito 5 | 0 | — | sí | `ctest -R menu_cinta` verde; texto literal |
+| T9a.7 | Firmware: `DiskLine` con `park`/`resume`, `EspTapeLine` en lugar de `PendingTapeLine` y `DataInHandover` en `menu_sio.cpp`. **`kTapeOutput` sigue en `false`** | — | 2 | T9a.1–T9a.4 | no | CI verde: ESP-IDF, paquete `menu-sio` y comprobaciones de puertas **sin cambios** |
+| T9b | Banco AC9–AC12 con MOTOR activo y salida de casetera | AC9–AC12 | 2 | T8, T9a y los **requisitos previos** (abajo) | no | registro con las tres cintas de `cassette-cas` cargadas desde el menú |
 
-Requisitos de código de T9 antes de poner `kTapeOutput = true` (revisión de T7 en el PR #85, 2026-11-23):
+**Requisitos previos de T9b (enmienda del 2026-11-24).** Hacen falta todos. Ninguna aceptación de riesgo
+reemplaza a ninguno:
+
+1. **M3a medida** en el Atari solo (`docs/hardware/ficha-medicion-m3a-motor.md`), con su registro.
+2. **Una protección de GPIO36 validada** (las etapas V de `docs/hardware/evaluacion-74lvc4245-motor.md`), o una
+   medición M3a con el pico ≤ 3,3 V.
+3. **H4-C** (`docs/hardware/h4-c-casetera.md`) con C5, C8a, C8b y C9 resueltos. C8b, que se hace con el Atari
+   conectado, va **solo después** de cumplir 1 y 2.
+4. **La aprobación de H4 y M3a que exige el empaquetador.** `tools/ci/firmware_package.py` abre la salida solo
+   con H4 y M3a aprobadas en `docs/mediciones/puertas.json` (variante `cassette`, `gates=True`). H4-C no la
+   reemplaza: es el criterio acotado con que el responsable la decidiría. El cambio de `puertas.json` y del perfil
+   es un PR aparte del responsable.
+5. Un PR, revisado aparte, que ponga `kTapeOutput = true`.
+
+Hasta entonces, T9a no cambia `puertas.json`, ADR-012 ni las comprobaciones del empaquetador.
+
+Requisitos de código de T9 antes de poner `kTapeOutput = true` (revisión de T7 en el PR #85, 2026-11-23). Desde el
+2026-11-24 los cubre T9a: el 1 es T9a.2 y T9a.3; el 2 es T9a.4; el 3 y el 4 son T9a.5; el 5 es T9a.6.
 
 1. **Salidas de la casetera en marcha.** `CassetteService` elige en `start()` si reproduce por `EspDataIn` o
    descarta; tiene que poder pasar a `EspDataIn` cuando el árbitro llama a `TapeLine.take()` y volver a descartar
@@ -249,6 +384,10 @@ Cada tarea de riesgo 2 pide flasheo y banco con aprobación.
 | R5 | La cinta tarda en leerse y el usuario pulsa la tecla antes | `.cas` grande, `mount` en segundo plano al arrancar | la carga no empieza | El árbitro decide por estado: MOTOR activo + `Ready` cede la línea aunque MOTOR subiera antes (§2.3 regla 1, prueba en T4); el OS espera el tono guía. Se mide el tiempo de lectura en T8 |
 | R6 | El juego lee disco tras la cinta y pierde una trama | regla 3 de §2.3 | un reintento del OS | El OS reintenta; se verifica en T9 con un caso real si existe |
 | R7 | AC9–AC12 dependen de puertas no aprobadas | M3a/H4 en `false` | el objetivo final queda pendiente | T9 fuera de este PR; T4 y T7 dejan la lógica probada e inerte |
+| R8 | La casetera no confirma a tiempo | casetera bloqueada o hardware ocupado | D1 en pausa | Plazos de §2.4; un `take` vencido sigue como `release`; el disco reanuda solo con confirmación (T9a.1) |
+| R9 | `release` tarda segundos | cola de TX llena tras un parón (hasta 512 bytes, unos 8,6 s) | D1 en silencio; el OS reintenta | `kReleaseTimeoutUs` según la cola real y `Fault` visible en la consola (T9a.2); se mide en T9b |
+| R10 | Memoria dinámica en la tarea SIO | un `uart_driver_*` o `rmt_*` llamado desde `step()` | viola ADR-011 | Decisión 1 de §2.4; prueba de host que cuenta reservas y llamadas por tarea (§5) |
+| R11 | Cambio de salida con bytes o FSK en vuelo | cambiar solo «entre ticks» | bytes partidos o dos transmisores | Condición «hardware libre» de §2.4; prueba con el UART y el RMT ocupados (T9a.2) |
 
 **Decisiones abiertas:** ninguna bloquea T1–T8. El tamaño del banco PSRAM solo se revisa si R3 se dispara.
 

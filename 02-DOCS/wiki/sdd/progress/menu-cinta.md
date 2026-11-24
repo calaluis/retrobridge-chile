@@ -46,6 +46,22 @@ Plan: [`plans/menu-cinta.md`](../plans/menu-cinta.md). T1–T7 se hicieron en el
 - **Sin cambios:** `puertas.json`, ADR-012, `firmware_package.py` y `kTapeOutput = false`. No hubo flasheo ni
   conexiones.
 
+## Revisión 2 del PR #99 (2026-11-24)
+
+- **Política de búfer (decisión 3 del plan).**
+  - Problema: el disco instala UART2 sin anillo de TX, así que 512 bytes a 600 baudios bloquearían a la casetera
+    unos 6,4 s.
+  - Decisión: un anillo de 2048 bytes al arrancar. El disco conserva su `write` + `uart_wait_tx_done`. La cinta
+    escribe sin bloquear y con 32 bytes en vuelo como mucho, así que `release` queda en ≤ 0,6 s.
+  - Alternativa, si el banco del disco muestra otro tiempo: sin anillo, escribiendo con la FIFO vacía.
+- **Recuperación de `Fault`.** `Disk` se confirma solo con el pin devuelto a UART2 **y** la matriz GPIO verificada
+  (la misma `route()` del banco C8). Si no se logra, el estado es `Released`: la línea queda suelta y el disco no
+  reanuda. Se prueban las confirmaciones viejas o tardías y los fallos de recuperación.
+- **`tapeEnded`.** Se publica verdadero solo con el reproductor al final, el TX vacío y sin pasada FSK.
+- **C8b.** Se define un ensayo acotado (`h4-c-casetera.md` §3.1): un paquete de banco con las puertas cerradas,
+  un patrón fijo de 2 s activado por consola, MOTOR comprobado en 0 V y medido con osciloscopio, después de C5. No
+  aprueba H4 ni M3a.
+
 ## Siguiente
 
 Revisar este PR de documentos. Los PR de código de T9a empiezan solo después de aprobarlo, uno por tarea.

@@ -78,6 +78,15 @@ public:
 
     void tick(uint64_t nowUs, const MotorIn& motor, ByteOut& bytes, WaveOut& wave) noexcept;
 
+    // The owner passes other outputs to tick() from now on (menu-cinta T9a.3). Called between two
+    // ticks, so no send() or push() is ever in progress: every byte goes whole to one output.
+    // - The rate is sent again to the new ByteOut before its first byte.
+    // - A record goes on from the byte where it is: nothing is lost or sent twice.
+    // - An FSK signal already started on `previous` is cut there (stop(), DATA IN to idle mark) and
+    //   the run is played again from its gap on the new WaveOut, as for a MOTOR drop: the new output
+    //   never gets half a run. A run that had already played to its end is not played again.
+    void changeOutputs(WaveOut& previous) noexcept;
+
     bool loaded() const noexcept { return source_ != nullptr; }
     bool atEnd() const noexcept { return segment_ >= segments_.size(); }
     uint32_t segment() const noexcept { return segment_; }

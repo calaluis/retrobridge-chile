@@ -1,7 +1,8 @@
 // CassettePlayer (spec cassette-cas, C104, AC5): records paced by the clock with MOTOR
 // (the C002 cases, kept), FSK runs through the loader and the start gate, a MOTOR drop in
 // a run stops the signal and replays the run, no allocation. The whole-tape case plays the
-// real PAL Alien Ambush (records and FSK runs alternate) from RB_CAS_SAMPLES.
+// real PAL Alien Ambush (records and FSK runs alternate) from RB_CAS_SAMPLES. Output switch while
+// the tape runs (menu-cinta T9a.3): no byte split, no half run on the new output.
 
 #include <cstdint>
 #include <cstdio>
@@ -13,6 +14,7 @@
 #include "rb/cassette/cas_index.hpp"
 #include "rb/cassette/cassette_player.hpp"
 #include "rb/cassette/fsk_loader.hpp"
+#include "rb/cassette/player_outputs.hpp"
 #include "unity.h"
 
 using rb::cassette::ByteOut;
@@ -27,6 +29,7 @@ using rb::cassette::FskWave;
 using rb::cassette::LoaderState;
 using rb::cassette::MemoryTapeSource;
 using rb::cassette::MotorIn;
+using rb::cassette::PlayerOutputs;
 using rb::cassette::PlayerPhase;
 using rb::cassette::SegmentKind;
 using rb::cassette::TapeSource;
@@ -194,6 +197,8 @@ struct Rig {
     uint32_t count = 0;
     uint64_t now = 0;
     bool pump = true;  // run the loader's producer on every advance
+    ByteOut* useBytes = nullptr;  // other outputs (T9a.3); null: bytes and wave
+    WaveOut* useWave = nullptr;
 
     explicit Rig(const Bytes& tape, std::size_t bank = sizeof g_bank) : file(tape), source(file)
     {
@@ -210,7 +215,15 @@ struct Rig {
             for (int i = 0; i < 100000 && loader.step() == rb::cassette::LoaderStep::Progress; ++i) {
             }
         }
-        player.tick(now, motor, bytes, wave);
+        player.tick(now, motor, useBytes != nullptr ? *useBytes : bytes, useWave != nullptr ? *useWave : wave);
+    }
+    // T9a.3: from the next tick the player plays into `b` and `w`.
+    void switchTo(ByteOut& b, WaveOut& w)
+    {
+        WaveOut& previous = useWave != nullptr ? *useWave : wave;
+        player.changeOutputs(previous);
+        useBytes = &b;
+        useWave = &w;
     }
     void advance(uint64_t us)
     {
@@ -684,6 +697,203 @@ void test_real_alien_ambush_plays_to_the_end()
                 static_cast<unsigned long long>(rig.now / 1000000ULL));
 }
 
+// ---- output switch while the tape runs (menu-cinta T9a.3) ----
+
+Bytes counting(uint8_t n)
+{
+    Bytes out;
+    for (uint8_t i = 0; i < n; ++i) {
+        out.push_back(i);
+    }
+    return out;
+}
+
+// A switch in the middle of a record: the record goes on from where it is, every byte goes whole to
+// exactly one output, in order, and the new output gets the rate before its first byte.
+void test_switch_mid_record_splits_no_byte()
+{
+    Rig rig(fuji() + chunk("data", 0, counting(10)));
+    rig.advance(4 * kByte600);
+    TEST_ASSERT_EQUAL_UINT32(4, rig.bytes.sent.size());
+    FakeBytes live;
+    FakeWave liveWave;
+    rig.switchTo(live, liveWave);
+    rig.advance(6 * kByte600);
+    TEST_ASSERT_TRUE(rig.bytes.sent == counting(4));
+    const Bytes tail{4, 5, 6, 7, 8, 9};
+    TEST_ASSERT_TRUE(live.sent == tail);
+    TEST_ASSERT_EQUAL_UINT32(1, live.bauds.size());
+    TEST_ASSERT_EQUAL_UINT32(600, live.bauds[0]);
+    TEST_ASSERT_TRUE(rig.player.atEnd());
+}
+
+// A send the old output refused is not lost: the same byte goes to the new output, once.
+void test_switch_after_a_refused_send_loses_nothing()
+{
+    Rig rig(fuji() + chunk("data", 0, {9, 8}));
+    rig.bytes.failSend = true;
+    rig.advance(kByte600);
+    TEST_ASSERT_EQUAL_UINT32(0, rig.bytes.sent.size());
+    FakeBytes live;
+    FakeWave liveWave;
+    rig.switchTo(live, liveWave);
+    rig.advance(1);
+    TEST_ASSERT_EQUAL_UINT32(1, live.bauds.size());
+    TEST_ASSERT_EQUAL_UINT32(1, live.sent.size());
+    TEST_ASSERT_EQUAL_UINT8(9, live.sent[0]);
+    rig.advance(kByte600);
+    TEST_ASSERT_EQUAL_UINT32(2, live.sent.size());
+    TEST_ASSERT_EQUAL_UINT8(8, live.sent[1]);
+}
+
+// A run still playing on the old output (queued, not idle) is cut there and played again, whole, from
+// its gap on the new one. No allocation.
+void test_switch_while_a_run_drains_cuts_it_and_replays_it_whole()
+{
+    Rig rig(fuji() + chunk("fsk ", 20, values({3, 5, 7})) + chunk("data", 0, {9}));
+    rig.advance(20000);
+    TEST_ASSERT_EQUAL_size_t(3, rig.wave.pushed.size());
+    TEST_ASSERT_EQUAL(static_cast<int>(PlayerPhase::FskDrain), static_cast<int>(rig.player.phase()));
+    FakeBytes live;
+    FakeWave liveWave;
+    liveWave.pushed.reserve(16);  // the fake's own record must not count
+    const unsigned long before = g_allocations;
+    rig.switchTo(live, liveWave);
+    TEST_ASSERT_EQUAL_UINT32(1, rig.wave.stops);  // DATA IN to idle mark on the old output
+    TEST_ASSERT_EQUAL(static_cast<int>(PlayerPhase::Gap), static_cast<int>(rig.player.phase()));
+    TEST_ASSERT_EQUAL_UINT32(0, rig.player.segment());
+    rig.advance(19999);  // the gap again, one us short
+    TEST_ASSERT_EQUAL_size_t(0, liveWave.pushed.size());
+    rig.advance(1);
+    TEST_ASSERT_EQUAL_UINT64(before, g_allocations);
+    TEST_ASSERT_EQUAL_size_t(3, liveWave.pushed.size());
+    TEST_ASSERT_EQUAL_UINT32(300, liveWave.pushed[0].ticks);  // from its first value
+    TEST_ASSERT_FALSE(liveWave.pushed[0].level);
+    TEST_ASSERT_EQUAL_size_t(3, rig.wave.pushed.size());  // nothing more on the old output
+}
+
+// A run cut while its portions are still being pushed (queue full): the held portion never reaches the
+// new output; the new output gets the whole run from its first value.
+void test_switch_while_a_run_plays_never_gives_half_a_run()
+{
+    Rig rig(fuji() + chunk("fsk ", 0, values({1, 2, 3, 4, 5})));
+    rig.wave.capacity = 2;
+    rig.advance(1);
+    TEST_ASSERT_EQUAL(static_cast<int>(PlayerPhase::FskPlay), static_cast<int>(rig.player.phase()));
+    FakeBytes live;
+    FakeWave liveWave;
+    rig.switchTo(live, liveWave);
+    TEST_ASSERT_EQUAL_UINT32(1, rig.wave.stops);
+    rig.advance(1);
+    rig.advance(1);
+    TEST_ASSERT_EQUAL_size_t(5, liveWave.pushed.size());
+    for (uint32_t i = 0; i < 5; ++i) {
+        TEST_ASSERT_EQUAL_UINT32((i + 1) * 100, liveWave.pushed[i].ticks);
+    }
+    TEST_ASSERT_EQUAL_size_t(2, rig.wave.pushed.size());
+}
+
+// A run that already played to its end on the old output is not played again.
+void test_switch_after_a_run_played_does_not_replay_it()
+{
+    Rig rig(fuji() + chunk("fsk ", 0, values({3, 5})) + chunk("data", 0, {7}));
+    rig.advance(1);
+    rig.wave.pending = 0;  // played
+    FakeBytes live;
+    FakeWave liveWave;
+    rig.switchTo(live, liveWave);
+    rig.advance(1);  // the drain tick: its time does not carry
+    rig.advance(kByte600);
+    TEST_ASSERT_EQUAL_UINT32(0, rig.wave.stops);
+    TEST_ASSERT_EQUAL_UINT32(0, rig.player.fskRestarts());
+    TEST_ASSERT_EQUAL_size_t(0, liveWave.pushed.size());
+    TEST_ASSERT_EQUAL_UINT32(1, live.sent.size());
+    TEST_ASSERT_EQUAL_UINT8(7, live.sent[0]);
+}
+
+// A run waiting for its start gate has played nothing: nothing is cut, the loader keeps its work, and
+// the whole run goes to the new output once the gate opens.
+void test_switch_while_waiting_for_the_gate_cuts_nothing()
+{
+    Rig rig(fuji() + chunk("fsk ", 0, repeat(2000, 300)));
+    rig.pump = false;
+    rig.advance(1000);
+    TEST_ASSERT_EQUAL(static_cast<int>(PlayerPhase::FskWait), static_cast<int>(rig.player.phase()));
+    FakeBytes live;
+    FakeWave liveWave;
+    rig.switchTo(live, liveWave);
+    TEST_ASSERT_EQUAL_UINT32(0, rig.wave.stops);
+    for (int i = 0; i < 7; ++i) {
+        (void)rig.loader.step();
+    }
+    rig.advance(1);
+    TEST_ASSERT_EQUAL_size_t(1536, liveWave.pushed.size());
+    TEST_ASSERT_EQUAL_size_t(0, rig.wave.pushed.size());
+    TEST_ASSERT_EQUAL_UINT32(0, rig.player.fskRestarts());
+}
+
+// PlayerOutputs: discard until the live outputs are taken, discard again once released, and every byte
+// of a record lands whole on one side; each side gets the rate before its bytes.
+void test_player_outputs_take_and_release_mid_record()
+{
+    Rig rig(fuji() + chunk("data", 0, counting(6)));  // the Rig's own outputs stand for discard
+    FakeBytes live;
+    FakeWave liveWave;
+    PlayerOutputs outs(rig.bytes, rig.wave);
+    TEST_ASSERT_FALSE(outs.select(true, rig.player));  // no live outputs yet
+    TEST_ASSERT_FALSE(outs.live());
+    outs.setLive(live, liveWave);
+    auto step = [&](uint64_t us) {
+        rig.now += us;
+        rig.player.tick(rig.now, rig.motor, outs.bytes(), outs.wave());
+    };
+    step(2 * kByte600);
+    TEST_ASSERT_TRUE(outs.select(true, rig.player));  // take
+    TEST_ASSERT_TRUE(outs.live());
+    TEST_ASSERT_TRUE(&outs.bytes() == &live);
+    TEST_ASSERT_TRUE(outs.select(true, rig.player));  // the same choice again changes nothing
+    step(2 * kByte600);
+    TEST_ASSERT_TRUE(outs.select(false, rig.player));  // release
+    TEST_ASSERT_FALSE(outs.live());
+    TEST_ASSERT_TRUE(&outs.bytes() == &rig.bytes);
+    TEST_ASSERT_TRUE(&outs.wave() == &rig.wave);
+    step(2 * kByte600);
+    const Bytes discarded{0, 1, 4, 5};
+    const Bytes driven{2, 3};
+    TEST_ASSERT_TRUE(rig.bytes.sent == discarded);
+    TEST_ASSERT_TRUE(live.sent == driven);
+    TEST_ASSERT_EQUAL_UINT32(1, live.bauds.size());
+    TEST_ASSERT_EQUAL_UINT32(2, rig.bytes.bauds.size());
+}
+
+// Released in the middle of a run on the live outputs: the live signal stops at once and the run is
+// replayed into discard; the live output gets nothing more.
+void test_player_outputs_release_mid_run_stops_the_live_signal()
+{
+    Rig rig(fuji() + chunk("fsk ", 0, values({3, 5, 7})));
+    FakeBytes live;
+    FakeWave liveWave;
+    PlayerOutputs outs(rig.bytes, rig.wave);
+    outs.setLive(live, liveWave);
+    TEST_ASSERT_TRUE(outs.select(true, rig.player));  // in the gap: nothing to cut
+    TEST_ASSERT_EQUAL_UINT32(0, rig.wave.stops);
+    for (int k = 0; k < 1000 && rig.loader.step() == rb::cassette::LoaderStep::Progress; ++k) {
+    }
+    rig.now += 1;
+    rig.player.tick(rig.now, rig.motor, outs.bytes(), outs.wave());
+    TEST_ASSERT_EQUAL_size_t(3, liveWave.pushed.size());
+    TEST_ASSERT_TRUE(outs.select(false, rig.player));
+    TEST_ASSERT_EQUAL_UINT32(1, liveWave.stops);
+    for (int i = 0; i < 2; ++i) {
+        for (int k = 0; k < 1000 && rig.loader.step() == rb::cassette::LoaderStep::Progress; ++k) {
+        }
+        rig.now += 1;
+        rig.player.tick(rig.now, rig.motor, outs.bytes(), outs.wave());
+    }
+    TEST_ASSERT_EQUAL_size_t(3, liveWave.pushed.size());
+    TEST_ASSERT_EQUAL_size_t(3, rig.wave.pushed.size());
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -713,5 +923,13 @@ int main()
     RUN_TEST(test_rewind_during_a_run_stops_the_signal);
     RUN_TEST(test_no_allocation_while_playing);
     RUN_TEST(test_real_alien_ambush_plays_to_the_end);
+    RUN_TEST(test_switch_mid_record_splits_no_byte);
+    RUN_TEST(test_switch_after_a_refused_send_loses_nothing);
+    RUN_TEST(test_switch_while_a_run_drains_cuts_it_and_replays_it_whole);
+    RUN_TEST(test_switch_while_a_run_plays_never_gives_half_a_run);
+    RUN_TEST(test_switch_after_a_run_played_does_not_replay_it);
+    RUN_TEST(test_switch_while_waiting_for_the_gate_cuts_nothing);
+    RUN_TEST(test_player_outputs_take_and_release_mid_record);
+    RUN_TEST(test_player_outputs_release_mid_run_stops_the_live_signal);
     return UNITY_END();
 }

@@ -183,6 +183,22 @@ void CassettePlayer::tick(uint64_t nowUs, const MotorIn& motor, ByteOut& bytes, 
     }
 }
 
+void CassettePlayer::changeOutputs(WaveOut& previous) noexcept
+{
+    sentBaud_ = 0;  // the new ByteOut has not been given the rate
+    if (!loaded() || atEnd()) {
+        return;
+    }
+    if (phase_ == PlayerPhase::FskDrain && previous.idle()) {
+        // The run already played to its end on the old output: nothing to cut or replay.
+        loaderStarted_ = false;
+        nextSegment();
+    } else if (phase_ == PlayerPhase::FskPlay || phase_ == PlayerPhase::FskDrain) {
+        // The signal had started on the old output: stop it there, the whole run again on the new one.
+        restartRun(previous);
+    }
+}
+
 // Sends the record's bytes the clock allows. True once the whole record is out.
 bool CassettePlayer::playBytes(const CasSegment& segment, ByteOut& bytes) noexcept
 {

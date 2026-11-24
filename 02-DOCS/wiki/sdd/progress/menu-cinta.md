@@ -381,6 +381,21 @@ Aprobable para T9a.4, sin defecto bloqueante. Dos observaciones pasan a verifica
 - **Lo que no prueba.** El 65XE real: que el OS, con START+OPTION, haga el arranque de disco, reciba el ERROR de
   D1 y cargue la cinta (banco T9b). El ERROR de D1 ya se prueba en host con el despachador SIO real.
 
+## T9a.6 — línea de ayuda de la cinta (2026-11-24)
+
+- **Decisiones del responsable (2026-11-24).** La ayuda va en la línea que quedaba en blanco bajo `C:` (el pie
+  de 2 filas ya iba lleno); texto literal `A+OPTION: SIN BASIC  A+START+OPTION: C:` (39 columnas).
+- **Hecho** (`tools/make_menu.py`, `menu_program.inc` regenerado). `MAIN_HELP` = `MAIN_TAPE` + 40 (exportado como
+  `kMainHelp` = 760) y `MAIN_HELP_TEXT` en la plantilla de la pantalla principal. El pie y el mensaje no se mueven.
+  El controlador solo escribe D1–D8 y `C:` sobre la plantilla, así que la línea sale tal cual; sin host, el 6502
+  borra la pantalla entera, ayuda incluida, como el pie.
+- **Pruebas:** `test_menu_program` (plantilla: línea bajo `C:`, pie en su sitio, texto literal ≤ 40) y
+  `test_menu_cinta` (la pantalla principal muestra la línea, sin cinta y con cinta, y `C:` encima sigue igual).
+- **RED:** la prueba Python falla (`MAIN_HELP` no existe) y la de host no compila (`kMainHelp`). **GREEN:** host
+  98/98; herramientas 301/301; capas OK; `make_menu.py --check` al día.
+- **Mutantes:** 3 de 3 detectados por las dos pruebas: sin línea de ayuda, texto sin OPTION y la línea sobre `C:`.
+- **Lo que no prueba.** Cómo se ve en el 65XE real (banco T9b).
+
 ## Siguiente
 
 Revisar este PR de documentos. Los PR de código de T9a empiezan solo después de aprobarlo, uno por tarea.

@@ -405,6 +405,16 @@ class MenuProgramTest(unittest.TestCase):
         foot = make_menu.MAIN_FOOTER
         self.assertEqual(screen[foot:foot + 80], row1 + row2)
 
+    def test_main_template_has_the_tape_help_line_under_c(self):
+        # menu-cinta T9a.6 (plan requirement 5): the console keys and C:, in the blank line under C:.
+        screen = self.at("screen", make_menu.SCREEN_SIZE)
+        self.assertEqual(make_menu.MAIN_HELP, make_menu.MAIN_TAPE + 40)
+        self.assertEqual(make_menu.MAIN_FOOTER, make_menu.MAIN_HELP + 40)  # the footer does not move
+        text = "A+OPTION: SIN BASIC  A+START+OPTION: C:"
+        self.assertLessEqual(len(text), 40)
+        help_line = screen[make_menu.MAIN_HELP:make_menu.MAIN_HELP + 40]
+        self.assertEqual(help_line, make_menu.screen_codes(text, 40))
+
     def test_list_template_has_the_fixed_title_of_the_main_screen(self):
         template = make_menu.list_template()
         title = template[make_menu.LIST_TITLE:make_menu.LIST_TITLE + 20]

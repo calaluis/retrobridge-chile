@@ -109,9 +109,10 @@ LAYOUT_MAIN, LAYOUT_LIST = 0, 1
 MAIN_TITLE = 0
 MAIN_SOURCES = MAIN_TITLE + TITLE_WIDTH            # 8 lines
 MAIN_SUBTITLE = MAIN_SOURCES + 8 * LINE_WIDTH
-MAIN_STATUS = MAIN_SUBTITLE + TITLE_WIDTH          # 11 lines: blank, D1..D8, C:, blank
+MAIN_STATUS = MAIN_SUBTITLE + TITLE_WIDTH          # 11 lines: blank, D1..D8, C:, help
 MAIN_DRIVES = MAIN_STATUS + LINE_WIDTH
 MAIN_TAPE = MAIN_DRIVES + 8 * LINE_WIDTH
+MAIN_HELP = MAIN_TAPE + LINE_WIDTH                 # menu-cinta T9a.6: the console keys and C:, fixed
 MAIN_FOOTER = MAIN_STATUS + 11 * LINE_WIDTH        # 2 lines
 MAIN_MESSAGE = MAIN_FOOTER + 2 * LINE_WIDTH        # below the footer (asked in the review of Issue #40)
 MAIN_END = MAIN_MESSAGE + LINE_WIDTH
@@ -128,6 +129,9 @@ LIST_END = LIST_MESSAGE + LINE_WIDTH
 MAIN_TITLE_TEXT = " RETROBRIDGE CHILE  "
 MAIN_SUBTITLE_TEXT = " ESTADO DE UNIDADES "
 NO_HOST_TEXT = " ERROR: EL HOST NO RESPONDE"
+# menu-cinta T9a.6 (plan requirement 5): A alone boots D1 with BASIC; held with OPTION, without BASIC; with
+# START+OPTION, the tape on C: (COLDSV reads the console keys).
+MAIN_HELP_TEXT = "A+OPTION: SIN BASIC  A+START+OPTION: C:"
 # menu-presentacion: shown in the message row of the screen in view while the reply arrives.
 LOADING_TEXT = " CARGANDO..."
 DLISTL = 0xD402              # ANTIC display list pointer, low byte (the OS copies SDLSTL there each frame)
@@ -191,6 +195,7 @@ def main_template() -> bytes:
     screen = bytearray(SCREEN_SIZE)
     screen[MAIN_TITLE:MAIN_TITLE + TITLE_WIDTH] = screen_codes(MAIN_TITLE_TEXT, TITLE_WIDTH)
     screen[MAIN_SUBTITLE:MAIN_SUBTITLE + TITLE_WIDTH] = screen_codes(MAIN_SUBTITLE_TEXT, TITLE_WIDTH)
+    screen[MAIN_HELP:MAIN_HELP + LINE_WIDTH] = screen_line(MAIN_HELP_TEXT)
     screen[MAIN_FOOTER:MAIN_MESSAGE] = main_footer()
     return bytes(screen)
 
@@ -818,7 +823,7 @@ def render_include(block: bytes, labels: dict) -> str:
         "kMenuActionShow": ACTION_SHOW, "kMenuActionBoot": ACTION_BOOT, "kMenuActionWait": ACTION_WAIT,
         "kMenuLayoutMain": LAYOUT_MAIN, "kMenuLayoutList": LAYOUT_LIST,
         "kMainTitle": MAIN_TITLE, "kMainSources": MAIN_SOURCES, "kMainDrives": MAIN_DRIVES,
-        "kMainTape": MAIN_TAPE, "kMainFooter": MAIN_FOOTER, "kMainMessage": MAIN_MESSAGE,
+        "kMainTape": MAIN_TAPE, "kMainHelp": MAIN_HELP, "kMainFooter": MAIN_FOOTER, "kMainMessage": MAIN_MESSAGE,
         "kListTitle": LIST_TITLE, "kListPath": LIST_PATH, "kListEntries": LIST_ENTRIES, "kListMaxEntries": LIST_MAX_ENTRIES,
         "kListFooter": LIST_FOOTER, "kListMessage": LIST_MESSAGE,
         "kMenuCursor": CURSOR_AT, "kMenuConfirmRow": CONFIRM_ROW,

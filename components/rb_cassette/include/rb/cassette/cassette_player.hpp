@@ -80,12 +80,16 @@ public:
 
     // The owner passes other outputs to tick() from now on (menu-cinta T9a.3). Called between two
     // ticks, so no send() or push() is ever in progress: every byte goes whole to one output.
+    // `previousDrove`: the old outputs reached DATA IN (false for discard).
     // - The rate is sent again to the new ByteOut before its first byte.
-    // - A record goes on from the byte where it is: nothing is lost or sent twice.
-    // - An FSK signal already started on `previous` is cut there (stop(), DATA IN to idle mark) and
-    //   the run is played again from its gap on the new WaveOut, as for a MOTOR drop: the new output
-    //   never gets half a run. A run that had already played to its end is not played again.
-    void changeOutputs(WaveOut& previous) noexcept;
+    // - From outputs that drove DATA IN: a record goes on from the byte where it is (nothing lost or
+    //   sent twice); an FSK signal already started on `previous` is cut there (stop(), DATA IN to idle
+    //   mark) and the run is played again from its gap, as for a MOTOR drop; a run that had already
+    //   played to its end is not played again.
+    // - From outputs that did not (review of PR #102): the Atari got nothing of the current segment, so
+    //   a record or run already begun is played again, whole, from its gap, even if discard "played"
+    //   it to its end.
+    void changeOutputs(WaveOut& previous, bool previousDrove) noexcept;
 
     bool loaded() const noexcept { return source_ != nullptr; }
     bool atEnd() const noexcept { return segment_ >= segments_.size(); }

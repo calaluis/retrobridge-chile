@@ -259,6 +259,30 @@ Plan: [`plans/menu-cinta.md`](../plans/menu-cinta.md). T1–T7 se hicieron en el
 - **Lo que no prueba.** El cambio con el hardware real (UART2 y RMT); eso lo cubren `hardwareFree()` de T9a.2 y el
   banco de T9b.
 
+### Revisión del PR #102 (2026-11-24)
+
+- **Riesgo confirmado.** El reproductor seguía con MOTOR mientras DATA IN aún no era de la casetera: durante
+  `TakePending` un registro sin hueco se iba entero a «descartar», y una pasada FSK corta «sonaba» en
+  `DiscardWaveOut` (siempre `idle()`) y al tomar no se repetía. Se perdía contenido.
+- **Corrección (en T9a.3).**
+  - `PlayerOutputs::tapeMayMove()` y `GatedMotor`: con salida viva configurada, la cinta se mueve solo mientras
+    está seleccionada; el reproductor ve MOTOR apagado en `TakePending`, tras soltar o con la toma fallando (la
+    pasada FSK sigue precargándose en su hueco). Sin salida viva (`kTapeOutput = false`) nada cambia: la cinta va
+    con MOTOR a «descartar» y `cas status` sigue el intento.
+  - Defensa debajo de la puerta: `changeOutputs(previous, previousDrove)`. Desde una salida que no llegaba a DATA
+    IN, un registro o una pasada ya empezados se repiten enteros desde su hueco, aunque «descartar» los diera por
+    sonados.
+  - La política de UART2 (decisión 3, `hardwareFree()`) y las puertas M3a/H4 no cambian.
+- **Contrato con T9a.7** (plan, requisito 1): `setLive()` al arrancar, cada tick con `GatedMotor`,
+  `select(true)`/`select(false)` en los pasos 3 y 6. Prueba de integración obligatoria antes de `kTapeOutput = true`.
+- **RED** (API con `tapeMayMove()` siempre verdadero y `previousDrove` ignorado): 6 fallan;
+  `a_record_with_no_gap_waits_for_the_take` (3 bytes en «descartar») y
+  `a_fsk_run_ending_during_take_pending_is_not_lost` (3 partes en «descartar») reproducen los dos escenarios.
+- **GREEN:** 41/41 en `test_rb_cassette_player`; host 98/98; herramientas 300/300; capas OK.
+- **Mutantes:** 14 de 14 detectados (7 nuevos: puerta siempre abierta, cinta parada sin salida viva, `GatedMotor`
+  sin puerta, `previousDrove` ignorado, pasada o registro desde «descartar» sin repetir, `select()` que da el lado
+  nuevo como viejo).
+
 ## Siguiente
 
 Revisar este PR de documentos. Los PR de código de T9a empiezan solo después de aprobarlo, uno por tarea.

@@ -26,6 +26,7 @@ using rb::cassette::CasStatus;
 using rb::cassette::FskLoader;
 using rb::cassette::FskPortion;
 using rb::cassette::FskWave;
+using rb::cassette::GatedMotor;
 using rb::cassette::LoaderState;
 using rb::cassette::MemoryTapeSource;
 using rb::cassette::MotorIn;
@@ -217,11 +218,12 @@ struct Rig {
         }
         player.tick(now, motor, useBytes != nullptr ? *useBytes : bytes, useWave != nullptr ? *useWave : wave);
     }
-    // T9a.3: from the next tick the player plays into `b` and `w`.
-    void switchTo(ByteOut& b, WaveOut& w)
+    // T9a.3: from the next tick the player plays into `b` and `w`. `drove`: the old outputs reached
+    // DATA IN.
+    void switchTo(ByteOut& b, WaveOut& w, bool drove = true)
     {
         WaveOut& previous = useWave != nullptr ? *useWave : wave;
-        player.changeOutputs(previous);
+        player.changeOutputs(previous, drove);
         useBytes = &b;
         useWave = &w;
     }
@@ -832,66 +834,176 @@ void test_switch_while_waiting_for_the_gate_cuts_nothing()
     TEST_ASSERT_EQUAL_UINT32(0, rig.player.fskRestarts());
 }
 
-// PlayerOutputs: discard until the live outputs are taken, discard again once released, and every byte
-// of a record lands whole on one side; each side gets the rate before its bytes.
-void test_player_outputs_take_and_release_mid_record()
-{
-    Rig rig(fuji() + chunk("data", 0, counting(6)));  // the Rig's own outputs stand for discard
+// ---- nothing lost while DATA IN is not the cassette's (review of PR #102) ----
+
+// The cassette loop as T9a.7 runs it: PlayerOutputs and GatedMotor, the loader pumped every tick.
+struct Deck {
+    Rig rig;
     FakeBytes live;
     FakeWave liveWave;
-    PlayerOutputs outs(rig.bytes, rig.wave);
-    TEST_ASSERT_FALSE(outs.select(true, rig.player));  // no live outputs yet
-    TEST_ASSERT_FALSE(outs.live());
-    outs.setLive(live, liveWave);
-    auto step = [&](uint64_t us) {
+    PlayerOutputs outs{rig.bytes, rig.wave};  // the Rig's own outputs stand for discard
+    GatedMotor motor{rig.motor, outs};
+
+    explicit Deck(const Bytes& tape, bool withLive = true) : rig(tape)
+    {
+        if (withLive) {
+            outs.setLive(live, liveWave);
+        }
+    }
+    void step(uint64_t us)
+    {
+        for (int k = 0; k < 100000 && rig.loader.step() == rb::cassette::LoaderStep::Progress; ++k) {
+        }
         rig.now += us;
-        rig.player.tick(rig.now, rig.motor, outs.bytes(), outs.wave());
-    };
-    step(2 * kByte600);
-    TEST_ASSERT_TRUE(outs.select(true, rig.player));  // take
-    TEST_ASSERT_TRUE(outs.live());
-    TEST_ASSERT_TRUE(&outs.bytes() == &live);
-    TEST_ASSERT_TRUE(outs.select(true, rig.player));  // the same choice again changes nothing
-    step(2 * kByte600);
-    TEST_ASSERT_TRUE(outs.select(false, rig.player));  // release
-    TEST_ASSERT_FALSE(outs.live());
-    TEST_ASSERT_TRUE(&outs.bytes() == &rig.bytes);
-    TEST_ASSERT_TRUE(&outs.wave() == &rig.wave);
-    step(2 * kByte600);
-    const Bytes discarded{0, 1, 4, 5};
-    const Bytes driven{2, 3};
-    TEST_ASSERT_TRUE(rig.bytes.sent == discarded);
-    TEST_ASSERT_TRUE(live.sent == driven);
-    TEST_ASSERT_EQUAL_UINT32(1, live.bauds.size());
-    TEST_ASSERT_EQUAL_UINT32(2, rig.bytes.bauds.size());
+        rig.player.tick(rig.now, motor, outs.bytes(), outs.wave());
+    }
+};
+
+// A record with no gap, MOTOR on, the take still pending (TakePending): nothing goes to discard and
+// the tape does not move. Once the cassette holds DATA IN the whole record goes out, from its first
+// byte, at its rate.
+void test_a_record_with_no_gap_waits_for_the_take()
+{
+    Deck d(fuji() + chunk("data", 0, {1, 2, 3}));
+    for (int i = 0; i < 20; ++i) {
+        d.step(kByte600);  // 20 ticks of TakePending, MOTOR on
+    }
+    TEST_ASSERT_EQUAL_UINT32(0, d.rig.bytes.sent.size());
+    TEST_ASSERT_TRUE(d.outs.select(true, d.rig.player));  // Tape confirmed
+    d.step(1);  // the first tick with the tape moving counts nothing
+    d.step(3 * kByte600);
+    const Bytes all{1, 2, 3};
+    TEST_ASSERT_TRUE(d.live.sent == all);
+    TEST_ASSERT_EQUAL_UINT32(1, d.live.bauds.size());
+    TEST_ASSERT_EQUAL_UINT32(600, d.live.bauds[0]);
+    TEST_ASSERT_EQUAL_UINT32(0, d.rig.bytes.sent.size());
 }
 
-// Released in the middle of a run on the live outputs: the live signal stops at once and the run is
-// replayed into discard; the live output gets nothing more.
-void test_player_outputs_release_mid_run_stops_the_live_signal()
+// A short FSK run that discard would "play" to its end during TakePending (DiscardWaveOut is always
+// idle): the run is not lost; the live output gets all of it once the take is confirmed.
+void test_a_fsk_run_ending_during_take_pending_is_not_lost()
 {
-    Rig rig(fuji() + chunk("fsk ", 0, values({3, 5, 7})));
+    Deck d(fuji() + chunk("fsk ", 0, values({3, 5, 7})) + chunk("data", 0, {9}));
+    for (int i = 0; i < 20; ++i) {
+        d.step(kByte600);
+    }
+    TEST_ASSERT_EQUAL_UINT32(0, d.rig.player.segment());
+    TEST_ASSERT_EQUAL_size_t(0, d.rig.wave.pushed.size());
+    TEST_ASSERT_TRUE(d.outs.select(true, d.rig.player));
+    d.step(1);
+    d.step(1);
+    TEST_ASSERT_EQUAL_size_t(3, d.liveWave.pushed.size());
+    TEST_ASSERT_EQUAL_UINT32(300, d.liveWave.pushed[0].ticks);
+    TEST_ASSERT_FALSE(d.liveWave.pushed[0].level);
+}
+
+// Without live outputs (kTapeOutput = false) nothing changes: the tape moves with MOTOR into discard.
+void test_without_live_outputs_the_tape_moves_into_discard()
+{
+    Deck d(fuji() + chunk("data", 0, {1, 2, 3}), false);
+    d.step(3 * kByte600);
+    TEST_ASSERT_EQUAL_UINT32(3, d.rig.bytes.sent.size());
+}
+
+// Defence in depth, below the gate: a record begun on outputs that did not drive DATA IN is played
+// again, whole, from its gap on the new ones.
+void test_switch_from_discard_mid_record_replays_the_record()
+{
+    Rig rig(fuji() + chunk("data", 0, counting(6)));
+    rig.advance(2 * kByte600);
+    TEST_ASSERT_EQUAL_UINT32(2, rig.bytes.sent.size());
     FakeBytes live;
     FakeWave liveWave;
-    PlayerOutputs outs(rig.bytes, rig.wave);
-    outs.setLive(live, liveWave);
-    TEST_ASSERT_TRUE(outs.select(true, rig.player));  // in the gap: nothing to cut
-    TEST_ASSERT_EQUAL_UINT32(0, rig.wave.stops);
-    for (int k = 0; k < 1000 && rig.loader.step() == rb::cassette::LoaderStep::Progress; ++k) {
+    rig.switchTo(live, liveWave, false);
+    rig.advance(6 * kByte600);
+    TEST_ASSERT_TRUE(live.sent == counting(6));
+    TEST_ASSERT_EQUAL_UINT32(1, live.bauds.size());
+}
+
+// The same for a run discard "played" to its end: played again, whole, on the new outputs.
+void test_switch_from_discard_after_a_run_replays_it()
+{
+    Rig rig(fuji() + chunk("fsk ", 0, values({3, 5})) + chunk("data", 0, {7}));
+    rig.advance(1);
+    rig.wave.pending = 0;  // "played" into discard
+    TEST_ASSERT_EQUAL(static_cast<int>(PlayerPhase::FskDrain), static_cast<int>(rig.player.phase()));
+    FakeBytes live;
+    FakeWave liveWave;
+    rig.switchTo(live, liveWave, false);
+    TEST_ASSERT_EQUAL_UINT32(0, rig.player.segment());
+    rig.advance(1);
+    rig.advance(1);
+    TEST_ASSERT_EQUAL_size_t(2, liveWave.pushed.size());
+    TEST_ASSERT_EQUAL_UINT32(300, liveWave.pushed[0].ticks);
+}
+
+// PlayerOutputs with the gate: nothing to discard before the take; after a release the tape stops
+// (MOTOR still on); taken again, the interrupted record is played again whole. Each byte is whole.
+void test_player_outputs_take_release_and_take_again_mid_record()
+{
+    Deck d(fuji() + chunk("data", 0, counting(6)));
+    TEST_ASSERT_FALSE(d.outs.live());
+    d.step(2 * kByte600);
+    TEST_ASSERT_TRUE(d.outs.select(true, d.rig.player));  // take
+    TEST_ASSERT_TRUE(&d.outs.bytes() == &d.live);
+    TEST_ASSERT_TRUE(d.outs.select(true, d.rig.player));  // the same choice again changes nothing
+    d.step(1);
+    d.step(2 * kByte600);
+    TEST_ASSERT_TRUE(d.live.sent == counting(2));
+    TEST_ASSERT_TRUE(d.outs.select(false, d.rig.player));  // release
+    TEST_ASSERT_TRUE(&d.outs.bytes() == &d.rig.bytes);
+    TEST_ASSERT_TRUE(&d.outs.wave() == &d.rig.wave);
+    d.step(5 * kByte600);
+    TEST_ASSERT_EQUAL_UINT32(2, d.live.sent.size());
+    TEST_ASSERT_TRUE(d.outs.select(true, d.rig.player));  // taken again
+    d.step(1);
+    d.step(6 * kByte600);
+    const Bytes expected{0, 1, 0, 1, 2, 3, 4, 5};
+    TEST_ASSERT_TRUE(d.live.sent == expected);
+    TEST_ASSERT_EQUAL_UINT32(2, d.live.bauds.size());
+    TEST_ASSERT_EQUAL_UINT32(0, d.rig.bytes.sent.size());
+}
+
+// PlayerOutputs tells the player the take comes from discard even when the owner ticks without the
+// gate: a record begun in discard is played again, whole, on the live outputs.
+void test_player_outputs_take_from_discard_replays_without_the_gate()
+{
+    Deck d(fuji() + chunk("data", 0, counting(4)));
+    d.rig.now += 2 * kByte600;
+    d.rig.player.tick(d.rig.now, d.rig.motor, d.outs.bytes(), d.outs.wave());  // no gate: into discard
+    TEST_ASSERT_EQUAL_UINT32(2, d.rig.bytes.sent.size());
+    TEST_ASSERT_TRUE(d.outs.select(true, d.rig.player));
+    d.step(1);
+    d.step(4 * kByte600);
+    TEST_ASSERT_TRUE(d.live.sent == counting(4));
+}
+
+// select(true) without live outputs fails and changes nothing.
+void test_player_outputs_without_live_cannot_take()
+{
+    Deck d(fuji() + chunk("data", 0, {1}), false);
+    TEST_ASSERT_FALSE(d.outs.select(true, d.rig.player));
+    TEST_ASSERT_FALSE(d.outs.live());
+    TEST_ASSERT_TRUE(&d.outs.bytes() == &d.rig.bytes);
+}
+
+// Released in the middle of a run on the live outputs: the live signal stops at once, the live output
+// gets nothing more, and nothing goes to discard while released.
+void test_player_outputs_release_mid_run_stops_the_live_signal()
+{
+    Deck d(fuji() + chunk("fsk ", 0, values({3, 5, 7})));
+    TEST_ASSERT_TRUE(d.outs.select(true, d.rig.player));  // in the gap: nothing to cut
+    TEST_ASSERT_EQUAL_UINT32(0, d.rig.wave.stops);
+    d.step(1);
+    d.step(1);
+    TEST_ASSERT_EQUAL_size_t(3, d.liveWave.pushed.size());
+    TEST_ASSERT_TRUE(d.outs.select(false, d.rig.player));
+    TEST_ASSERT_EQUAL_UINT32(1, d.liveWave.stops);
+    for (int i = 0; i < 4; ++i) {
+        d.step(1000);
     }
-    rig.now += 1;
-    rig.player.tick(rig.now, rig.motor, outs.bytes(), outs.wave());
-    TEST_ASSERT_EQUAL_size_t(3, liveWave.pushed.size());
-    TEST_ASSERT_TRUE(outs.select(false, rig.player));
-    TEST_ASSERT_EQUAL_UINT32(1, liveWave.stops);
-    for (int i = 0; i < 2; ++i) {
-        for (int k = 0; k < 1000 && rig.loader.step() == rb::cassette::LoaderStep::Progress; ++k) {
-        }
-        rig.now += 1;
-        rig.player.tick(rig.now, rig.motor, outs.bytes(), outs.wave());
-    }
-    TEST_ASSERT_EQUAL_size_t(3, liveWave.pushed.size());
-    TEST_ASSERT_EQUAL_size_t(3, rig.wave.pushed.size());
+    TEST_ASSERT_EQUAL_size_t(3, d.liveWave.pushed.size());
+    TEST_ASSERT_EQUAL_size_t(0, d.rig.wave.pushed.size());
 }
 
 int main()
@@ -929,7 +1041,14 @@ int main()
     RUN_TEST(test_switch_while_a_run_plays_never_gives_half_a_run);
     RUN_TEST(test_switch_after_a_run_played_does_not_replay_it);
     RUN_TEST(test_switch_while_waiting_for_the_gate_cuts_nothing);
-    RUN_TEST(test_player_outputs_take_and_release_mid_record);
+    RUN_TEST(test_a_record_with_no_gap_waits_for_the_take);
+    RUN_TEST(test_a_fsk_run_ending_during_take_pending_is_not_lost);
+    RUN_TEST(test_without_live_outputs_the_tape_moves_into_discard);
+    RUN_TEST(test_switch_from_discard_mid_record_replays_the_record);
+    RUN_TEST(test_switch_from_discard_after_a_run_replays_it);
+    RUN_TEST(test_player_outputs_take_release_and_take_again_mid_record);
+    RUN_TEST(test_player_outputs_take_from_discard_replays_without_the_gate);
+    RUN_TEST(test_player_outputs_without_live_cannot_take);
     RUN_TEST(test_player_outputs_release_mid_run_stops_the_live_signal);
     return UNITY_END();
 }

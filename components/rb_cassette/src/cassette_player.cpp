@@ -183,10 +183,20 @@ void CassettePlayer::tick(uint64_t nowUs, const MotorIn& motor, ByteOut& bytes, 
     }
 }
 
-void CassettePlayer::changeOutputs(WaveOut& previous) noexcept
+void CassettePlayer::changeOutputs(WaveOut& previous, bool previousDrove) noexcept
 {
     sentBaud_ = 0;  // the new ByteOut has not been given the rate
     if (!loaded() || atEnd()) {
+        return;
+    }
+    const bool runStarted = phase_ == PlayerPhase::FskPlay || phase_ == PlayerPhase::FskDrain;
+    if (!previousDrove) {
+        // Nothing of the current segment reached DATA IN: one already begun is played again, whole.
+        if (runStarted) {
+            restartRun(previous);
+        } else if (phase_ == PlayerPhase::Bytes && sentInRecord_ > 0) {
+            enterSegment();
+        }
         return;
     }
     if (phase_ == PlayerPhase::FskDrain && previous.idle()) {

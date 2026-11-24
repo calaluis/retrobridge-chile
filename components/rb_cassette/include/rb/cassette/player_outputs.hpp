@@ -5,8 +5,14 @@
 // outputs (EspDataIn on the ESP32) only once it confirms Tape; discard again on release.
 //
 // The cassette task owns it and calls select() between two ticks, as steps 3 and 6 of the handover
-// say, so a switch never falls inside a send() or a push(). Each tick then passes bytes() and wave()
-// to CassettePlayer::tick(). Never allocates.
+// say, so a switch never falls inside a send() or a push(). Each tick then passes bytes(), wave() and
+// a GatedMotor to CassettePlayer::tick(). Never allocates.
+//
+// Nothing is lost while DATA IN is not the cassette's (review of PR #102): with live outputs set, the
+// tape moves only while they are selected. During TakePending, after a release, or while a take keeps
+// failing, the player sees MOTOR off: the tape stays where it is (an FSK run still preloads in its
+// gap). Without live outputs (kTapeOutput = false) the tape moves with MOTOR into discard, as before,
+// so `cas status` still follows a load attempt.
 
 #include "rb/cassette/cassette_player.hpp"
 
@@ -42,10 +48,15 @@ public:
             return true;
         }
         WaveOut& previous = wave();
+        const bool drove = live_;
         live_ = live;
-        player.changeOutputs(previous);
+        player.changeOutputs(previous, drove);
         return true;
     }
+
+    // Whether the tape may move now: always without live outputs; with them, only while they are
+    // selected.
+    bool tapeMayMove() const noexcept { return !hasLive() || live_; }
 
 private:
     ByteOut& discardBytes_;
@@ -53,6 +64,17 @@ private:
     ByteOut* liveBytes_ = nullptr;
     WaveOut* liveWave_ = nullptr;
     bool live_ = false;
+};
+
+// MOTOR as the player must see it: the Atari's MOTOR, and the tape allowed to move (PlayerOutputs).
+class GatedMotor final : public MotorIn {
+public:
+    GatedMotor(const MotorIn& motor, const PlayerOutputs& outputs) noexcept : motor_(motor), outputs_(outputs) {}
+    bool on() const override { return outputs_.tapeMayMove() && motor_.on(); }
+
+private:
+    const MotorIn& motor_;
+    const PlayerOutputs& outputs_;
 };
 
 }  // namespace rb::cassette

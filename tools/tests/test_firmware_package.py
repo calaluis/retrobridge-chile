@@ -1358,7 +1358,36 @@ class BenchC8aPackageTest(unittest.TestCase):
         self.assertTrue(uploads)
         for step in uploads:
             if "bench" in step.lower():
-                self.assertIn("if: github.event_name == 'workflow_dispatch'", step)
+                runs = step_condition(step)
+                self.assertIsNotNone(runs, "a bench upload without a condition")
+                self.assertTrue(runs(MANUAL_ON_MAIN))
+                for context in (MANUAL_ON_A_BRANCH, PULL_REQUEST, PUSH_TO_MAIN):
+                    self.assertFalse(runs(context), context)
+
+
+def step_condition(step: str):
+    """The `if:` of a workflow step, as a function of the event context, or None. Only `github.x == 'v'` terms
+    joined by && (binding tighter) and ||; anything else raises, so an unexpected form cannot pass unread."""
+    match = re.search(r"^\s*if:\s*(.+)$", step, re.M)
+    if match is None:
+        return None
+    expression = match.group(1).strip()
+    clauses = []
+    for clause in expression.split("||"):
+        terms = []
+        for term in clause.split("&&"):
+            found = re.fullmatch(r"\s*github\.(event_name|ref)\s*==\s*'([^']*)'\s*", term)
+            if found is None:
+                raise ValueError(f"condición no reconocida: {expression}")
+            terms.append((found.group(1), found.group(2)))
+        clauses.append(terms)
+    return lambda context: any(all(context[key] == value for key, value in terms) for terms in clauses)
+
+
+MANUAL_ON_MAIN = {"event_name": "workflow_dispatch", "ref": "refs/heads/main"}
+MANUAL_ON_A_BRANCH = {"event_name": "workflow_dispatch", "ref": "refs/heads/feat/sin-fusionar"}
+PULL_REQUEST = {"event_name": "pull_request", "ref": "refs/pull/117/merge"}
+PUSH_TO_MAIN = {"event_name": "push", "ref": "refs/heads/main"}
 
 
 class BenchC8aCiJobTest(unittest.TestCase):
@@ -1395,20 +1424,35 @@ class BenchC8aCiJobTest(unittest.TestCase):
     def steps(self):
         return re.split(r"\n      - ", self.job())[1:]
 
-    def test_the_job_uploads_only_in_a_manual_run(self):
-        # F4 (owner's decision): the image is uploaded only by workflow_dispatch, for 7 days, under the
-        # BENCH-C8A-NO-SIO name. Pull Requests build and verify it and upload nothing.
+    def assert_only_a_manual_run_on_main(self, step):
+        runs = step_condition(step)
+        self.assertIsNotNone(runs, step[:60])
+        self.assertTrue(runs(MANUAL_ON_MAIN), step[:60])
+        for context in (MANUAL_ON_A_BRANCH, PULL_REQUEST, PUSH_TO_MAIN):  # review 1 of PR #117, H1
+            self.assertFalse(runs(context), f"{step[:60]}: {context}")
+
+    def test_the_job_uploads_only_in_a_manual_run_on_main(self):
+        # F4 (owner's decision): the image is uploaded only by workflow_dispatch on main (merged code), for 7 days,
+        # under the BENCH-C8A-NO-SIO name. Pull Requests and manual runs of any other branch upload nothing.
         steps = self.steps()
         uploads = [s for s in steps if "actions/upload-artifact@" in s]
         self.assertEqual(len(uploads), 1)
         upload = uploads[0]
-        self.assertIn("if: github.event_name == 'workflow_dispatch'", upload)
+        self.assert_only_a_manual_run_on_main(upload)
         self.assertRegex(upload, r"retention-days: 7\b")
         self.assertIn("name: ${{ steps.package.outputs.name }}", upload)
         self.assertIn('name="retrobridge-BENCH-C8A-NO-SIO-fujinet-atari-v1x-${FW_COMMIT:0:7}"', self.job())
-        for step in steps:
-            if "steps.upload." in step:  # every step after the upload runs only when it ran
-                self.assertIn("if: github.event_name == 'workflow_dispatch'", step)
+        digest = [s for s in steps if "steps.upload." in s]
+        self.assertTrue(digest)
+        for step in digest:  # every step after the upload runs only when it ran
+            self.assert_only_a_manual_run_on_main(step)
+
+    def test_the_condition_reader_rejects_what_it_cannot_read(self):
+        with self.assertRaises(ValueError):
+            step_condition("if: github.event_name != 'pull_request'")
+        with self.assertRaises(ValueError):
+            step_condition("if: always()")
+        self.assertIsNone(step_condition("run: true"))
         uses = re.findall(r"uses:\s*(\S+)", self.job())
         self.assertTrue(all(u.startswith(("actions/checkout@", "actions/upload-artifact@")) for u in uses), uses)
         self.assertNotIn(self.JOB, re.sub(r"^  " + re.escape(self.JOB) + r":\n", "", self.ci, flags=re.M))  # no needs:

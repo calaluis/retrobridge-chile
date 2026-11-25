@@ -10,7 +10,7 @@
 > **F2 implementada** (PR #115): variante `bench-c8a` del empaquetador (C-3 a C-7) y sus pruebas.
 > **F3 implementada** (PR #116): job de CI que compila, empaqueta y verifica `bench-c8a`.
 > **F4 autorizada por escrito** por el responsable (2026-11-25, «Procede con el F4»): la imagen se sube solo en una
-> ejecución manual, con retención de 7 días (§6, Estado de F4). La ejecución en la placa se registra en
+> ejecución manual sobre `main`, con retención de 7 días (§6, Estado de F4). La ejecución en la placa se registra en
 > `docs/mediciones/`.
 
 ## 1. Para qué sirve
@@ -59,7 +59,7 @@ distribuirla.
 | C-3 | **Nombre del paquete** con `BENCH-C8A-NO-SIO`; el manifiesto declara `bench: true` y `sio: no autorizado` | Confundir el binario con `menu-sio` o con la casetera | — |
 | C-4 | **Marcas obligatorias** en la imagen: el texto del banco, y **ninguna** marca de `menu-sio` ni de salida de casetera | Que un binario de banco incluya el menú o la cinta | Ya existe en `FEATURE_MARKERS`; la variante nueva debe exigirlo |
 | C-5 | **Puertas leídas** de `puertas.json` y del perfil, como en las demás variantes (`check_gate_record`) | Empaquetar el banco con otro estado de puertas sin revisarlo | — |
-| C-6 | **Sin distribución:** sin `upload-artifact` hasta una decisión explícita. Desde F4 (decisión del responsable): solo una ejecución manual (`workflow_dispatch`) sube la imagen, 7 días | Que aparezca una imagen descargable sin decisión | Un PR nunca sube la imagen |
+| C-6 | **Sin distribución:** sin `upload-artifact` hasta una decisión explícita. Desde F4 (decisión del responsable): solo una ejecución manual (`workflow_dispatch`) sobre `main` sube la imagen, 7 días | Que aparezca una imagen descargable sin decisión, o de código sin fusionar | Un PR o una ejecución manual en otra rama nunca suben la imagen |
 | C-7 | Sin `erase_flash`, sin escribir la NVS (`NVS_CHECK`, ya en todas las variantes) | Borrar la configuración Wi-Fi del responsable | — |
 
 ## 5. Qué prueba y qué no
@@ -108,7 +108,8 @@ La variante `bench-c8a` de `tools/ci/firmware_package.py`:
   lee la tabla de símbolos del ELF, no sus bytes; un ELF sin tabla legible se rechaza.
 - **C-5:** puertas `(H4 = false, M3a = true)` leídas del perfil y de `puertas.json` (`check_gate_record`). Con otras
   puertas, el empaquetado falla.
-- **C-6:** ningún paso `upload-artifact` de la CI menciona el banco (prueba estructural sobre `ci.yml`).
+- **C-6 (estado histórico, antes de F4):** ningún paso `upload-artifact` de la CI mencionaba el banco. Desde F4, la
+  prueba exige que toda subida del banco corra solo en una ejecución manual sobre `main` (Estado de F4).
 - **C-7:** sin `nvs_*` (`NVS_CHECK`, como todas las variantes).
 - Las llamadas SIO permitidas son las de la casetera, en su número exacto. La concesión de banco sigue solo en
   `main/bench_c8.cpp`. Las demás variantes siguen rechazando la opción y el código de banco.
@@ -121,8 +122,8 @@ La variante `bench-c8a` de `tools/ci/firmware_package.py`:
 - **Job** `firmware-package-bench-c8a` de `.github/workflows/ci.yml`, en Pull Requests y ejecuciones manuales:
   compila con `sdkconfig.defaults;sdkconfig.board.fujinet-atari-v1x;sdkconfig.bench-c8` (ESP-IDF v6.1), comprueba
   `CONFIG_RB_BENCH_C8=y` y que el menú no está, empaqueta con `--variant bench-c8a` y verifica el paquete.
-- **C-6:** sin `upload-artifact` y sin salidas a otros pasos o jobs. El paquete queda en el runner y se descarta
-  con él. El resumen del job muestra las comprobaciones y «Not distributed (C-6)».
+- **C-6 (estado histórico, antes de F4):** sin `upload-artifact` y sin salidas a otros pasos o jobs; el paquete
+  quedaba en el runner. Desde F4, el job sube el paquete solo en una ejecución manual sobre `main` (Estado de F4).
 - **Pruebas:** `BenchC8aCiJobTest` (5) en `tools/tests/test_firmware_package.py`: el job compila el banco,
   empaqueta y verifica `bench-c8a`, solo usa `actions/checkout`, no publica, no flashea, y el árbol real pasa las
   comprobaciones de fuente de la variante.
@@ -147,7 +148,9 @@ por USB (COM3), con el cable SIO desconectado y sin el Atari. Se vuelve a confir
 
 1. **Imagen.** El job `firmware-package-bench-c8a` sube el paquete `retrobridge-BENCH-C8A-NO-SIO-fujinet-atari-v1x-<sha7>`
    solo en una ejecución manual (`workflow_dispatch`) sobre `main`, con retención de 7 días y su `artifact-digest` en
-   el resumen. Los PR siguen sin subir nada (prueba `test_the_job_uploads_only_in_a_manual_run`).
+   el resumen. La subida y el digest llevan `if: github.event_name == 'workflow_dispatch' && github.ref ==
+   'refs/heads/main'`: un PR, un push o una ejecución manual en otra rama compilan y verifican, pero no suben nada
+   (revisión 1 del PR #117, H1). Las pruebas evalúan esa condición en los cuatro casos.
 2. **Instalación.** Paquete descargado en `D:\GitHub\Respaldos\FujiNet-RB-bench-c8a-<sha7>\`, verificado con
    `firmware_package.py verify`, y `write_flash` + `verify_flash` de las tres regiones, como en
    `procedimiento-prueba-banco-c8.md` §4. Sin `erase_flash` y sin escribir la NVS.

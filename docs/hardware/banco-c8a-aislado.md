@@ -167,8 +167,8 @@ válidas de 670 a 681 mV en GPIO35, «presente». GPIO21 no se tocó. La misma l
 después, así que no la causa el banco. menu-sio `bea39e1` restaurado y verificado. Después, el responsable midió con
 multímetro el pin 10 solo con USB: 0,86 V y 0,88 V (0,00 V sin USB). Esa medición está hecha, pero no basta para
 cambiar C-1 ni para repetir el banco: faltan GPIO35 con multímetro, explicar la diferencia con el valor calculado
-(≈1,02 V) y la decisión del responsable (`docs/mediciones/banco-c8a-2026-11-25.md` §6 y §8). La ficha para
-medir GPIO35 es `ficha-medicion-gpio35.md`.
+(≈1,02 V) y la decisión del responsable (`docs/mediciones/banco-c8a-2026-11-25.md` §6 y §8). La guía
+preparatoria para medir GPIO35 es `ficha-medicion-gpio35.md` (punto físico aún no identificado).
 
 C8a no aprueba H4, no acepta R2 ni R7, no mide niveles (C8b) y no conecta el Atari.
 

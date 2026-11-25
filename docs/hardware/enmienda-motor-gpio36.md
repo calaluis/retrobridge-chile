@@ -7,6 +7,10 @@
 > - No hubo pruebas físicas, mediciones, flasheos ni cambios de GPIO.
 > - Solo el responsable la cambia (§7).
 >
+> **Estado vigente (2026-11-25):** **M3a aprobada por aceptación de riesgo** del responsable, que cubre solo R1
+> (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). **H4 sigue sin aprobar:** R2, R6 y R7 no están aceptados. **La validación eléctrica sigue
+> pendiente** para las dos. Antes del banco T9b solo se instala `menu-sio`.
+>
 > Amplía, sin reemplazarlos: `h4-puerta-sio.md` §3.4 y §5 (R1), `proteccion-motor-gpio36.md`,
 > `ficha-medicion-m3a-motor.md` y `mitigacion-c-motor-pin8.md`.
 
@@ -151,7 +155,13 @@ habilita**. Para que valga hace falta, como mínimo:
   - D3 solo trata el riesgo de MOTOR. El uso de DATA IN sigue regido por sus propias puertas y paquetes.
   Base: `docs/mediciones/m3a-motor-2026-11-25.md` (B4 = **4,89 V** sin carga, «Detener»; M-2 y M-3 con la placa
   conectada).
-- **Orden acordado para el resto:** D2 → D4 → D5. Para D2 se prioriza completar M3a con osciloscopio (picos) y
+- **Opción C y revisión del PR #110 (mismo día; para MOTOR reemplaza a D3):** el responsable aprueba **M3a por
+  aceptación de riesgo, solo R1**, sin hardware adicional (se rechazó el camino A) y sin más mediciones. Registro,
+  con sus palabras exactas: `docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`.
+  - **No es una validación eléctrica:** B4 sigue en «Detener» y los puntos sin medir siguen sin medir.
+  - **H4 sigue sin aprobar:** R2, R6 y R7 no están aceptados y se evaluarán por separado.
+  - `kTapeOutput` sigue en `false` hasta el banco T9b. Antes de T9b solo se instala `menu-sio`.
+- **Orden acordado para el resto (anterior a la opción C, histórico):** D2 → D4 → D5. Para D2 se prioriza completar M3a con osciloscopio (picos) y
   después diseñar y validar una adaptación de nivel para MOTOR. Ninguna resistencia ni buffer queda aprobado todavía.
 - La tabla siguiente se conserva como registro de las opciones.
 

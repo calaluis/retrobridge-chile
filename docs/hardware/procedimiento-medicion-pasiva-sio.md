@@ -1,5 +1,10 @@
 # Procedimiento de medición pasiva del SIO (H4): FujiNet FN32ROV-1.3-Q24
 
+> **Estado vigente (2026-11-25):** **M3a aprobada por aceptación de riesgo** del responsable, que cubre solo R1
+> (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). **H4 sigue sin aprobar:** R2, R6 y R7 no están aceptados. **La validación eléctrica sigue
+> pendiente** para las dos. Antes del banco T9b solo se instala `menu-sio`.
+> Esa aprobación **no** cuenta como ninguna etapa de este procedimiento: M0–M6 siguen sin hacerse.
+>
 > **NO EJECUTAR sin autorización explícita para cada etapa.** Solo hay una medición hecha: M3a parcial (B4 =
 > 4,89 V, «Detener»; `docs/mediciones/m3a-motor-2026-11-25.md`). El resto de los resultados está **pendiente**. M3a (Atari solo) requiere una autorización aparte. Las etapas que conectan la FujiNet al
 > Atari (M3–M6) requieren además que **M3a haya pasado su punto de detención**.

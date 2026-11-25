@@ -42,11 +42,20 @@ void expectError(ErrorCode expected, const BoardProfile& profile)
 void setUp() {}
 void tearDown() {}
 
-static void test_fujinet_motor_is_gpio36_and_m3a_is_not_signed(void)
+static void test_fujinet_motor_is_gpio36_and_m3a_is_signed(void)
 {
     const BoardProfile p = fujinet_atari_v1x_profile();
     TEST_ASSERT_EQUAL_INT8(36, p.motor);
-    TEST_ASSERT_FALSE(p.motorGateApproved);
+    TEST_ASSERT_TRUE(p.motorGateApproved);
+    const auto granted = validate_for_motor(p);
+    TEST_ASSERT_TRUE(granted.ok());
+    TEST_ASSERT_EQUAL_INT8(36, granted.value().pin());
+}
+
+static void test_fujinet_motor_with_m3a_unsigned_is_refused(void)
+{
+    BoardProfile p = fujinet_atari_v1x_profile();
+    p.motorGateApproved = false;
     expectError(ErrorCode::BoardNotConfirmed, p);
 }
 
@@ -112,7 +121,8 @@ static void test_sio_checks_refuse_a_line_on_the_motor_pin(void)
 int main(void)
 {
     UNITY_BEGIN();
-    RUN_TEST(test_fujinet_motor_is_gpio36_and_m3a_is_not_signed);
+    RUN_TEST(test_fujinet_motor_is_gpio36_and_m3a_is_signed);
+    RUN_TEST(test_fujinet_motor_with_m3a_unsigned_is_refused);
     RUN_TEST(test_unconfirmed_board_has_no_motor);
     RUN_TEST(test_signed_m3a_grants_gpio36);
     RUN_TEST(test_signed_m3a_on_an_unconfirmed_board_is_refused);

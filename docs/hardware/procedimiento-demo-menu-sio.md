@@ -1,9 +1,48 @@
 # Demo E1: menú de RetroBridge en el 65XE por el SIO físico (paquete `menu-sio`)
 
-> **Estado: preparado, no ejecutado.** Cada paso marcado con **[CONFIRMAR]** requiere la confirmación explícita del
-> responsable: construir el adaptador, flashear, conectar el SIO y encender el 65XE.
-> **H4 y M3a siguen sin aprobar.** Esta demo no aprueba ninguna puerta. Se hace solo con la aceptación de riesgo
-> firmada (`docs/mediciones/menu-sio-fisico-registro.md` §1) y con el adaptador sin el pin 8.
+Este documento tiene dos partes:
+- **§0, vigente:** paquetes `menu-sio` generados desde el commit `76db969` (PR #110) en adelante.
+- **§1–§9, histórico:** la demo E1 con `b8e6152` (2026-11-21). **No se aplica a paquetes nuevos.**
+
+## 0. Procedimiento vigente (paquetes `menu-sio` desde `76db969`)
+
+> **Estado vigente (2026-11-25):** **M3a aprobada por aceptación de riesgo** del responsable, que cubre solo R1
+> (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). **H4 sigue sin aprobar:** R2, R6 y R7 no están aceptados. **La validación eléctrica sigue
+> pendiente** para las dos. Antes del banco T9b solo se instala `menu-sio`.
+
+**Qué hace el paquete:** sirve el menú como D1 por el SIO físico y **transmite por DATA IN** (GPIO21). Lee MOTOR en
+GPIO36 como entrada (M3a). La cinta no sale por el SIO: `kTapeOutput` es `false` y H4 no está aprobada.
+
+**Qué no autoriza este documento:**
+- Instalar `menu-sio` **no** acepta R2, R6 ni R7.
+- **Conectar la FujiNet con `menu-sio` al 65XE** requiere una decisión escrita aparte del responsable sobre R2, R6 y
+  R7 (punto abierto en `docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md` §3). Sin esa decisión, este documento no autoriza la conexión.
+- No hay mediciones, ni hardware nuevo, ni cambios en la FujiNet.
+
+**Adaptador sin pin 8:** ya no se exige. Protegía de R1 (MOTOR en GPIO36), y el responsable aceptó R1. Con M3a
+aprobada, el firmware lee MOTOR por ese pin. Las instrucciones del adaptador en §3 son históricas.
+
+**Pasos (cada [CONFIRMAR] requiere la confirmación explícita del responsable):**
+1. Descargar el artefacto `retrobridge-fw-menu-sio-fujinet-atari-v1x-<sha7>` del job `firmware-package-menu-sio` del
+   PR o de `main`, guardarlo en `D:\GitHub\Respaldos\FujiNet-RB-menu-sio-<sha7>\` y descomprimirlo allí.
+2. Verificarlo: `python -I tools/ci/firmware_package.py verify <carpeta del paquete>` da OK, con «puertas H4 y M3a
+   (perfil)» y «(registro)», y `PROVENANCE.json` con `variant: menu-sio`.
+3. Tener un respaldo verificado de la flash, o el paquete de vuelta atrás de §8.
+4. **[CONFIRMAR] Flashear** con la FujiNet solo por USB y el SIO desconectado, con los mismos comandos de §4. Sin
+   `erase_flash` y sin escribir la NVS.
+5. Banco por USB (sin el Atari), como en §5. El aviso de la consola ahora dice:
+   `menu-sio TEST PACKAGE: transmits on SIO DATA IN. H4 NOT approved (R2, R6, R7 not accepted). M3a approved by risk
+   acceptance of R1 only: MOTOR read on GPIO36. Tape output off.`
+6. **Conexión al 65XE:** solo después de la decisión del responsable sobre R2, R6 y R7 (arriba).
+
+---
+
+**Parte histórica (`b8e6152`, 2026-11-21). No se aplica a paquetes nuevos.**
+
+> **Estado de entonces: preparado, no ejecutado.** Cada paso marcado con **[CONFIRMAR]** requería la confirmación
+> explícita del responsable: construir el adaptador, flashear, conectar el SIO y encender el 65XE.
+> H4 y M3a estaban sin aprobar. La demo se hacía solo con la aceptación de riesgo firmada
+> (`docs/mediciones/menu-sio-fisico-registro.md` §1) y con el adaptador sin el pin 8.
 
 **Objetivo:** demostrar en el 65XE real los criterios 1–4 de E1 (`02-DOCS/wiki/sdd/specs/menu-sio-fisico.md`):
 1. al encender el 65XE aparece el menú;

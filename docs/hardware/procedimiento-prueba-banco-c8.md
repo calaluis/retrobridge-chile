@@ -1,7 +1,19 @@
 # Prueba de banco C8: DATA IN en la FujiNet FN32ROV-1.3-Q24, solo por USB
 
 > **Estado: preparada, no ejecutada.** Flashear requiere la confirmación explícita del responsable.
-> **H4 y M3a siguen sin aprobar.** Esta prueba no aprueba ninguna puerta y no conecta el Atari.
+> **Retirada de la CI el 2026-11-25.** El paquete `bench-c8` exigía H4 y M3a sin aprobar. M3a quedó aprobada por
+> aceptación de riesgo (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`), y antes de T9b solo se instala `menu-sio`: el job `firmware-package-bench-c8` ya no
+> existe. El código de banco sigue en el árbol; ningún paquete lo compila. Este documento queda como registro.
+>
+> **Cómo se recupera, cuando el responsable decida validar DATA IN (H4):**
+> - Sigue en el árbol: `main/bench_c8.cpp`, `sdkconfig.bench-c8`, `CONFIG_RB_BENCH_C8`,
+>   `validate_for_bench_data_in()` (no mira las puertas) y los chequeos del empaquetador (`BENCH_CHECK` y
+>   `BENCH_GRANT_CHECK`), que hoy hacen que todo paquete rechace el código de banco.
+> - Hace falta, en un PR aparte: una variante de banco en `tools/ci/firmware_package.py` con `bench=True` y
+>   `gates=(False, True)` (el estado vigente), sus pruebas y un job de CI como el que se retiró.
+> - La prueba sigue siendo solo por USB y con el Atari desconectado. No acepta R2, R6 ni R7.
+>
+> Texto original: **H4 y M3a siguen sin aprobar.** Esta prueba no aprueba ninguna puerta y no conecta el Atari.
 
 **Objetivo:** demostrar en el ESP32 real el criterio C8 de H4-C (`h4-c-casetera.md` §3): GPIO21 (DATA IN) pasa
 de UART2 al RMT al reproducir un tramo FSK, vuelve a UART2 al terminar el tramo y también al cancelarlo, y queda

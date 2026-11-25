@@ -2,9 +2,10 @@
 
 // menu-sio test package (menu-sio-fisico T5): the RetroBridge menu served as D1
 // over the physical SIO of the FujiNet 1.3. Only built with CONFIG_RB_MENU_SIO.
-// H4 and M3a stay unsigned: this package transmits on DATA IN only under the
-// owner's written risk acceptance, with the SIO adapter that has no pin 8
-// (docs/hardware/mitigacion-c-motor-pin8.md).
+// It transmits on DATA IN with H4 unsigned: R2, R6 and R7 are not accepted, and
+// connecting it to the 65XE needs the owner's separate decision. M3a is signed by
+// the owner's risk acceptance of R1 only, so MOTOR is read on GPIO36 as an input
+// (docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md).
 //
 // menu-cinta T6: the cassette service starts after D1 is served (it reads tapes into PSRAM), and
 // the menu gets its tape deck before the drives are restored, so the tape remembered on C: comes

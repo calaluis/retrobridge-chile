@@ -47,6 +47,7 @@
 
 #include "esp_pthread.h"
 #include "esp_tape_deck.hpp"
+#include "tape_gates.hpp"
 #include "tnfs_link.hpp"
 #include "tnfs_loader.hpp"
 #include "udp_tnfs_port.hpp"
@@ -673,8 +674,8 @@ bool registerCommand(const char* name, const char* help, esp_console_cmd_func_t 
 
 bool start(const rb::board::BoardProfile& board)
 {
-    ESP_LOGW(kTag, "menu-sio TEST PACKAGE: transmits on SIO DATA IN. H4 and M3a NOT approved. Use only with the "
-                   "owner's written risk acceptance and the SIO adapter without pin 8.");
+    ESP_LOGW(kTag, "menu-sio TEST PACKAGE: transmits on SIO DATA IN. H4 NOT approved (R2, R6, R7 not accepted). "
+                   "M3a approved by risk acceptance of R1 only: MOTOR read on GPIO36. Tape output off.");
     if (board.sio.command < 0 || board.sio.rx < 0 || board.sio.tx < 0) {
         ESP_LOGE(kTag, "board profile has no SIO pins: menu not served");
         return false;
@@ -791,7 +792,7 @@ static void startCassette(bool sdMounted, rb::esp::CassetteService& cassette, rb
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
              static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)),
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)));
-    g_tape = createOnce<EspTapeDeck>(cassette, *g_board);
+    g_tape = createOnce<EspTapeDeck>(cassette, rb::menusio::tapeGatesOpen(kTapeOutput, *g_board));  // T3b: gates and output
     if (g_tape == nullptr) {
         ESP_LOGE(kTag, "cas: sin memoria para el deck; C: dice CASETERA NO DISPONIBLE");
         return;

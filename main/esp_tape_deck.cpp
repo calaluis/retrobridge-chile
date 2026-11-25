@@ -77,8 +77,8 @@ void EspCasChannel::run() noexcept
     }
 }
 
-EspTapeDeck::EspTapeDeck(rb::esp::CassetteService& service, const rb::board::BoardProfile& board) noexcept
-    : channel_(service), deck_(channel_, rb::board::validate_for_cassette_output(board).ok())
+EspTapeDeck::EspTapeDeck(rb::esp::CassetteService& service, bool gatesOpen) noexcept
+    : channel_(service), deck_(channel_, gatesOpen)
 {
 }
 

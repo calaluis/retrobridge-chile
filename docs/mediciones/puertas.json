@@ -1,5 +1,5 @@
 {
   "nota": "Registro de puertas para el paquete 'cassette' (tools/ci/firmware_package.py). Solo el responsable lo cambia, en un PR aparte, junto con el perfil de la placa y el registro de la medición en docs/mediciones/.",
   "H4": {"aprobada": false, "fecha": null, "registro": null},
-  "M3a": {"aprobada": false, "fecha": null, "registro": null}
+  "M3a": {"aprobada": true, "fecha": "2026-11-25", "registro": "docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md"}
 }

@@ -47,6 +47,9 @@ void tearDown() {}
 
 static void test_real_fujinet_profile_is_refused(void)
 {
+    // M3a is signed by risk acceptance, H4 is not (docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md)
+    TEST_ASSERT_FALSE(fujinet_atari_v1x_profile().sioGateApproved);
+    TEST_ASSERT_TRUE(fujinet_atari_v1x_profile().motorGateApproved);
     expectError(ErrorCode::BoardNotConfirmed, fujinet_atari_v1x_profile());
     expectError(ErrorCode::BoardNotConfirmed, unconfirmed_profile());
 }
@@ -100,9 +103,9 @@ static void test_bad_pins_are_refused(void)
 
 static void test_bench_grants_data_in_without_gates_or_motor(void)
 {
-    const BoardProfile real = fujinet_atari_v1x_profile();
-    TEST_ASSERT_FALSE(real.sioGateApproved);  // the real profile: H4 and M3a stay unsigned
-    TEST_ASSERT_FALSE(real.motorGateApproved);
+    BoardProfile real = fujinet_atari_v1x_profile();
+    real.sioGateApproved = false;  // the bench grant does not look at the gates
+    real.motorGateApproved = false;
     const auto result = validate_for_bench_data_in(real);
     TEST_ASSERT_TRUE(result.ok());
     TEST_ASSERT_EQUAL_INT8(21, result.value().dataIn());

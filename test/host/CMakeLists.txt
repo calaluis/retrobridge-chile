@@ -146,6 +146,10 @@ target_link_libraries(test_fujinet_profile PRIVATE rb_board)
 # MOTOR (SIO pin 8) on GPIO36, input only, behind the M3a gate (cassette-cas C106).
 rb_add_host_test(test_motor_assignment board/test_motor_assignment.cpp)
 target_link_libraries(test_motor_assignment PRIVATE rb_board)
+# T3b (spec puertas-aceptacion-riesgo): the menu offers a tape only with the gates and the output (main/tape_gates.hpp).
+rb_add_host_test(test_tape_gates board/test_tape_gates.cpp)
+target_link_libraries(test_tape_gates PRIVATE rb_board)
+target_include_directories(test_tape_gates PRIVATE ${rb_root}/main)
 rb_add_host_test(test_cassette_output_assignment board/test_cassette_output_assignment.cpp)
 target_link_libraries(test_cassette_output_assignment PRIVATE rb_board)
 rb_add_host_test(test_sio_pins board/test_sio_pins.cpp)

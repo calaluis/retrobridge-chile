@@ -59,7 +59,8 @@ private:
 
 class EspTapeDeck {
 public:
-    EspTapeDeck(rb::esp::CassetteService& service, const rb::board::BoardProfile& board) noexcept;
+    // gatesOpen: tapeGatesOpen() (tape_gates.hpp), the board gates and the tape output together.
+    EspTapeDeck(rb::esp::CassetteService& service, bool gatesOpen) noexcept;
 
     bool start() noexcept { return channel_.start(); }
 

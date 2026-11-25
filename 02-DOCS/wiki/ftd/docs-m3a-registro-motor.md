@@ -1,7 +1,7 @@
 ---
 author: Calaluis
 branch: docs/m3a-registro-motor
-status: in-review
+status: done
 ---
 # Registro M3a parcial, mediciones con la FujiNet conectada y decisión D3
 
@@ -44,7 +44,7 @@ Fuera:
 - [x] Tercera revisión (`6e38b94`), H6: la excepción operativa D3 se refleja en `h4-puerta-sio.md` (§3.4, R1, §7),
       `procedimiento-medicion-pasiva-sio.md` (cabecera, §3, §4) y `ficha-medicion-m3a-motor.md` §6, sin cubrir
       mediciones ni validaciones — prueba: diff del PR.
-- [ ] Cuarta revisión independiente.
+- [x] Cuarta revisión independiente — prueba: PR #109 aprobado y fusionado por el responsable (`8ca5d59`).
 
 ## Evidence
 
@@ -53,4 +53,6 @@ Fuera:
 
 ## Next
 
-D2: completar M3a con osciloscopio (picos) y diseñar una adaptación de nivel para MOTOR.
+Reemplazado: el responsable eligió la opción C y aprobó M3a (solo R1) por aceptación de riesgo; H4 sigue
+pendiente
+(`02-DOCS/wiki/sdd/specs/puertas-aceptacion-riesgo.md`).

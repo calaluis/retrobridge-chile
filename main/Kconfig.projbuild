@@ -35,8 +35,9 @@ menu "RetroBridge Chile"
             Bench build only (H4-C, criterion C8). At boot, drives DATA IN (GPIO21)
             through UART2 and the RMT with a test signal, logs each step and every
             ESP-IDF call, then releases the pin. It does not read MOTOR and never
-            gives DATA IN to the cassette. H4 and M3a stay unsigned. Flash it only
-            with the FujiNet on USB and the SIO cable disconnected from the Atari.
+            gives DATA IN to the cassette. No CI package builds it since 2026-11-25.
+            Flash it only with the FujiNet on USB and the SIO cable disconnected from
+            the Atari.
 
     config RB_MENU_SIO
         bool "Test package menu-sio: serve the RetroBridge menu as D1 over the physical SIO"
@@ -46,8 +47,9 @@ menu "RetroBridge Chile"
             Test package only (menu-sio-fisico). Serves the boot menu as D1 over
             UART2 (DATA IN GPIO21, DATA OUT GPIO33) and COMMAND (GPIO39); reads
             ButtonA (GPIO0) and the SIO +5 V (GPIO35, ADC). The cassette is not
-            started. H4 and M3a stay unsigned: use it only with the owner's
-            written risk acceptance and the SIO adapter without pin 8.
+            started. H4 stays unsigned (R2, R6, R7 not accepted): connecting it to
+            the 65XE needs the owner's separate decision. M3a is signed by risk
+            acceptance of R1 only: MOTOR (GPIO36) is read as an input.
 
     config RB_DRIVE_SAVE_STACK
         int "menu-sio: stack of the rb_drive_save task (bytes)"

@@ -467,8 +467,16 @@ bool EspDataIn::release() noexcept
         return true;
     }
     (void)traced("uart_driver_delete", uart_driver_delete(kUart));
-    // No peripheral keeps the pin: output off, pull-up, so the 74LS07 lets DATA IN go.
-    (void)traced("gpio_reset_pin", gpio_reset_pin(static_cast<gpio_num_t>(pin_)));
+    // No peripheral keeps the pin: output off, pull-up, so the 74LS07 lets DATA IN go. A failed reset leaves
+    // the GPIO matrix as it was: not released, faulted (everything refused), and a later release() retries.
+    if (traced("gpio_reset_pin", gpio_reset_pin(static_cast<gpio_num_t>(pin_))) != ESP_OK) {
+        if (!faulted_) {
+            ++pinFaults_;
+        }
+        faulted_ = true;
+        ESP_LOGE(kTag, "DATA IN NOT released: GPIO%d not reset after UART2 was deleted; release() again later", pin_);
+        return false;
+    }
     ESP_LOGI(kTag, "DATA IN released: UART2 deleted, GPIO%d reset (output off)", pin_);
     pin_ = -1;
     faulted_ = false;

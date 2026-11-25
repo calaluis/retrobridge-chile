@@ -119,7 +119,8 @@ public:
 
     // Undoes configure(): stops any run, deletes the UART2 driver and resets the pin (output off,
     // pull-up). enabled() is false afterwards. Used by the bench test C8. False: the RMT did not let
-    // go of the pin (releasePending()); nothing else was undone and a later release() retries.
+    // go of the pin (releasePending()); nothing else was undone and a later release() retries. Also
+    // false when gpio_reset_pin() fails: the driver stays enabled and faulted, and a later release() retries.
     // Shared mode: deletes and resets nothing; detaches only when giveBack() returns Uart (pin on UART2
     // TX, checked in the matrix, nothing left to send). Otherwise false and still attached: Busy, ask
     // again; Lost, the pin is reset and the driver stays faulted.

@@ -264,6 +264,25 @@ static void test_release_mid_run_stops_it_first(void)
     TEST_ASSERT_FALSE(g_dataIn->enabled());
 }
 
+// analisis-h4-r2-r7 (R2): release() reports DATA IN released only when gpio_reset_pin() worked. A failed
+// reset leaves the GPIO matrix as it was (U2TXD on the pin, output on) with UART2 deleted: release() says
+// false, the driver stays enabled and faulted, and everything is refused until a release() that works.
+static void test_release_with_a_failed_reset_is_not_released(void)
+{
+    configured();
+    fake_idf::state().failGpioReset = true;
+    TEST_ASSERT_FALSE(g_dataIn->release());
+    TEST_ASSERT_TRUE(g_dataIn->enabled());
+    TEST_ASSERT_TRUE(g_dataIn->faulted());
+    TEST_ASSERT_FALSE(fake_idf::state().owner == Owner::Gpio);
+    expectRefusesEverything();
+    fake_idf::state().failGpioReset = false;
+    TEST_ASSERT_TRUE(g_dataIn->release());
+    TEST_ASSERT_FALSE(g_dataIn->enabled());
+    TEST_ASSERT_FALSE(g_dataIn->faulted());
+    TEST_ASSERT_TRUE(fake_idf::state().owner == Owner::Gpio);
+}
+
 static void test_release_without_configure_does_nothing(void)
 {
     g_dataIn = new (g_storage) EspDataIn();
@@ -578,6 +597,7 @@ int main()
     RUN_TEST(test_release_after_a_run_resets_the_pin_and_disables);
     RUN_TEST(test_release_mid_run_stops_it_first);
     RUN_TEST(test_release_without_configure_does_nothing);
+    RUN_TEST(test_release_with_a_failed_reset_is_not_released);
     RUN_TEST(test_trace_reports_each_hand_over_call_with_its_result);
     RUN_TEST(test_a_run_in_flight_keeps_the_rmt_without_logging);
     RUN_TEST(test_normal_end_comes_from_the_rmt_and_disables_once);

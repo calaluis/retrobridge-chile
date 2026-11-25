@@ -10,8 +10,10 @@
 > **F2 implementada** (PR #115): variante `bench-c8a` del empaquetador (C-3 a C-7) y sus pruebas.
 > **F3 implementada** (PR #116): job de CI que compila, empaqueta y verifica `bench-c8a`.
 > **F4 autorizada por escrito** por el responsable (2026-11-25, «Procede con el F4»): la imagen se sube solo en una
-> ejecución manual sobre `main`, con retención de 7 días (§6, Estado de F4). La ejecución en la placa se registra en
-> `docs/mediciones/`.
+> ejecución manual sobre `main`, con retención de 7 días (§6, Estado de F4).
+> **F4 ejecutada** (2026-11-25, `docs/mediciones/banco-c8a-2026-11-25.md`): **rechazada por C-1**. Con solo USB, la
+> línea SIO +5V de la FujiNet 1.3 tiene tensión (≈675 mV en GPIO35 por ADC; 0,86–0,88 V en el pin 10 con
+> multímetro), por encima del umbral de «ausente». C8a no pasa.
 
 ## 1. Para qué sirve
 
@@ -76,7 +78,7 @@ distribuirla.
 | F1 | Código de C-1 y C-2 en `bench_c8.cpp` y `app_main.cpp`, con pruebas de host del enclavamiento | Del responsable, en un PR aparte | Pruebas RED→GREEN; ninguna imagen |
 | F2 | Variante `bench-c8a` en el empaquetador y sus pruebas en `tools/tests` (C-3, C-4, C-5) | Del responsable | `tools/tests` en verde; ninguna imagen distribuida |
 | F3 | Job de CI que compila y verifica, **sin** `upload-artifact` (C-6) | Del responsable | CI en verde |
-| F4 | Distribuir la imagen y ejecutar C8a por USB, sin el Atari | Autorización escrita del responsable, una por sesión | Registro en `docs/mediciones/banco-c8-AAAA-MM-DD.md` |
+| F4 | Distribuir la imagen y ejecutar C8a por USB, sin el Atari | Autorización escrita del responsable, una por sesión | Registro en `docs/mediciones/banco-c8a-AAAA-MM-DD.md` |
 
 ### Estado de F1
 
@@ -159,6 +161,13 @@ por USB (COM3), con el cable SIO desconectado y sin el Atari. Se vuelve a confir
 4. **Restauración.** Se vuelve a instalar el paquete `menu-sio` que estaba en la placa, verificado igual.
 5. **Registro** en `docs/mediciones/banco-c8a-AAAA-MM-DD.md`: imagen y digest, versión anterior, captura, resultado
    y restauración.
+
+**Resultado (2026-11-25):** imagen `d5934bb` instalada y verificada; `c8a run` respondió `C8A REFUSED`: 8 lecturas
+válidas de 670 a 681 mV en GPIO35, «presente». GPIO21 no se tocó. La misma lectura ADC aparece con menu-sio antes y
+después, así que no la causa el banco. menu-sio `bea39e1` restaurado y verificado. Después, el responsable midió con
+multímetro el pin 10 solo con USB: 0,86 V y 0,88 V (0,00 V sin USB). Esa medición está hecha, pero no basta para
+cambiar C-1 ni para repetir el banco: faltan GPIO35 con multímetro, explicar la diferencia con el valor calculado
+(≈1,02 V) y la decisión del responsable (`docs/mediciones/banco-c8a-2026-11-25.md` §6 y §8).
 
 C8a no aprueba H4, no acepta R2 ni R7, no mide niveles (C8b) y no conecta el Atari.
 

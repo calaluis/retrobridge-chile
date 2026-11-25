@@ -1,11 +1,11 @@
 # Enmienda: MOTOR (pin 8 del SIO) y GPIO36 en la FN32ROV-1.3-Q24
 
-> **PROPUESTA DE ENMIENDA NO APROBADA. Solo documento.**
+> **ENMIENDA APROBADA (PR #108, `d48b245`). Solo documento.** Decisiones posteriores: §7.
 >
 > - No aprueba M3a, H4, H4-L, H4-T ni DATA IN.
 > - No cambia `docs/mediciones/puertas.json`, el perfil de la placa (`rb_board`) ni `kTapeOutput`, que sigue en `false`.
 > - No hubo pruebas físicas, mediciones, flasheos ni cambios de GPIO.
-> - Solo el responsable la aprueba, la rechaza o la cambia (§7).
+> - Solo el responsable la cambia (§7).
 >
 > Amplía, sin reemplazarlos: `h4-puerta-sio.md` §3.4 y §5 (R1), `proteccion-motor-gpio36.md`,
 > `ficha-medicion-m3a-motor.md` y `mitigacion-c-motor-pin8.md`.
@@ -132,6 +132,16 @@ habilita**. Para que valga hace falta, como mínimo:
 - H4 sigue **no aprobada**. La matriz de riesgos (`h4-puerta-sio.md` §5) no cambia.
 
 ## 7. Decisiones pendientes del responsable
+
+**Actualización del 2026-11-25 (decisiones del responsable):**
+- **D1:** aprobada. El PR #108 se fusionó (`d48b245`).
+- **D3:** se adopta la **prohibición de conexión**. La FujiNet FN32ROV-1.3-Q24 no se conecta al SIO del 65XE, ni
+  encendida ni apagada, hasta tener una protección de MOTOR diseñada, aprobada y validada. D3(b) no se adopta como
+  autorización. Base: la medición M3a parcial del 2026-11-25 (B4 = **4,89 V** con el Atari solo y el motor
+  encendido; resultado «Detener»), en `docs/mediciones/m3a-motor-2026-11-25.md`.
+- **Orden acordado para el resto:** D2 → D4 → D5. Para D2 se prioriza completar M3a con osciloscopio (picos) y
+  después diseñar y validar una adaptación de nivel para MOTOR. Ninguna resistencia ni buffer queda aprobado todavía.
+- La tabla siguiente se conserva como registro de las opciones.
 
 | # | Decisión | Opciones | Efecto |
 |---|---|---|---|

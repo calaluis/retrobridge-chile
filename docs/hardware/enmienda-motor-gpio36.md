@@ -140,10 +140,17 @@ habilita**. Para que valga hace falta, como mínimo:
 
 **Actualización del 2026-11-25 (decisiones del responsable):**
 - **D1:** aprobada. El PR #108 se fusionó (`d48b245`).
-- **D3:** se adopta la **prohibición de conexión**. La FujiNet FN32ROV-1.3-Q24 no se conecta al SIO del 65XE, ni
-  encendida ni apagada, hasta tener una protección de MOTOR diseñada, aprobada y validada. D3(b) no se adopta como
-  autorización. Base: la medición M3a parcial del 2026-11-25 (B4 = **4,89 V** sin carga, con el Atari solo y el motor
-  encendido; resultado «Detener»), en `docs/mediciones/m3a-motor-2026-11-25.md`.
+- **D3 (registrada primero como prohibición de conexión; el responsable la cambió el mismo día):** **aceptación de riesgo acotada**. El responsable asume el riesgo eléctrico preexistente de su FN32ROV-1.3-Q24 y
+  permite conectarla al SIO del 65XE **solo para disco, menú y TNFS**, hasta tener una protección de MOTOR validada.
+  Condiciones:
+  - sin casete ni lectura de MOTOR: `kTapeOutput` sigue en `false` y GPIO36 no se configura;
+  - regla operativa: no iniciar cargas de casete con la FujiNet conectada. Reduce la exposición, no la elimina:
+    MOTOR puede activarse por otro camino (un programa que maneje CA2, por ejemplo);
+  - **no es una validación eléctrica:** no aprueba M3a, H4 ni DATA IN, no autoriza las etapas M3–M6 del
+    procedimiento ni ninguna medición que conecte MOTOR a la placa, y no cambia `puertas.json`.
+  - D3 solo trata el riesgo de MOTOR. El uso de DATA IN sigue regido por sus propias puertas y paquetes.
+  Base: `docs/mediciones/m3a-motor-2026-11-25.md` (B4 = **4,89 V** sin carga, «Detener»; M-2 y M-3 con la placa
+  conectada).
 - **Orden acordado para el resto:** D2 → D4 → D5. Para D2 se prioriza completar M3a con osciloscopio (picos) y
   después diseñar y validar una adaptación de nivel para MOTOR. Ninguna resistencia ni buffer queda aprobado todavía.
 - La tabla siguiente se conserva como registro de las opciones.

@@ -225,8 +225,18 @@ ver `proteccion-motor-gpio36.md` §2, propuesta de protección **no aprobada**.
 **Medición M3a parcial del 2026-11-25:** con el Atari solo y el motor encendido (`POKE 54018,52`), un tester
 marcó **4,89 V** en el pin 8, sin ningún periférico (sin carga). Supera los 3,6 V de V_IH máx: el resultado es **«Detener»**
 (`docs/mediciones/m3a-motor-2026-11-25.md`). Los picos (B2, B5) siguen sin medir, porque falta un osciloscopio.
-**Decisión D3 del responsable (`enmienda-motor-gpio36.md` §7):** la FN32ROV-1.3-Q24 no se conecta al SIO del 65XE
-hasta tener una protección de MOTOR diseñada, aprobada y validada. M3a **no** está aprobada.
+**Decisión D3 del responsable (`enmienda-motor-gpio36.md` §7):** **aceptación de riesgo acotada**. El responsable asume el riesgo eléctrico preexistente de su FN32ROV-1.3-Q24 y
+permite conectarla al SIO del 65XE **solo para disco, menú y TNFS**, hasta tener una protección de MOTOR validada.
+Condiciones:
+- sin casete ni lectura de MOTOR: `kTapeOutput` sigue en `false` y GPIO36 no se configura;
+- regla operativa: no iniciar cargas de casete con la FujiNet conectada. Reduce la exposición, no la elimina:
+  MOTOR puede activarse por otro camino (un programa que maneje CA2, por ejemplo);
+- **no es una validación eléctrica:** no aprueba M3a, H4 ni DATA IN, no autoriza las etapas M3–M6 del
+  procedimiento ni ninguna medición que conecte MOTOR a la placa, y no cambia `puertas.json`.
+- D3 solo trata el riesgo de MOTOR. El uso de DATA IN sigue regido por sus propias puertas y paquetes.
+
+Es una excepción por decisión del responsable a la regla de este punto de detención («no se autoriza ninguna
+conexión»), limitada a ese uso. M3a **no** está aprobada.
 
 **Mediciones del mismo día con la FujiNet conectada (fuera de la ficha M3a):** en el conector SIO posterior de la
 placa, sin USB, el pin 8 marcó **4,87 V con S5 encendido** y **3,16 V con S5 apagado**. No son mediciones del pad de

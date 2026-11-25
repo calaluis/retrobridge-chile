@@ -31,7 +31,9 @@ Fuera:
 - [x] Trazabilidad de los PR #109 y #110 — prueba: registro §5.
 - [x] Sin cambios en `puertas.json`, perfiles, firmware ni CI — prueba: `git diff --stat origin/main` solo muestra `.md`.
 - [x] Los textos de código que siguen diciendo «R6 not accepted» quedan listados para un PR de código aparte — prueba: registro §4.
-- [ ] Revisión independiente.
+- [x] Primera revisión (`6063317612`): H1, M5 no cubre DATA IN (se remite a C8, C8a y C8b); H2, M1 es solo un
+  diagnóstico sin carga (se remite a C9) — prueba: registro §2 y §3; filas R2 y R7 de `h4-puerta-sio.md` §5.
+- [ ] Revisión independiente final.
 
 ## Evidence
 

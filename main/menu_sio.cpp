@@ -674,8 +674,8 @@ bool registerCommand(const char* name, const char* help, esp_console_cmd_func_t 
 
 bool start(const rb::board::BoardProfile& board)
 {
-    ESP_LOGW(kTag, "menu-sio TEST PACKAGE: transmits on SIO DATA IN. H4 and M3a NOT approved. Use only with the "
-                   "owner's written risk acceptance and the SIO adapter without pin 8.");
+    ESP_LOGW(kTag, "menu-sio TEST PACKAGE: transmits on SIO DATA IN. H4 NOT approved (R2, R6, R7 not accepted). "
+                   "M3a approved by risk acceptance of R1 only: MOTOR read on GPIO36. Tape output off.");
     if (board.sio.command < 0 || board.sio.rx < 0 || board.sio.tx < 0) {
         ESP_LOGE(kTag, "board profile has no SIO pins: menu not served");
         return false;

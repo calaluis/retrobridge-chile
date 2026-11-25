@@ -95,6 +95,9 @@ El responsable es el único usuario. Revisa el firmware viéndolo en la FujiNet 
 - **pregunta abierta (del responsable):** `menu-sio` responde por DATA IN con H4 sin aprobar, lo que expone R2, R6 y
   R7. Qué cubre ese uso conectado lo decide el responsable aparte.
 
+- **decisión diferida:** recuperar el banco C8 (prueba de DATA IN solo por USB) cuando el responsable decida validar
+  H4. Cómo: `docs/hardware/procedimiento-prueba-banco-c8.md`.
+
 ## Clarifications
 
 - 2026-11-25 · Revisión del PR #110, H1: ¿la aprobación cubre H4 y R2, R6 y R7? → No. Solo M3a y R1; H4 sigue

@@ -837,7 +837,8 @@ class BenchC8CodeTest(unittest.TestCase):
 
 
 MENU_APP_MARKERS = CASSETTE_APP_MARKERS + (b"\x1b[0;33mW (%lu) %s: menu-sio TEST PACKAGE: transmits on SIO DATA IN. H4 "
-                                           b"and M3a NOT approved.\x1b[0m\n\0\x1b[0;32mI (%lu) %s: D1: menu. Switch the "
+                                           b"NOT approved (R2, R6, R7 not accepted).\x1b[0m\n\0\x1b[0;32mI (%lu) %s: D1: menu. "
+                                           b"Switch the "
                                            b"65XE on.\x1b[0m\n\0")
 
 

@@ -37,3 +37,16 @@ El responsable respondió: acepta solo R1 (M3a), mantiene H4 pendiente y solo in
 - **T5:** bloque «Estado vigente» y marcas de lo histórico en los documentos de hardware.
 - Host: `ctest` 100/100.
 - **Punto abierto para el responsable:** `menu-sio` responde por DATA IN con H4 sin aprobar (R2, R6, R7).
+
+## Ronda 3 (segunda revisión independiente, `6061902919`, sobre `76db969`)
+
+- **H4:** el aviso de `menu_sio.cpp` decía «H4 and M3a NOT approved» y pedía el adaptador sin pin 8. Ahora dice H4
+  sin aprobar (R2, R6, R7 no aceptados), M3a aprobada solo por R1 y la cinta apagada. Se conserva el prefijo que
+  busca el empaquetador. También `menu_sio.hpp`, `Kconfig.projbuild`, `sdkconfig.menu-sio`, `sdkconfig.bench-c8` y
+  `bench_c8.hpp`.
+- **H5:** `procedimiento-demo-menu-sio.md` separa §0 (vigente, desde `76db969`) de §1–§9 (histórico, `b8e6152`).
+  §0: sin adaptador sin pin 8 (R1 aceptado); instalar no acepta R2, R6 ni R7; conectar al 65XE requiere la decisión
+  aparte del responsable.
+- **H6:** `procedimiento-prueba-banco-c8.md` documenta cómo recuperar el banco C8 cuando el responsable decida
+  validar DATA IN. No se restaura ahora: antes de T9b solo se instala `menu-sio`.
+- Host 100/100; herramientas 295 OK; capas y avisos OK.

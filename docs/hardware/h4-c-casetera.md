@@ -1,7 +1,7 @@
 # H4-C: criterio acotado a la casetera (DATA IN y MOTOR)
 
 > **Estado vigente (2026-11-25):** **M3a aprobada por aceptación de riesgo** del responsable, que cubre solo R1
-> (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). **H4 sigue sin aprobar:** R2, R6 y R7 no están aceptados. **La validación eléctrica sigue
+> (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). **H4 sigue sin aprobar:** R2 y R7 no están aceptados; R6 está aceptado solo con la FujiNet por USB (`docs/mediciones/riesgos-h4-2026-11-25.md`). **La validación eléctrica sigue
 > pendiente** para las dos. Antes del banco T9b solo se instala `menu-sio`.
 > Esa aprobación no viene de H4-C. Las variantes `cassette-lectura` y `bench-c8` se retiraron, y `menu-sio` exige
 > ahora M3a aprobada y H4 sin aprobar. El §4 describe el estado anterior.

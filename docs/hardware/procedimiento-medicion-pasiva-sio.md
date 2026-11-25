@@ -1,7 +1,7 @@
 # Procedimiento de medición pasiva del SIO (H4): FujiNet FN32ROV-1.3-Q24
 
 > **Estado vigente (2026-11-25):** **M3a aprobada por aceptación de riesgo** del responsable, que cubre solo R1
-> (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). **H4 sigue sin aprobar:** R2, R6 y R7 no están aceptados. **La validación eléctrica sigue
+> (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). **H4 sigue sin aprobar:** R2 y R7 no están aceptados; R6 está aceptado solo con la FujiNet por USB (`docs/mediciones/riesgos-h4-2026-11-25.md`). **La validación eléctrica sigue
 > pendiente** para las dos. Antes del banco T9b solo se instala `menu-sio`.
 > Esa aprobación **no** cuenta como ninguna etapa de este procedimiento: M0–M6 siguen sin hacerse.
 >

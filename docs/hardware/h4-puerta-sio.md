@@ -10,6 +10,9 @@
 >
 > **Propuesta en revisión:** separar esta puerta en H4-L (escucha) y H4-T (transmisión):
 > `h4-puertas-escucha-transmision.md` (**PROPUESTA NO APROBADA**). Mientras no se apruebe, rige el §7 completo.
+>
+> **Enmienda en revisión (MOTOR y GPIO36):** `enmienda-motor-gpio36.md` (**PROPUESTA NO APROBADA**). Separa el
+> riesgo de la placa del comportamiento del firmware. No cambia ninguna puerta.
 
 **Etiquetas:**
 - **[E]** esquema público `FN32ROV-1.3-Q24_schematic.jpg`, revisado directamente el 2026-10-24;

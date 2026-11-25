@@ -3,7 +3,8 @@
 > **Estado: preparada, no ejecutada.** Flashear requiere la confirmación explícita del responsable.
 > **Retirada de la CI el 2026-11-25.** El paquete `bench-c8` exigía H4 y M3a sin aprobar. M3a quedó aprobada por
 > aceptación de riesgo (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`), y antes de T9b solo se instala `menu-sio`: el job `firmware-package-bench-c8` ya no
-> existe. El código de banco sigue en el árbol; ningún paquete lo compila. Este documento queda como registro.
+> existe. El código de banco sigue en el árbol; ningún job lo compila. Desde F2 de C8a
+> (`banco-c8a-aislado.md`), la variante `bench-c8a` del empaquetador lo acepta. Este documento queda como registro.
 >
 > **Cómo se recupera, cuando el responsable decida validar DATA IN (H4):**
 > - Sigue en el árbol: `main/bench_c8.cpp`, `sdkconfig.bench-c8`, `CONFIG_RB_BENCH_C8`,

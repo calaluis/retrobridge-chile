@@ -1,6 +1,6 @@
 #pragma once
 // Bench test C8 (H4-C, docs/hardware/h4-c-casetera.md): DATA IN on the FujiNet alone, USB only, the
-// Atari disconnected. Built only with CONFIG_RB_BENCH_C8; no CI package builds it since 2026-11-25
+// Atari disconnected. Built only with CONFIG_RB_BENCH_C8; no CI job builds it since 2026-11-25; the bench-c8a variant packages it (C8a F2)
 // (recovery: docs/hardware/procedimiento-prueba-banco-c8.md). The grant ignores the gates.
 #include "rb/board/board_profile.hpp"
 #include "rb/esp/esp_data_in.hpp"

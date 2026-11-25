@@ -5,6 +5,7 @@ Run with: python -m unittest discover -s tools/tests
 
 import hashlib
 import json
+import re
 import struct
 import sys
 import tempfile
@@ -776,9 +777,9 @@ BENCH_SOURCE = "void f() { (void)rb::board::validate_for_bench_data_in(kBoard); 
 
 
 class BenchC8CodeTest(unittest.TestCase):
-    """The bench test C8 code stays in the tree, but no package may build it (bench-c8 was retired with the
-    gates approved): every variant refuses the bench option and the bench code, and the bench grant stays in
-    main/bench_c8.cpp."""
+    """The bench test C8 code stays in the tree. bench-c8 was retired with the gates approved; only bench-c8a
+    (BenchC8aPackageTest) accepts it: every other variant refuses the bench option and the bench code, and the
+    bench grant stays in main/bench_c8.cpp."""
 
     def setUp(self):
         CassettePackageTest.setUp(self)
@@ -1230,6 +1231,112 @@ class MenuSioPackageTest(unittest.TestCase):
         repo = Path(__file__).resolve().parents[2]
         ok, detail = fp.check_sio_calls(repo, fp.VARIANTS["menu-sio"].sio_calls)
         self.assertTrue(ok, detail)
+
+
+# Bench C8a (docs/hardware/banco-c8a-aislado.md, phase F2): the bench of main/bench_c8.cpp with the F1 controls
+# (SIO_5V interlock, `c8a run` only). Its image: the bench and the C8a order in, the cassette never started, no menu.
+C8A_APP_MARKERS = BENCH_APP_MARKERS + (b"\x1b[0;32mI (%lu) %s: C8A READY: type c8a run (USB only, SIO cable "
+                                       b"disconnected)\x1b[0m\n\0")
+C8A_ELF = (ELF_BYTES + b"\0_ZN2rb3esp9EspDataIn9configureERKNS_5board24CassetteOutputAssignmentE\0"
+           b"_ZN2rb5bench6run_c8ERKNS_5board12BoardProfileERNS_3esp9EspDataInE\0"
+           b"_ZN2rb5bench16start_c8_commandERKNS_5board12BoardProfileERNS_3esp9EspDataInE\0")
+
+
+class BenchC8aPackageTest(unittest.TestCase):
+    """bench-c8a (C-3 to C-7): named BENCH-C8A-NO-SIO, only with H4 unapproved and M3a approved, read from the
+    profile and the record; the bench and the c8a order in the image, the cassette not started, no menu; the
+    manifest says bench and SIO not authorized; no CI step uploads it."""
+
+    def setUp(self):
+        CassettePackageTest.setUp(self)
+        write(self.f.src / "main" / "bench_c8.cpp", BENCH_SOURCE)
+        self.profile(False, True)
+        self.gates(menu_record())
+        self.build()
+
+    tearDown = CassettePackageTest.tearDown
+    profile = CassettePackageTest.profile
+    gates = CassettePackageTest.gates
+    failed = CassettePackageTest.failed
+
+    def build(self, sdk="CONFIG_RB_BENCH_C8=y\n", app=C8A_APP_MARKERS, elf=C8A_ELF):
+        write(self.f.build / "sdkconfig", SDKCONFIG + sdk)
+        write(self.f.build / "retrobridge.elf", elf)
+        write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=elf, extra=app))
+
+    def package(self, variant="bench-c8a"):
+        return CassettePackageTest.package(self, variant)
+
+    def assert_refused(self, check_name, variant="bench-c8a"):
+        CassettePackageTest.assert_refused(self, check_name, variant)
+
+    def test_the_variant_is_named_and_gated_as_the_bench(self):
+        spec = fp.VARIANTS["bench-c8a"]
+        self.assertIn("BENCH-C8A-NO-SIO", spec.package)
+        self.assertEqual(spec.gates, (False, True))
+        self.assertTrue(spec.bench)
+        self.assertFalse(spec.menu_sio)
+        self.assertNotIn("cassette", spec.features)  # the cassette is not started in the bench build
+        self.assertIn("bench_c8a", spec.features)
+
+    def test_bench_c8a_packages_with_h4_unapproved_and_m3a_approved(self):
+        log = self.package()
+        self.assertTrue(log.ok, self.failed(log))
+        provenance = json.loads((self.f.out / "PROVENANCE.json").read_text(encoding="utf-8"))
+        self.assertEqual(provenance["variant"], "bench-c8a")
+        self.assertIs(provenance["bench"], True)
+        self.assertEqual(provenance["sio"], "no autorizado")
+        self.assertTrue(fp.verify_package(self.f.out).ok)
+
+    def test_bench_c8a_refuses_h4_approved_in_the_profile(self):
+        self.profile(True, True)
+        self.assert_refused(fp.PROFILE_CHECK)
+
+    def test_bench_c8a_refuses_a_record_with_other_gates(self):
+        self.gates(gate_record())
+        self.assert_refused(fp.RECORD_CHECK)
+
+    def test_bench_c8a_needs_the_bench_option(self):
+        self.build(sdk="")
+        self.assert_refused(fp.BENCH_CHECK)
+
+    def test_bench_c8a_refuses_the_bench_that_runs_at_boot(self):
+        self.build(app=BENCH_APP_MARKERS, elf=C8A_ELF.replace(b"_ZN2rb5bench16start_c8_command", b"_ZN2rb5bench0x"))
+        log = self.package()
+        self.assertFalse(log.ok)
+        self.assertIn(f"{fp.FEATURE_LABELS['bench_c8a']} (aplicación)", self.failed(log))
+        self.assertIn(f"{fp.FEATURE_LABELS['bench_c8a']} (ELF)", self.failed(log))
+
+    def test_bench_c8a_refuses_an_image_that_starts_the_cassette(self):
+        self.build(elf=C8A_ELF + b"_ZN2rb3esp15CassetteService5startEv\0")
+        self.assert_refused(fp.CASSETTE_START_CHECK)
+
+    def test_bench_c8a_refuses_the_menu(self):
+        self.build(sdk="CONFIG_RB_BENCH_C8=y\nCONFIG_RB_MENU_SIO=y\n", app=C8A_APP_MARKERS + MENU_APP_MARKERS,
+                   elf=C8A_ELF + MENU_ELF)
+        self.assert_refused(fp.MENU_SIO_CHECK)
+
+    def test_verify_refuses_a_manifest_without_the_bench_declaration(self):
+        self.assertTrue(self.package().ok)
+        path = self.f.out / "PROVENANCE.json"
+        provenance = json.loads(path.read_text(encoding="utf-8"))
+        provenance["sio"] = "autorizado"
+        path.write_text(json.dumps(provenance), encoding="utf-8")
+        self.assertIn(fp.BENCH_DECLARED_CHECK, self.failed(fp.verify_package(self.f.out)))
+
+    def test_the_cassette_variant_refuses_the_c8a_image(self):
+        self.profile(True, True)
+        self.gates(gate_record())
+        self.assert_refused(fp.BENCH_CHECK, "cassette")
+
+    def test_no_ci_step_uploads_a_bench_package(self):
+        # C-6: no distribution without an explicit decision. Each upload-artifact step, up to the next step.
+        ci = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        steps = re.split(r"\n\s*- (?:name|uses):", ci)
+        uploads = [s for s in steps if "actions/upload-artifact" in s]
+        self.assertTrue(uploads)
+        for step in uploads:
+            self.assertNotIn("bench", step.lower())
 
 if __name__ == "__main__":
     unittest.main()

@@ -97,17 +97,28 @@ FEATURE_MARKERS = {
         "app": (b"C8 BENCH BEGIN: board '%s', H4 %s, M3a %s", b"C8 RESULT PASS"),
         "elf": (b"_ZN2rb5bench6run_c8",),
     },
+    "bench_c8a": {  # main/bench_c8_console.cpp: bench C8a F1, the `c8a run` order behind the SIO_5V interlock
+        "app": (b"C8A READY: type c8a run",),
+        "elf": (b"_ZN2rb5bench16start_c8_command",),
+    },
     "menu_sio": {  # main/menu_sio.cpp + rb_esp_sio: the menu served as D1 on the physical SIO (menu-sio-fisico)
         "app": (b"menu-sio TEST PACKAGE: transmits on SIO DATA IN", b"D1: menu. Switch the 65XE on."),
         "elf": (b"_ZN2rb3esp10EspSioUart5begin", b"_ZN2rb7menusio5start"),
     },
 }
 FEATURE_LABELS = {"hw_diag": "diagnóstico incorporado", "cassette": "casetera incorporada",
-                  "bench_c8": "prueba de banco C8 incorporada", "menu_sio": "menú por SIO físico incorporado"}
+                  "bench_c8": "prueba de banco C8 incorporada",
+                  "bench_c8a": "orden c8a run con enclavamiento SIO_5V incorporada", "menu_sio": "menú por SIO físico incorporado"}
 BENCH_KCONFIG = "CONFIG_RB_BENCH_C8"
 BENCH_CHECK = "prueba de banco C8 (sdkconfig y aplicación)"
 BENCH_GRANT_CHECK = "concesión de banco solo en main/bench_c8.cpp (código)"
 BENCH_SOURCE = "main/bench_c8.cpp"
+# Bench C8a (docs/hardware/banco-c8a-aislado.md, C-4): its build never starts the cassette, whose loop would pump the
+# EspDataIn the bench drives; with CassetteService::start() unreferenced, the linker drops it from the ELF.
+CASSETTE_START_MARKER = b"_ZN2rb3esp15CassetteService5start"
+CASSETTE_START_CHECK = "casetera sin arrancar (banco C8a, ELF)"
+BENCH_DECLARED_CHECK = "banco declarado en PROVENANCE.json (bench, SIO no autorizado)"
+BENCH_SIO_TEXT = "no autorizado"
 BENCH_GRANT = re.compile(r"\bvalidate_for_bench_data_in\b")
 REGISTER_WRITE = re.compile(r"\b(REG_WRITE|REG_SET_BIT|REG_CLR_BIT|REG_SET_FIELD|REG_SET_BITS|WRITE_PERI_REG|"
                             r"SET_PERI_REG_MASK|CLEAR_PERI_REG_MASK|SET_PERI_REG_BITS)\b")
@@ -286,6 +297,19 @@ VARIANTS = {
                                      "DATA IN (GPIO21), RX en DATA OUT (GPIO33), COMMAND en GPIO39; MOTOR (GPIO36) "
                                      "como entrada, con M3a aprobada por aceptación de riesgo; H4 sin aprobar: la "
                                      "cinta no sale por el SIO"),
+    # Bench C8a (docs/hardware/banco-c8a-aislado.md, C-3 to C-7): bench C8 with the F1 controls, on the FujiNet
+    # alone, USB only, the SIO cable disconnected. H4 unapproved and M3a approved, as today; if either changes the
+    # package fails and the variant must be reviewed. No menu, no cassette output, no new pin grant. No CI job
+    # builds or uploads it until F3 and F4 are decided.
+    "bench-c8a": Variant("retrobridge-BENCH-C8A-NO-SIO-fujinet-atari-v1x",
+                         "firmware de BANCO C8a (NO CONECTAR AL SIO: solo USB, cable SIO desconectado; orden c8a run "
+                         "con enclavamiento SIO_5V) para FujiNet Atari FN32ROV-1.3/1.5",
+                         features=("bench_c8", "bench_c8a"), version_matches_commit=True,
+                         sio_calls=CASSETTE_SIO_CALLS, gates=(False, True), bench=True,
+                         profile_text="microSD por SPI3 en GPIO 18/23/19/5; banco C8a: GPIO21 (DATA IN) por UART2 y "
+                                      "RMT solo con la orden c8a run y sin tensión SIO_5V en GPIO35; MOTOR (GPIO36) "
+                                      "como entrada, con M3a aprobada por aceptación de riesgo; H4 sin aprobar: SIO "
+                                      "no autorizado"),
 }
 
 
@@ -850,6 +874,10 @@ def check_variant(files: Files, variant: Variant, commit: str, log: CheckLog) ->
     log.require(MENU_SIO_CHECK, menu_on == menu_in_app == menu_in_elf == variant.menu_sio,
                 f"{MENU_SIO_KCONFIG}={'y' if menu_on else 'no'}, en la aplicación: {'sí' if menu_in_app else 'no'}, "
                 f"en el ELF: {'sí' if menu_in_elf else 'no'} (esperado: {'sí' if variant.menu_sio else 'no'})")
+    if "bench_c8a" in variant.features:
+        started = CASSETTE_START_MARKER in elf
+        log.require(CASSETTE_START_CHECK, not started,
+                    f"{CASSETTE_START_MARKER.decode()}: " + ("presente" if started else "ausente"))
     if variant.menu_sio:
         stack_ok, stack_detail = check_stack(elf, sdk)
         log.require(STACK_CHECK, stack_ok, stack_detail)
@@ -993,6 +1021,9 @@ def package(src: Path, build: Path, reports: Path, out: Path, source: SourceStat
     if variant != "h3c":  # the H3c record keeps exactly its original fields
         provenance["variant"] = variant
         provenance["features"] = list(spec.features)
+    if spec.bench:
+        provenance["bench"] = True
+        provenance["sio"] = BENCH_SIO_TEXT
     if spec.gates:
         provenance["gates"] = log.facts["gates"]
         (out / GATE_RECORD_IN_PACKAGE).write_text(json.dumps(log.facts["gates"], indent=2, ensure_ascii=False) + "\n",
@@ -1065,6 +1096,9 @@ def verify_package(root: Path) -> CheckLog:
     spec = VARIANTS.get(variant)
     log.require("variante del paquete", spec is not None and provenance.get("package") == spec.package,
                 f"variant={variant}, package={provenance.get('package')}")
+    if spec is not None and spec.bench:
+        log.require(BENCH_DECLARED_CHECK, provenance.get("bench") is True and provenance.get("sio") == BENCH_SIO_TEXT,
+                    f"bench={provenance.get('bench')!r}, sio={provenance.get('sio')!r}")
     if spec is not None:
         check_variant(package_files(root), spec, str(provenance.get("firmware_source_commit", "")), log)
     return log

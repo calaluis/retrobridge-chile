@@ -748,18 +748,25 @@ class CassettePackageTest(unittest.TestCase):
         self.assertIn("registrado en CI: sin GPIO/UART del SIO (código)", names)
         self.assertNotIn("puertas H4 y M3a (registro)", names)
 
-    def test_real_profile_and_record_allow_the_cassette_package(self):
-        # docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md: approved by the owner's risk acceptance
+    def test_real_profile_and_record_refuse_the_cassette_package(self):
+        # docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md: M3a approved by risk acceptance, H4 not
         repo = Path(__file__).resolve().parents[2]
-        self.assertEqual(fp.profile_gates(repo), (True, True))
-        ok, detail, _record = fp.read_gate_record(repo)
+        self.assertEqual(fp.profile_gates(repo), (False, True))
+        ok, _detail, _record = fp.read_gate_record(repo)
+        self.assertFalse(ok)
+
+    def test_real_profile_and_record_allow_the_menu_sio_package(self):
+        repo = Path(__file__).resolve().parents[2]
+        self.assertEqual(fp.profile_gates(repo), fp.VARIANTS["menu-sio"].gates)
+        ok, detail, _record = fp.read_gate_record(repo, fp.VARIANTS["menu-sio"].gates)
         self.assertTrue(ok, detail)
 
     def test_the_retired_variants_no_longer_exist(self):
-        # spec puertas-aceptacion-riesgo CA4: they only made sense with H4 and M3a unsigned
+        # spec puertas-aceptacion-riesgo CA4: they needed H4 and M3a unsigned; only menu-sio is installed before T9b
         for name in ("cassette-lectura", "bench-c8"):
             self.assertNotIn(name, fp.VARIANTS)
-        self.assertTrue(fp.VARIANTS["menu-sio"].gates)
+        self.assertEqual(fp.VARIANTS["menu-sio"].gates, (False, True))
+        self.assertEqual(fp.VARIANTS["cassette"].gates, (True, True))
 
 
 BENCH_APP_MARKERS = CASSETTE_APP_MARKERS + (b"\x1b[0;33mW (%lu) %s: C8 BENCH BEGIN: board '%s', H4 %s, M3a %s; USB "
@@ -924,13 +931,22 @@ void start() {
 MENU_SIO_CHECK = "paquete de prueba menu-sio (sdkconfig, aplicación y ELF)"
 
 
+def menu_record():
+    """The gate record menu-sio requires: M3a approved, H4 not (JSON false, as in docs/mediciones/puertas.json)."""
+    record = gate_record()
+    record["H4"] = {"aprobada": False, "fecha": None, "registro": None}
+    return record
+
+
 class MenuSioPackageTest(unittest.TestCase):
-    """menu-sio: the cassette calls plus the menu as D1 on the physical SIO, only with H4 and M3a approved and
+    """menu-sio: the cassette calls plus the menu as D1 on the physical SIO, only with M3a approved, H4 not, and
     CONFIG_RB_MENU_SIO on; its UART2 and button calls exact and on the board's pins; every other variant refuses
     the option and the code, and leaves its two sources out of the scan."""
 
     def setUp(self):
         CassettePackageTest.setUp(self)
+        self.profile(False, True)
+        self.gates(menu_record())
         write(self.f.src / "components" / "rb_esp_sio" / "src" / "esp_sio_uart.cpp", SIO_UART_SOURCE)
         write(self.f.src / "main" / "menu_sio.cpp", MENU_MAIN_SOURCE)
         self.build(menu_option=True, app=MENU_APP_MARKERS, elf=MENU_ELF)
@@ -959,15 +975,15 @@ class MenuSioPackageTest(unittest.TestCase):
 
     # positive case
 
-    def test_menu_sio_package_with_both_gates_approved(self):
+    def test_menu_sio_package_with_m3a_approved_and_h4_not(self):
         log = self.package()
         self.assertTrue(log.ok, self.failed(log))
         provenance = json.loads((self.f.out / "PROVENANCE.json").read_text(encoding="utf-8"))
         self.assertEqual(provenance["package"], "retrobridge-fw-menu-sio-fujinet-atari-v1x")
         self.assertEqual(provenance["variant"], "menu-sio")
         self.assertEqual(provenance["features"], ["menu_sio"])
-        self.assertEqual(provenance["gates"], gate_record())
-        self.assertEqual(json.loads((self.f.out / "config" / "puertas.json").read_text(encoding="utf-8")), gate_record())
+        self.assertEqual(provenance["gates"], menu_record())
+        self.assertEqual(json.loads((self.f.out / "config" / "puertas.json").read_text(encoding="utf-8")), menu_record())
         self.assertIn("GPIO/UART del SIO solo en rb_esp_cassette y menu-sio (código)", [c["name"] for c in provenance["checks"]])
         self.assertIn("menu-sio", (self.f.out / "LEEME.md").read_text(encoding="utf-8"))
         log = fp.verify_package(self.f.out)
@@ -975,20 +991,33 @@ class MenuSioPackageTest(unittest.TestCase):
 
     # gates, option and code
 
-    def test_menu_sio_package_refuses_h4_unsigned_in_the_profile(self):
-        self.profile(False, True)
+    def test_menu_sio_package_refuses_h4_signed_in_the_profile(self):
+        self.profile(True, True)
         self.assert_refused(fp.PROFILE_CHECK)
 
     def test_menu_sio_package_refuses_m3a_unsigned_in_the_profile(self):
-        self.profile(True, False)
+        self.profile(False, False)
         self.assert_refused(fp.PROFILE_CHECK)
 
-    def test_menu_sio_package_refuses_a_gate_unapproved_in_the_record(self):
-        for gate in ("H4", "M3a"):
-            record = gate_record()
-            record[gate]["aprobada"] = False
-            self.gates(record)
-            self.assert_refused(fp.RECORD_CHECK)
+    def test_menu_sio_package_refuses_h4_approved_in_the_record(self):
+        self.gates(gate_record())
+        self.assert_refused(fp.RECORD_CHECK)
+
+    def test_menu_sio_package_refuses_h4_not_json_false_in_the_record(self):
+        record = menu_record()
+        record["H4"]["aprobada"] = None
+        self.gates(record)
+        self.assert_refused(fp.RECORD_CHECK)
+
+    def test_menu_sio_package_refuses_m3a_unapproved_in_the_record(self):
+        record = menu_record()
+        record["M3a"]["aprobada"] = False
+        self.gates(record)
+        self.assert_refused(fp.RECORD_CHECK)
+
+    def test_menu_sio_package_refuses_m3a_without_its_record_file(self):
+        (self.f.src / "docs" / "mediciones" / "m3a-prueba.md").unlink()
+        self.assert_refused(fp.RECORD_CHECK)
 
     def test_menu_sio_package_refuses_a_missing_record(self):
         (self.f.src / "docs" / "mediciones" / "puertas.json").unlink()
@@ -1000,6 +1029,12 @@ class MenuSioPackageTest(unittest.TestCase):
         record = json.loads(path.read_text(encoding="utf-8"))
         record["M3a"]["aprobada"] = False
         path.write_text(json.dumps(record), encoding="utf-8")
+        self.assertFalse(fp.verify_package(self.f.out).ok)
+
+    def test_menu_sio_verify_refuses_a_record_changed_to_h4_approved(self):
+        self.assertTrue(self.package().ok)
+        path = self.f.out / "config" / "puertas.json"
+        path.write_text(json.dumps(gate_record()), encoding="utf-8")
         self.assertFalse(fp.verify_package(self.f.out).ok)
 
     def test_menu_sio_verify_requires_the_profile_check_recorded(self):
@@ -1037,6 +1072,8 @@ class MenuSioPackageTest(unittest.TestCase):
 
     def test_other_variants_accept_the_menu_sources_when_not_built_in(self):
         self.build(menu_option=False, app=CASSETTE_APP_MARKERS, elf=CASSETTE_ELF)
+        self.profile(True, True)  # test data: the cassette package needs both gates
+        self.gates(gate_record())
         log = CassettePackageTest.package(self, "cassette")
         self.assertTrue(log.ok, self.failed(log))
 

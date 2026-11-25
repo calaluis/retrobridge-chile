@@ -53,5 +53,6 @@ Fuera:
 
 ## Next
 
-Reemplazado: el responsable eligió la opción C y aprobó M3a y H4 por aceptación de riesgo
+Reemplazado: el responsable eligió la opción C y aprobó M3a (solo R1) por aceptación de riesgo; H4 sigue
+pendiente
 (`02-DOCS/wiki/sdd/specs/puertas-aceptacion-riesgo.md`).

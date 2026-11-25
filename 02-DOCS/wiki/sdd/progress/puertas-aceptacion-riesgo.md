@@ -1,9 +1,9 @@
 ---
 type: progress
 title: Progreso — puertas-aceptacion-riesgo
-description: Avance por tarea de la spec puertas-aceptacion-riesgo (H4 y M3a aprobadas por aceptación de riesgo).
+description: Avance por tarea de la spec puertas-aceptacion-riesgo (M3a aprobada por aceptación de riesgo; H4 pendiente).
 tags: [sdd, progress, puertas, h4, m3a]
-timestamp: 2026-11-25T20:00:00Z
+timestamp: 2026-11-25T22:00:00Z
 topic: sdd
 slug: puertas-aceptacion-riesgo
 status: in-review
@@ -12,41 +12,28 @@ status: in-review
 # Progreso — puertas-aceptacion-riesgo
 
 Rama `gates/m3a-h4-aceptacion-riesgo` (worktree `.worktrees/gates-m3a-h4-aceptacion`, desde main `8ca5d59`).
-Sin hardware, sin flasheo y sin mediciones.
+PR #110. Sin hardware, sin flasheo y sin mediciones.
 
-## T1 — Registro y `puertas.json` (hecha)
+## Ronda 1 (commit `8a639f1`)
 
-- `docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`: «aceptación de riesgo, no validación eléctrica».
-- `puertas.json`: H4 y M3a con `aprobada: true`, fecha y registro.
-- `check_gate_record` → OK; prueba de herramientas `test_real_profile_and_record_allow_the_cassette_package`.
+Aprobaba H4 y M3a. La primera revisión independiente (`6061700562`) pidió:
+- **H1:** respaldo explícito del responsable, sin ampliar el alcance por inferencia;
+- **H2:** documentar que el paquete `cassette` transmite sin depender de `kTapeOutput`, y delimitar qué firmware se
+  usa antes de T9b;
+- **H3:** separar el estado vigente del histórico.
 
-## T2 — Perfil `fujinet_atari_v1x` (hecha)
+## Ronda 2 (corrección)
 
-- Las dos puertas en `true`. RED primero en las pruebas de host; luego GREEN.
-- Cada prueba de rechazo usa ahora una copia con la puerta en `false`.
+El responsable respondió: acepta solo R1 (M3a), mantiene H4 pendiente y solo instala `menu-sio` antes de T9b.
 
-## T3b — `EspTapeDeck` y `kTapeOutput` (hecha)
-
-- `main/tape_gates.hpp`: `tapeGatesOpen(kTapeOutput, perfil)`. Con `kTapeOutput=false` el menú sigue diciendo
-  «AUN NO PUEDE CARGARSE».
-- `test/host/board/test_tape_gates.cpp`: 3 pruebas.
-
-## T3 — Empaquetador (hecha)
-
-- `menu-sio` con `gates=True`; se retiran `cassette-lectura`, `bench-c8` y la maquinaria de puertas cerradas.
-- El chequeo de banco sigue: todas las variantes rechazan la opción y el código C8.
-- `tools/tests`: 290 pruebas OK.
-- Mutante (`menu-sio` con `gates=False`): 8 pruebas caen. Restaurado.
-
-## T4 — CI (hecha)
-
-- Nuevo job `firmware-package-cassette` desde el commit bajo prueba.
-- Se quitan los jobs `firmware-package-cassette-lectura` y `firmware-package-bench-c8`.
-- Pendiente: CI del PR verde, con los artefactos `cassette` y `menu-sio`.
-
-## T5 — Documentos (hecha)
-
-- `h4-puerta-sio.md`: estado, §3.4, R1 y §7.
-- `enmienda-motor-gpio36.md`: cabecera y §7 (opción C reemplaza a D3).
-- Procedimiento pasivo, ficha M3a, demo `menu-sio`, banco C8, instalación §7 y `h4-c-casetera.md`: avisos fechados.
-- Los registros históricos (`docs/mediciones/*`, specs y progresos anteriores) no se reescriben.
+- **T1:** el registro cita sus palabras exactas; `puertas.json` con M3a aprobada y H4 sin cambios.
+- **T2:** perfil con `motorGateApproved = true` y `sioGateApproved = false`. Las pruebas de H4 vuelven a las de `main`.
+- **T3b:** `tapeGatesOpen` sin cambios; las pruebas usan una copia con las dos puertas aprobadas.
+- **T3:** cada variante declara `gates = (H4, M3a)`: `cassette` `(True, True)` y `menu-sio` `(False, True)`.
+  `check_gate_record` exige JSON `false` para una puerta no aprobada. `tools/tests`: 295 OK.
+  - Mutante 1 (`menu-sio` con `(True, True)`): 10 pruebas caen.
+  - Mutante 2 (H4 no aprobada sin exigir JSON `false`): 2 pruebas caen. Restaurado.
+- **T4:** sin job de `cassette`; solo `firmware-package-menu-sio`.
+- **T5:** bloque «Estado vigente» y marcas de lo histórico en los documentos de hardware.
+- Host: `ctest` 100/100.
+- **Punto abierto para el responsable:** `menu-sio` responde por DATA IN con H4 sin aprobar (R2, R6, R7).

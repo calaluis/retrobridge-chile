@@ -138,8 +138,8 @@ El límite de la entrada del ESP32 es **VDD + 0,3 V, unos 3,6 V**.
   3,6 V, con margen. Además se tendrá en cuenta que, con la FujiNet apagada, cualquier nivel alto podría entrar por
   las protecciones del pin.
 - **Detener:** algún valor supera ese límite, o no se puede determinar con confianza. Entonces **no se conecta la
-  FujiNet al Atari** (salvo la aceptación de riesgo de la opción C, `docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`, que aprobó M3a sin esta medición, y antes la
-  excepción operativa D3 de `enmienda-motor-gpio36.md` §7, que no cubre mediciones
+  FujiNet al Atari** (salvo la aprobación de M3a por aceptación de riesgo de R1, `docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`, que no es una
+  validación eléctrica, y antes la excepción operativa D3 de `enmienda-motor-gpio36.md` §7, que no cubre mediciones
   ni validaciones) hasta diseñar, revisar y validar una protección (adaptación de nivel o no conectar MOTOR en el
   cable). Esa protección es un cambio de hardware con aprobación aparte.
 

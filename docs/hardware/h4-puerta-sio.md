@@ -1,11 +1,10 @@
 # H4: puerta de hardware SIO en la FujiNet FN32ROV-1.3-Q24
 
-> Estado: **APROBADA POR ACEPTACIÓN DE RIESGO DEL RESPONSABLE (2026-11-25).** No es una validación eléctrica.
-> Registro: `docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`. El checklist del §7 **no se cumplió**: las mediciones físicas
-> (`procedimiento-medicion-pasiva-sio.md`) y la revisión final de seguridad siguen sin hacerse. Este documento
-> completa el análisis documental del pinout y de la adaptación eléctrica.
+> Estado: **EN PREPARACIÓN. H4 NO está aprobado.** Este documento completa el análisis documental del pinout y de la
+> adaptación eléctrica. Las mediciones físicas (`procedimiento-medicion-pasiva-sio.md`) y la revisión final de
+> seguridad siguen pendientes.
 >
-> Hasta esa aprobación, ningún pin del SIO se configuraba como salida, y el firmware instalado (`15b153f`,
+> Mientras H4 no esté aprobado, ningún pin del SIO se configura como salida, y el firmware instalado (`15b153f`,
 > diagnóstico H4 validado en `h4-validacion-diagnostico-2026-10-24.md` y `h4-regresion-h3c-2026-10-25.md`) no toca
 > ninguno de esos GPIO. Este documento no cambia código, firmware, particiones ni `sdkconfig`.
 >
@@ -14,6 +13,11 @@
 >
 > **Enmienda aprobada (MOTOR y GPIO36):** `enmienda-motor-gpio36.md` (PR #108). Separa el
 > riesgo de la placa del comportamiento del firmware. No cambia ninguna puerta.
+>
+> **Estado vigente (2026-11-25):** **M3a aprobada por aceptación de riesgo** del responsable, que cubre solo R1
+> (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). **H4 sigue sin aprobar:** R2, R6 y R7 no están aceptados. **La validación eléctrica sigue
+> pendiente** para las dos. Antes del banco T9b solo se instala `menu-sio`.
+> Donde este documento dice «M3a pendiente», describe el estado anterior a esa decisión.
 
 **Etiquetas:**
 - **[E]** esquema público `FN32ROV-1.3-Q24_schematic.jpg`, revisado directamente el 2026-10-24;
@@ -206,9 +210,11 @@ si algunos programas lo apagan y encienden entre bloques [P].
 - Una casetera fiel **obedece el pin 8**: montar un `.cas` en `C:` equivale a dejar PLAY pulsado, y los datos salen
   solo mientras el Atari mantiene MOTOR en alto. La opción «casetera sin MOTOR» (reproducir con las pausas del `.cas`
   y un botón de «play») **queda descartada**: ninguna XC12 funciona así.
-- Por eso leer MOTOR es imprescindible para T9 de `menu-cinta`, y **M3a sigue siendo el punto de detención**.
+- Por eso leer MOTOR es imprescindible para T9 de `menu-cinta`, y M3a era el punto de detención (histórico: se
+  aprobó por aceptación de riesgo el 2026-11-25, sin validación eléctrica).
 - Según el esquema del 65XE, del lado del Atari **no hay resistencia en serie ni limitador dedicado** que proteja
-  IO36: la corriente disponible depende del circuito de Q7. R1 sigue abierto y M3a pendiente.
+  IO36: la corriente disponible depende del circuito de Q7. R1 sigue sin validar eléctricamente; desde el
+  2026-11-25 es un riesgo aceptado por el responsable.
 
 **Evidencia histórica [H] (proyecto WSS, G5-2, prueba T5, `FUJINET_WSS_P5_G5_2_REPORT.md` §4):**
 - El registro de la FujiNet muestra «MOTOR ON: activating cassette» a las 23:01:22 y la emisión del casete hasta
@@ -239,10 +245,13 @@ Condiciones:
 Es una excepción por decisión del responsable a la regla de este punto de detención («no se autoriza ninguna
 conexión»), limitada a ese uso. D3 no aprobó M3a.
 
-**Actualización 2026-11-25 (opción C):** el responsable reemplazó D3 por la aprobación de M3a y H4 por aceptación de
-riesgo (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). Base: la placa funciona desde que se compró con el pin 8 directo a GPIO36 y el firmware de FujiNet.
-**No es una validación eléctrica:** el valor medido sigue en «Detener» y los puntos sin medir siguen sin medir.
-`kTapeOutput` sigue en `false` hasta el banco T9b.
+**Actualización 2026-11-25 (opción C y revisión del PR #110):** el responsable aprobó **M3a por aceptación de riesgo**,
+que cubre **solo R1**, con estas palabras: «Acepto R1 como riesgo eléctrico preexistente de mi FujiNet original. No
+autorizo automáticamente R2, R6 ni R7. Mantener H4 pendiente hasta evaluar esos riesgos por separado. La aceptación
+de R1 no constituye validación eléctrica.» Registro: `docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`.
+- Para MOTOR, la aprobación reemplaza a D3. Para DATA IN, D3 no cambia.
+- B4 sigue en «Detener», y los puntos sin medir siguen sin medir.
+- **H4 sigue sin aprobar.** `kTapeOutput` sigue en `false` hasta el banco T9b.
 
 **Mediciones del mismo día con la FujiNet conectada (fuera de la ficha M3a):** en el conector SIO posterior de la
 placa, sin USB, el pin 8 marcó **4,87 V con S5 encendido** y **3,16 V con S5 apagado**. No son mediciones del pad de
@@ -250,7 +259,7 @@ GPIO36 ni la medición C. Con S5 encendido, la carga de la placa casi no baja MO
 carga MOTOR mucho más que R2, y la causa no se conoce: una de las hipótesis no verificadas es la alimentación
 parásita por IO36. Detalle e hipótesis HS1–HS4: `docs/mediciones/m3a-motor-2026-11-25.md` §4.
 
-**[P] Punto de detención (M3a, sin cambios):** la primera medición del nivel alto de MOTOR CONTROL se hace **en el
+**[P] Punto de detención para validar M3a eléctricamente (sin cambios; la aceptación de riesgo no lo reemplaza):** la primera medición del nivel alto de MOTOR CONTROL se hace **en el
 Atari solo, con la FujiNet desconectada del SIO** (procedimiento, etapa M3a), con el motor del casete encendido y un
 osciloscopio para ver también los picos. Debe confirmar el nivel real y los picos en el 65XE físico, que puede no
 coincidir con un esquema de terceros.
@@ -328,7 +337,7 @@ Especificación de esta alternativa: `mitigacion-c-motor-pin8.md` (**PROPUESTA N
 
 | # | Riesgo | Causa | Impacto | Prevención | Verificación |
 |---|---|---|---|---|---|
-| R1 | Sobretensión en GPIO36 y alimentación parásita | MOTOR (pin 8) directo a IO36, solo con R2 de 10 k a GND [E]. En el 65XE del equipo, el esquema indica un PNP saturado a +5 V sin resistencia en serie: ≈ 4,7–4,9 V previstos (§3.4) [E-Atari][T][I]; **medido el 2026-11-25: 4,89 V sin carga en el Atari solo**, y en el conector posterior de la FujiNet, sin USB, **4,87 V con S5 encendido** y **3,16 V con S5 apagado** (causa sin verificar; `docs/mediciones/m3a-motor-2026-11-25.md` §4). Con la FujiNet apagada, posible alimentación parásita por la protección del pin [I]. Antecedente: MOTOR activo 15 min 27 s en G5-2 T5 con funcionamiento satisfactorio [H], sin medición eléctrica. La FN32ROV-1.6 pasó MOTOR por un buffer (README) | Riesgo de daño o degradación del ESP32 (no confirmado) | **Medir primero en el Atari solo, con la FujiNet desconectada; sin conexión si supera el límite** hasta tener una mitigación validada (excepción operativa D3: uso acotado por aceptación de riesgo, sin mediciones ni casete); no usar MOTOR en la v1. Alternativa pendiente de análisis y aprobación: excluir el pin 8 (§3.4) | M3a: B4 medido, **«Detener»**; picos, A, D y E pendientes; causa de la caída con S5 apagado sin verificar [P]. **Riesgo aceptado por el responsable el 2026-11-25** (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`) |
+| R1 | Sobretensión en GPIO36 y alimentación parásita | MOTOR (pin 8) directo a IO36, solo con R2 de 10 k a GND [E]. En el 65XE del equipo, el esquema indica un PNP saturado a +5 V sin resistencia en serie: ≈ 4,7–4,9 V previstos (§3.4) [E-Atari][T][I]; **medido el 2026-11-25: 4,89 V sin carga en el Atari solo**, y en el conector posterior de la FujiNet, sin USB, **4,87 V con S5 encendido** y **3,16 V con S5 apagado** (causa sin verificar; `docs/mediciones/m3a-motor-2026-11-25.md` §4). Con la FujiNet apagada, posible alimentación parásita por la protección del pin [I]. Antecedente: MOTOR activo 15 min 27 s en G5-2 T5 con funcionamiento satisfactorio [H], sin medición eléctrica. La FN32ROV-1.6 pasó MOTOR por un buffer (README) | Riesgo de daño o degradación del ESP32 (no confirmado) | **Medir primero en el Atari solo, con la FujiNet desconectada; sin conexión si supera el límite** hasta tener una mitigación validada (excepción operativa D3: uso acotado por aceptación de riesgo, sin mediciones ni casete); no usar MOTOR en la v1. Alternativa pendiente de análisis y aprobación: excluir el pin 8 (§3.4) | M3a: B4 medido, **«Detener»**; picos, A, D y E pendientes; causa de la caída con S5 apagado sin verificar [P]. **Riesgo aceptado por el responsable el 2026-11-25**, sin validación eléctrica (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`) |
 | R2 | Bus bloqueado en bajo | GPIO21 configurado en bajo (o TX mal enrutado) | El Atari no puede comunicarse con ningún periférico | H5 sin TX; verificar con `gpio_dump_io_configuration` que GPIO21 no está asignado | Revisión de código y M5 |
 | R3 | Posible recepción errónea en DATA OUT [I] | El esquema no muestra pull-up en IO33; el comportamiento real no está medido | Tramas corruptas, si la hipótesis se confirma | Medir nivel y flanco; decidir en H5 (por ejemplo, el pull-up interno) | M4, M5 [P] |
 | R4 | Flancos falsos de COMMAND | Errata GPIO-3.11 (ADC) | Tramas fantasma | Sin ADC durante la escucha; filtro por duración | Pruebas de host y M5 |
@@ -361,15 +370,12 @@ Especificación de esta alternativa: `mitigacion-c-motor-pin8.md` (**PROPUESTA N
 
 ## 7. Checklist de aceptación de H4
 
-El criterio técnico para aprobar H4 por medición es que todos los puntos estén marcados y el equipo firme la revisión.
-
-> **2026-11-25:** H4 se aprobó **por aceptación de riesgo del responsable**, sin cumplir este checklist
-> (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). Los puntos siguen sin marcar porque siguen sin medirse.
-
+H4 se aprueba **solo** cuando todos los puntos estén marcados y el equipo firme la revisión:
 
 - [ ] **MOTOR CONTROL medido en el Atari solo, con la FujiNet desconectada, incluidos sus picos:** dentro de lo
       que admite un pin del ESP32, o mitigación aprobada y validada. **Sin esto no hay conexión para medir ni validar**
-      (M3a). La excepción operativa D3 es una aceptación de riesgo y **no marca este punto**.
+      (M3a). La excepción operativa D3 es una aceptación de riesgo y **no marca este punto**. Tampoco lo marca
+      la aprobación de M3a por aceptación de riesgo del 2026-11-25.
 - [ ] Continuidad de J1 a U3/U4 y a los GPIO de §2, y paso de J1 a J2, con la placa desenergizada (M0).
 - [ ] R11, R2, R4/R5 y su relación con IO39, IO36 e IO35 comprobadas (M0).
 - [ ] VCC, VCC_BUF y +3V3 medidos solo con USB, con S5 encendido y apagado (M1, M2).

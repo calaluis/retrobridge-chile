@@ -89,13 +89,11 @@ static void test_sio_pins_follow_the_1_3_schematic(void)
     TEST_ASSERT_EQUAL_INT8(21, p.sio.tx);       // Atari DATA IN to U4 (output forbidden until H6)
 }
 
-static void test_h4_gate_is_signed_by_risk_acceptance(void)
+static void test_h4_gate_is_not_signed(void)
 {
-    // docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md: the owner's risk acceptance, not a measurement.
     const BoardProfile p = fujinet_atari_v1x_profile();
-    TEST_ASSERT_TRUE(p.hardwareConfirmed);
-    TEST_ASSERT_TRUE(p.sioGateApproved);
-    TEST_ASSERT_TRUE(p.motorGateApproved);
+    TEST_ASSERT_TRUE(p.hardwareConfirmed);  // unchanged: asserted by selecting the profile
+    TEST_ASSERT_FALSE(p.sioGateApproved);   // H4 not approved
 }
 
 static void test_sio_pins_pass_the_rules_without_approving_h4(void)
@@ -109,35 +107,24 @@ static void test_sio_pins_pass_the_rules_without_approving_h4(void)
     TEST_ASSERT_TRUE(receive_transmit.ok());
     TEST_ASSERT_EQUAL_UINT8(PinWarning::kStrappingPin, receive_transmit.value());
 
+    TEST_ASSERT_FALSE(fujinet_atari_v1x_profile().sioGateApproved);  // checking approved nothing
 }
 
-static void test_physical_sio_use_is_granted(void)
+static void test_physical_sio_use_is_refused(void)
 {
     const BoardProfile p = fujinet_atari_v1x_profile();
     const auto receive_only = validate_for_sio(p, SioMode::ReceiveOnly);
-    TEST_ASSERT_TRUE(receive_only.ok());
-    TEST_ASSERT_EQUAL_INT8(kNoPin, receive_only.value().pins.tx);
-
-    const auto receive_transmit = validate_for_sio(p, SioMode::ReceiveTransmit);
-    TEST_ASSERT_TRUE(receive_transmit.ok());
-    TEST_ASSERT_EQUAL_INT8(21, receive_transmit.value().pins.tx);
-}
-
-static void test_physical_sio_use_is_refused_with_h4_unsigned(void)
-{
-    BoardProfile closed = fujinet_atari_v1x_profile();
-    closed.sioGateApproved = false;
-    const auto receive_only = validate_for_sio(closed, SioMode::ReceiveOnly);
     TEST_ASSERT_FALSE(receive_only.ok());
     TEST_ASSERT_TRUE(receive_only.error() == ErrorCode::BoardNotConfirmed);
-    const auto receive_transmit = validate_for_sio(closed, SioMode::ReceiveTransmit);
+
+    const auto receive_transmit = validate_for_sio(p, SioMode::ReceiveTransmit);
     TEST_ASSERT_FALSE(receive_transmit.ok());
     TEST_ASSERT_TRUE(receive_transmit.error() == ErrorCode::BoardNotConfirmed);
 }
 
 static void test_receive_only_would_not_grant_gpio21(void)
 {
-    // A copy with the gate signed, as the real profile now is.
+    // Hypothetical, test-only copy with the gate signed: H4 itself stays unapproved.
     BoardProfile signed_copy = fujinet_atari_v1x_profile();
     signed_copy.sioGateApproved = true;
     const auto result = validate_for_sio(signed_copy, SioMode::ReceiveOnly);
@@ -155,10 +142,9 @@ int main(void)
     RUN_TEST(test_validates_with_only_the_gpio5_strapping_warning);
     RUN_TEST(test_does_not_touch_sio_buttons_or_leds);
     RUN_TEST(test_sio_pins_follow_the_1_3_schematic);
-    RUN_TEST(test_h4_gate_is_signed_by_risk_acceptance);
+    RUN_TEST(test_h4_gate_is_not_signed);
     RUN_TEST(test_sio_pins_pass_the_rules_without_approving_h4);
-    RUN_TEST(test_physical_sio_use_is_granted);
-    RUN_TEST(test_physical_sio_use_is_refused_with_h4_unsigned);
+    RUN_TEST(test_physical_sio_use_is_refused);
     RUN_TEST(test_receive_only_would_not_grant_gpio21);
     return UNITY_END();
 }

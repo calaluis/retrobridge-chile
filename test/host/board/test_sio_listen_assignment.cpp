@@ -106,8 +106,8 @@ static void test_default_profile_refuses_listening(void)
 
 static void test_fujinet_profile_refuses_listening_while_h4_is_not_signed(void)
 {
-    BoardProfile profile = fujinet_atari_v1x_profile();
-    profile.sioGateApproved = false;
+    const BoardProfile profile = fujinet_atari_v1x_profile();
+    TEST_ASSERT_FALSE(profile.sioGateApproved);
     TEST_ASSERT_TRUE(refusal(profile) == ErrorCode::BoardNotConfirmed);
 }
 
@@ -128,20 +128,13 @@ static void test_unconfirmed_hardware_is_refused_even_with_the_gate_signed(void)
 
 static void test_transmit_authorization_is_unchanged(void)
 {
-    BoardProfile profile = fujinet_atari_v1x_profile();
-    profile.sioGateApproved = false;
+    const BoardProfile profile = fujinet_atari_v1x_profile();
     const auto receive_only = validate_for_sio(profile, SioMode::ReceiveOnly);
     const auto receive_transmit = validate_for_sio(profile, SioMode::ReceiveTransmit);
     TEST_ASSERT_FALSE(receive_only.ok());
     TEST_ASSERT_TRUE(receive_only.error() == ErrorCode::BoardNotConfirmed);
     TEST_ASSERT_FALSE(receive_transmit.ok());
     TEST_ASSERT_TRUE(receive_transmit.error() == ErrorCode::BoardNotConfirmed);
-}
-
-static void test_fujinet_profile_grants_listening_with_h4_signed(void)
-{
-    const auto result = validate_for_sio_listen(fujinet_atari_v1x_profile());
-    TEST_ASSERT_TRUE(result.ok());
 }
 
 // --- What a signed gate would grant (test-only copies) -------------------------------
@@ -203,7 +196,6 @@ int main(void)
     RUN_TEST(test_valid_pins_without_the_gate_are_refused);
     RUN_TEST(test_unconfirmed_hardware_is_refused_even_with_the_gate_signed);
     RUN_TEST(test_transmit_authorization_is_unchanged);
-    RUN_TEST(test_fujinet_profile_grants_listening_with_h4_signed);
     RUN_TEST(test_signed_fujinet_copy_grants_command_and_rx_only);
     RUN_TEST(test_signed_gate_still_needs_valid_pins);
     RUN_TEST(test_pin_warnings_are_kept);

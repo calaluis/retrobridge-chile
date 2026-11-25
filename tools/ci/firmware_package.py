@@ -249,7 +249,7 @@ class Variant:
     version_matches_commit: bool = False  # esp_app_desc version must be a prefix of the pinned commit
     sio_calls: tuple = ()                 # (file, call, count) allowed; empty: no SIO call at all
     earlier_sio_calls: tuple = ()         # an older exact set also accepted (a pinned commit), or none
-    gates: bool = False                   # H4 and M3a must be approved (profile and record)
+    gates: tuple = ()                     # expected (H4, M3a) approval in profile and record; empty: not read
     bench: bool = False                   # the bench test C8 build (CONFIG_RB_BENCH_C8); every other variant refuses it
     menu_sio: bool = False                # the menu-sio test package (CONFIG_RB_MENU_SIO); every other variant refuses it
     profile_text: str = "microSD por SPI3 en GPIO 18/23/19/5; sin pines SIO"
@@ -270,20 +270,22 @@ VARIANTS = {
     "cassette": Variant("retrobridge-fw-cassette-fujinet-atari-v1x",
                         "firmware con casetera .cas (DATA IN por UART2 y RMT) para FujiNet Atari FN32ROV-1.3/1.5",
                         features=("cassette",), version_matches_commit=True, sio_calls=CASSETTE_SIO_CALLS,
-                        earlier_sio_calls=CASSETTE_SIO_CALLS_BEFORE_C8, gates=True,
+                        earlier_sio_calls=CASSETTE_SIO_CALLS_BEFORE_C8, gates=(True, True),
                         profile_text="microSD por SPI3 en GPIO 18/23/19/5; DATA IN en GPIO21 y MOTOR en GPIO36, "
                                      "con H4 y M3a aprobadas"),
     # menu-sio test package (menu-sio-fisico E1): the menu served as D1 on the physical SIO (UART2: TX DATA IN
-    # GPIO21, RX DATA OUT GPIO33; COMMAND GPIO39 input), with H4 and M3a approved by the owner's risk acceptance
-    # (docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md). The cassette source calls are counted, but the tape
-    # does not leave by the SIO (kTapeOutput), so the cassette feature is not required in the application.
+    # GPIO21, RX DATA OUT GPIO33; COMMAND GPIO39 input). M3a approved by the owner's risk acceptance of R1
+    # (docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md), so MOTOR (GPIO36) is read as an input; H4 stays
+    # unapproved, so the tape never leaves by the SIO. The only package to install before T9b.
     "menu-sio": Variant("retrobridge-fw-menu-sio-fujinet-atari-v1x",
-                        "firmware de prueba menu-sio (menú como D1 por el SIO físico) para FujiNet Atari FN32ROV-1.3/1.5",
+                        "firmware de prueba menu-sio (menú como D1 por el SIO físico, M3a aprobada y H4 sin aprobar) "
+                        "para FujiNet Atari FN32ROV-1.3/1.5",
                         features=("menu_sio",), version_matches_commit=True,
-                        sio_calls=CASSETTE_SIO_CALLS + MENU_SIO_CALLS, gates=True, menu_sio=True,
+                        sio_calls=CASSETTE_SIO_CALLS + MENU_SIO_CALLS, gates=(False, True), menu_sio=True,
                         profile_text="microSD por SPI3 en GPIO 18/23/19/5; paquete de prueba menu-sio: UART2 TX en "
-                                     "DATA IN (GPIO21), RX en DATA OUT (GPIO33), COMMAND en GPIO39; con H4 y M3a "
-                                     "aprobadas por aceptación de riesgo"),
+                                     "DATA IN (GPIO21), RX en DATA OUT (GPIO33), COMMAND en GPIO39; MOTOR (GPIO36) "
+                                     "como entrada, con M3a aprobada por aceptación de riesgo; H4 sin aprobar: la "
+                                     "cinta no sale por el SIO"),
 }
 
 
@@ -628,16 +630,21 @@ def profile_gates(src: Path):
     return fields[PROFILE_H4] == "true", fields[PROFILE_M3A] == "true"
 
 
-def check_gate_record(record, src=None):
-    """Returns (ok, detail). Both gates approved (JSON true), with a date and a record in docs/mediciones/;
-    with `src`, the record must also exist there."""
+def check_gate_record(record, src=None, expected=(True, True)):
+    """Returns (ok, detail). Each gate as `expected` (H4, M3a): an approved one is JSON true, with a date and a
+    record in docs/mediciones/ (with `src`, the record must also exist there and name the gate); an unapproved
+    one is JSON false, nothing else."""
     if not isinstance(record, dict):
         return False, "no es un objeto JSON"
     problems = []
-    for gate in GATES:
+    for gate, approved in zip(GATES, expected):
         entry = record.get(gate)
         if not isinstance(entry, dict):
             problems.append(f"{gate}: ausente")
+            continue
+        if not approved:
+            if entry.get("aprobada") is not False:
+                problems.append(f"{gate}: no figura como no aprobada")
             continue
         if entry.get("aprobada") is not True:
             problems.append(f"{gate}: no aprobada")
@@ -653,7 +660,11 @@ def check_gate_record(record, src=None):
                 problems.append(f"{gate}: falta {registro}")
             elif gate not in target.read_text(encoding="utf-8", errors="replace"):
                 problems.append(f"{gate}: {registro} no menciona {gate}")
-    return not problems, ", ".join(problems) or "H4 y M3a aprobadas, con registro"
+    if problems:
+        return False, ", ".join(problems)
+    if all(expected):
+        return True, "H4 y M3a aprobadas, con registro"
+    return True, ", ".join(f"{g} aprobada, con registro" if a else f"{g} sin aprobar" for g, a in zip(GATES, expected))
 
 
 def valid_date(value) -> bool:
@@ -677,7 +688,7 @@ def load_record_json(text: str):
     return json.loads(text, object_pairs_hook=no_duplicates)
 
 
-def read_gate_record(src: Path):
+def read_gate_record(src: Path, expected=(True, True)):
     """Returns (ok, detail, record) for docs/mediciones/puertas.json in a checkout."""
     path = src / GATE_RECORD
     if not path.is_file():
@@ -686,7 +697,7 @@ def read_gate_record(src: Path):
         record = load_record_json(path.read_text(encoding="utf-8"))
     except ValueError as error:
         return False, f"{GATE_RECORD}: {error}", None
-    ok, detail = check_gate_record(record, src)
+    ok, detail = check_gate_record(record, src, expected)
     return ok, detail, record
 
 
@@ -885,10 +896,10 @@ def check_build(src: Path, build: Path, source: SourceState, baseline: str, vari
     log.require(BENCH_GRANT_CHECK, grant_ok, grant_detail)
     if variant.gates:
         gates = profile_gates(src)
-        log.require(PROFILE_CHECK, gates == (True, True),
+        log.require(PROFILE_CHECK, gates == variant.gates,
                     f"{PROFILE_HEADER}: " + ("no se pudo leer el perfil" if gates is None
                                              else f"H4={'sí' if gates[0] else 'no'}, M3a={'sí' if gates[1] else 'no'}"))
-        record_ok, record_detail, record = read_gate_record(src)
+        record_ok, record_detail, record = read_gate_record(src, variant.gates)
         log.require(RECORD_CHECK, record_ok, f"{GATE_RECORD}: {record_detail}")
         log.facts["gates"] = record
     sdk = parse_sdkconfig((build / "sdkconfig").read_text(encoding="utf-8")) if (build / "sdkconfig").is_file() else {}
@@ -1043,7 +1054,7 @@ def verify_package(root: Path) -> CheckLog:
             record = load_record_json(path.read_text(encoding="utf-8")) if path.is_file() else None
         except ValueError:
             record = None
-        ok, detail = check(record) if record is not None else (False, f"falta {GATE_RECORD_IN_PACKAGE}")
+        ok, detail = check(record, expected=known.gates) if record is not None else (False, f"falta {GATE_RECORD_IN_PACKAGE}")
         same = record is not None and record == provenance.get("gates")
         log.require(check_name, ok and same,
                     f"{GATE_RECORD_IN_PACKAGE}: {detail}" + ("" if same else "; distinto de PROVENANCE.json"))

@@ -45,23 +45,13 @@ void expectError(ErrorCode expected, const BoardProfile& profile)
 void setUp() {}
 void tearDown() {}
 
-static void test_real_fujinet_profile_is_granted(void)
+static void test_real_fujinet_profile_is_refused(void)
 {
-    const auto result = validate_for_cassette_output(fujinet_atari_v1x_profile());
-    TEST_ASSERT_TRUE(result.ok());
-    TEST_ASSERT_EQUAL_INT8(21, result.value().dataIn());
-    TEST_ASSERT_EQUAL_INT8(36, result.value().motor());
+    // M3a is signed by risk acceptance, H4 is not (docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md)
+    TEST_ASSERT_FALSE(fujinet_atari_v1x_profile().sioGateApproved);
+    TEST_ASSERT_TRUE(fujinet_atari_v1x_profile().motorGateApproved);
+    expectError(ErrorCode::BoardNotConfirmed, fujinet_atari_v1x_profile());
     expectError(ErrorCode::BoardNotConfirmed, unconfirmed_profile());
-}
-
-static void test_real_fujinet_profile_with_a_gate_unsigned_is_refused(void)
-{
-    BoardProfile p = fujinet_atari_v1x_profile();
-    p.sioGateApproved = false;
-    expectError(ErrorCode::BoardNotConfirmed, p);
-    p = fujinet_atari_v1x_profile();
-    p.motorGateApproved = false;
-    expectError(ErrorCode::BoardNotConfirmed, p);
 }
 
 static void test_both_gates_grant_data_in_and_motor(void)
@@ -148,8 +138,7 @@ static void test_bench_refuses_bad_pins(void)
 int main(void)
 {
     UNITY_BEGIN();
-    RUN_TEST(test_real_fujinet_profile_is_granted);
-    RUN_TEST(test_real_fujinet_profile_with_a_gate_unsigned_is_refused);
+    RUN_TEST(test_real_fujinet_profile_is_refused);
     RUN_TEST(test_both_gates_grant_data_in_and_motor);
     RUN_TEST(test_h4_alone_is_not_enough);
     RUN_TEST(test_m3a_alone_is_not_enough);

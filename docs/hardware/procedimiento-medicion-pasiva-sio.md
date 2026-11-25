@@ -1,5 +1,10 @@
 # Procedimiento de medición pasiva del SIO (H4): FujiNet FN32ROV-1.3-Q24
 
+> **Estado vigente (2026-11-25):** **M3a aprobada por aceptación de riesgo** del responsable, que cubre solo R1
+> (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). **H4 sigue sin aprobar:** R2, R6 y R7 no están aceptados. **La validación eléctrica sigue
+> pendiente** para las dos. Antes del banco T9b solo se instala `menu-sio`.
+> Esa aprobación **no** cuenta como ninguna etapa de este procedimiento: M0–M6 siguen sin hacerse.
+>
 > **NO EJECUTAR sin autorización explícita para cada etapa.** Solo hay una medición hecha: M3a parcial (B4 =
 > 4,89 V, «Detener»; `docs/mediciones/m3a-motor-2026-11-25.md`). El resto de los resultados está **pendiente**. M3a (Atari solo) requiere una autorización aparte. Las etapas que conectan la FujiNet al
 > Atari (M3–M6) requieren además que **M3a haya pasado su punto de detención**.
@@ -42,10 +47,7 @@
 > **en el Atari solo**, que el nivel alto de MOTOR no supera lo que admite un pin del ESP32. Si la señal puede
 > superar ese límite, **no se autoriza ninguna conexión** hasta diseñar y validar una mitigación aprobada.
 >
-> **Actualización 2026-11-25 (opción C):** H4 y M3a quedaron aprobadas por aceptación de riesgo del responsable
-> (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). Eso **no** cuenta como ninguna etapa de este procedimiento: M0–M6 siguen sin hacerse.
->
-> **Excepción operativa D3 (2026-11-25, `enmienda-motor-gpio36.md` §7; reemplazada por la opción C).**** El responsable acepta el riesgo R1 de su
+> **Excepción operativa D3 (2026-11-25, `enmienda-motor-gpio36.md` §7).** El responsable acepta el riesgo R1 de su
 > placa y permite conectarla **solo para usar** disco, menú y TNFS, sin casete ni lectura de MOTOR. Es una decisión
 > de uso, no una validación eléctrica. **No cambia ninguna etapa de este procedimiento:**
 > - M3–M6 siguen bloqueadas hasta que M3a pase su punto de detención o haya una mitigación validada;

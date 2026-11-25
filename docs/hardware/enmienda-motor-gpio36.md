@@ -137,7 +137,7 @@ habilita**. Para que valga hace falta, como mínimo:
 - **D1:** aprobada. El PR #108 se fusionó (`d48b245`).
 - **D3:** se adopta la **prohibición de conexión**. La FujiNet FN32ROV-1.3-Q24 no se conecta al SIO del 65XE, ni
   encendida ni apagada, hasta tener una protección de MOTOR diseñada, aprobada y validada. D3(b) no se adopta como
-  autorización. Base: la medición M3a parcial del 2026-11-25 (B4 = **4,89 V** con el Atari solo y el motor
+  autorización. Base: la medición M3a parcial del 2026-11-25 (B4 = **4,89 V** sin carga, con el Atari solo y el motor
   encendido; resultado «Detener»), en `docs/mediciones/m3a-motor-2026-11-25.md`.
 - **Orden acordado para el resto:** D2 → D4 → D5. Para D2 se prioriza completar M3a con osciloscopio (picos) y
   después diseñar y validar una adaptación de nivel para MOTOR. Ninguna resistencia ni buffer queda aprobado todavía.

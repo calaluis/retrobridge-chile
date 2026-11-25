@@ -29,7 +29,10 @@ Fuera:
 - [x] Criterio de la ficha aplicado: 4,89 V > 3,6 V → «Detener» — prueba: §4 del registro.
 - [x] D3 = prohibición de conexión, sin aprobar M3a — prueba: enmienda §7 y `h4-puerta-sio.md` §3.4.
 - [x] Diff sin puertas, perfil ni código — prueba: `git diff --stat origin/main`.
-- [ ] Revisión independiente del PR.
+- [x] Revisión independiente 1 (`db93d20`), H1: 4,89 V es sin carga; la tensión con 10 kΩ o con la FujiNet
+      conectada queda como no medida — prueba: cabecera y §4 del registro; `h4-puerta-sio.md` §1 y §3.4; enmienda §7.
+- [x] H2: A, D y E quedan pendientes; solo C es opcional, como dice la ficha §5 — prueba: §3 y §5 del registro.
+- [ ] Segunda revisión independiente.
 
 ## Evidence
 

@@ -34,7 +34,7 @@ Sigue el ADR-012: solo documentación pública de hardware y de fabricantes. No 
 | Pinout SIO | — | Las 10 asignaciones de §2, contra el esquema [E] | Continuidad física (procedimiento, M0) |
 | Adaptación de niveles | — | 74LS07, pull-ups y polaridades (§3) [E][D] | Niveles en reposo y en uso (M1–M5) |
 | Alimentación | Funciona por USB [C] | Diodos OR, Q2/Q3 y VCC_BUF (§4) [E] | VCC, VCC_BUF y corriente del pin 10 (M1–M3, M6) |
-| MOTOR (GPIO36) | — | Conexión directa, sin buffer (§3.4) [E] | **Tensión real de MOTOR CONTROL, medida en el Atari solo** (M3a, punto de detención). 2026-11-25: B4 = 4,89 V, **«Detener»**; picos pendientes |
+| MOTOR (GPIO36) | — | Conexión directa, sin buffer (§3.4) [E] | **Tensión real de MOTOR CONTROL, medida en el Atari solo** (M3a, punto de detención). 2026-11-25: B4 = 4,89 V sin carga, **«Detener»**; con carga y picos, pendientes |
 | Protocolo SIO | Lógica pura en el host (H2) | Tiempos del manual (arquitectura §1, §9.3) [M] | Velocidad, t0 y t1 reales (H5) |
 | Puertos de software | `SioTransport`, `Clock`, `SioSession` y `SioCommandDispatcher`, con pruebas de host (H2) | — | `EspSioTransport` (H5) |
 
@@ -223,7 +223,7 @@ lado del Atari. El esquema de la 1.6 se revisó el 2026-11-23 (U3 puerta 2, R24 
 ver `proteccion-motor-gpio36.md` §2, propuesta de protección **no aprobada**.
 
 **Medición M3a parcial del 2026-11-25:** con el Atari solo y el motor encendido (`POKE 54018,52`), un tester
-marcó **4,89 V** en el pin 8. Supera los 3,6 V de V_IH máx: el resultado es **«Detener»**
+marcó **4,89 V** en el pin 8, sin ningún periférico (sin carga). La tensión con la FujiNet conectada no está medida. Supera los 3,6 V de V_IH máx: el resultado es **«Detener»**
 (`docs/mediciones/m3a-motor-2026-11-25.md`). Los picos (B2, B5) siguen sin medir, porque falta un osciloscopio.
 **Decisión D3 del responsable (`enmienda-motor-gpio36.md` §7):** la FN32ROV-1.3-Q24 no se conecta al SIO del 65XE
 hasta tener una protección de MOTOR diseñada, aprobada y validada. M3a **no** está aprobada.

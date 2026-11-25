@@ -4,8 +4,10 @@
 
 #include <array>
 #include <cstdint>
+#include <new>
 #include <vector>
 
+#include "driver/uart.h"
 #include "fake_idf.hpp"
 #include "rb/esp/esp_sio_uart.hpp"
 #include "unity.h"
@@ -224,6 +226,182 @@ void test_write_ends_at_the_same_line_time_with_the_tx_ring()
     }
 }
 
+// ---- menu-cinta T9a.7b: the disk lends DATA IN without deleting UART2 (plan decision 1, "Reanudar el disco") ----
+
+namespace {
+
+// UART2 as the disk installs it when the cassette shares it: the TX ring of decision 3, the TX model on.
+EspSioUart& sharedLine()
+{
+    fake_idf::state().txModel = true;
+    alignas(EspSioUart) static unsigned char storage[sizeof(EspSioUart)];
+    auto* line = new (storage) EspSioUart{kPins, EspSioUart::kSharedTxRing};
+    TEST_ASSERT_TRUE(line->begin());
+    return *line;
+}
+
+// The cassette's use of the line while the disk is parked: its rate, and bytes still going out.
+void tapeSends(std::size_t count)
+{
+    (void)uart_set_baudrate(UART_NUM_2, 600);
+    std::vector<uint8_t> bytes(count, 0x55);
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(count), uart_write_bytes(UART_NUM_2, bytes.data(), bytes.size()));
+}
+
+}  // namespace
+
+// Plan §2.4 step 1: park only with the TX empty (the disk's last answer is out); otherwise false, next step.
+void test_park_waits_for_an_empty_tx()
+{
+    EspSioUart& line = sharedLine();
+    const uint8_t answer[3] = {0x41, 0x43, 0x00};
+    TEST_ASSERT_EQUAL_INT(3, uart_write_bytes(UART_NUM_2, answer, 3));  // still going out
+    TEST_ASSERT_FALSE(line.park());
+    TEST_ASSERT_FALSE(line.parked());
+    fake_idf::tx_advance(10000);
+    TEST_ASSERT_TRUE(fake_idf::tx_empty());
+    TEST_ASSERT_TRUE(line.park());
+    TEST_ASSERT_TRUE(line.parked());
+    TEST_ASSERT_TRUE(line.ready());  // the driver stays installed
+    TEST_ASSERT_EQUAL_UINT(1, fake_idf::state().uartInstalls);
+    TEST_ASSERT_EQUAL_UINT(0, fake_idf::state().uartDeletes);
+}
+
+// Parked: the disk neither transmits nor reads frames (what arrives at 600 baud is not for it), and its idle
+// wait does not wait on the tape's bytes.
+void test_a_parked_line_neither_writes_nor_reads_frames()
+{
+    EspSioUart& line = sharedLine();
+    TEST_ASSERT_TRUE(line.park());
+    tapeSends(4);
+    auto& s = fake_idf::state();
+    const std::size_t written = s.written.size();
+    const uint8_t answer[1] = {0x41};
+    TEST_ASSERT_FALSE(line.write(Span<const uint8_t>{answer, 1}).ok());
+    TEST_ASSERT_EQUAL_UINT(written, s.written.size());
+    s.rx = {0x31, 0x52, 0x01, 0x00, 0x84};
+    uint8_t got[5] = {};
+    const int64_t before = s.nowUs;
+    const auto n = line.read(Span<uint8_t>{got, 5}, 3000);
+    TEST_ASSERT_TRUE(n.ok());
+    TEST_ASSERT_EQUAL_UINT(0, n.value());
+    TEST_ASSERT_EQUAL_UINT(5, s.rx.size());     // left for resume() to flush
+    TEST_ASSERT_TRUE(s.nowUs - before >= 3000);  // it waited: the SIO task does not spin
+    const unsigned waits = s.uartWaitTxDone;
+    line.idleLine();
+    TEST_ASSERT_EQUAL_UINT(waits, s.uartWaitTxDone);
+}
+
+// resume(): back to 19200, checked (±2 %), 8N1 checked, the input flushed; only then frames again. No
+// uart_driver_* call: the driver installed at boot is the one that serves.
+void test_resume_restores_and_checks_the_disk_line()
+{
+    EspSioUart& line = sharedLine();
+    TEST_ASSERT_TRUE(line.park());
+    tapeSends(2);
+    fake_idf::tx_advance(100000);
+    auto& s = fake_idf::state();
+    s.rx = {0xAA, 0x55};
+    const unsigned flushes = s.uartFlushes;
+    TEST_ASSERT_TRUE(line.resume());
+    TEST_ASSERT_FALSE(line.parked());
+    TEST_ASSERT_EQUAL_INT(19200, s.uartBaud);
+    TEST_ASSERT_EQUAL_UINT(flushes + 1, s.uartFlushes);
+    TEST_ASSERT_EQUAL_UINT(0, s.rx.size());
+    TEST_ASSERT_EQUAL_UINT(1, s.uartInstalls);
+    TEST_ASSERT_EQUAL_UINT(0, s.uartDeletes);
+    const uint8_t answer[1] = {0x41};
+    TEST_ASSERT_TRUE(line.write(Span<const uint8_t>{answer, 1}).ok());
+}
+
+// The ESP32's divisor does not give 19200 exactly: within ±2 % is the disk's rate, outside it is not.
+void test_resume_accepts_the_divisor_but_not_a_wrong_rate()
+{
+    EspSioUart& line = sharedLine();
+    auto& s = fake_idf::state();
+    TEST_ASSERT_TRUE(line.park());
+    s.uartBaudReadback = 19100;
+    TEST_ASSERT_TRUE(line.resume());
+    TEST_ASSERT_TRUE(line.park());
+    s.uartBaudReadback = 18500;
+    TEST_ASSERT_FALSE(line.resume());
+    TEST_ASSERT_TRUE(line.parked());
+    s.uartBaudReadback = 19900;
+    TEST_ASSERT_FALSE(line.resume());
+}
+
+// Any failed step: Failed, and the disk stays parked (D1 silent, the Atari retries). A later resume() that
+// passes serves again.
+void test_a_failed_resume_keeps_the_disk_parked()
+{
+    EspSioUart& line = sharedLine();
+    auto& s = fake_idf::state();
+    const uint8_t answer[1] = {0x41};
+    TEST_ASSERT_TRUE(line.park());
+    tapeSends(1);
+    fake_idf::tx_advance(100000);
+    s.failUartSetBaudrate = true;
+    TEST_ASSERT_FALSE(line.resume());
+    TEST_ASSERT_TRUE(line.parked());
+    TEST_ASSERT_EQUAL_INT(600, s.uartBaud);
+    TEST_ASSERT_FALSE(line.write(Span<const uint8_t>{answer, 1}).ok());
+    s.failUartSetBaudrate = false;
+    s.uartParity = static_cast<int>(UART_PARITY_EVEN);
+    TEST_ASSERT_FALSE(line.resume());
+    TEST_ASSERT_TRUE(line.parked());
+    s.uartParity = static_cast<int>(UART_PARITY_DISABLE);
+    s.uartStopBits = static_cast<int>(UART_STOP_BITS_2);
+    TEST_ASSERT_FALSE(line.resume());
+    s.uartStopBits = static_cast<int>(UART_STOP_BITS_1);
+    s.uartWordLength = static_cast<int>(UART_DATA_7_BITS);
+    TEST_ASSERT_FALSE(line.resume());
+    s.uartWordLength = static_cast<int>(UART_DATA_8_BITS);
+    TEST_ASSERT_TRUE(line.resume());
+    TEST_ASSERT_TRUE(line.write(Span<const uint8_t>{answer, 1}).ok());
+}
+
+void test_park_and_resume_need_the_line()
+{
+    EspSioUart line{kPins};
+    TEST_ASSERT_FALSE(line.park());
+    TEST_ASSERT_FALSE(line.resume());
+}
+
+// Review of PR #107: the input flush is a step of resume() too. If uart_flush_input() fails, the bytes read at
+// the tape's rate may still be there: D1 stays parked. A later resume() whose flush works serves again.
+void test_a_failed_flush_keeps_the_disk_parked()
+{
+    EspSioUart& line = sharedLine();
+    auto& s = fake_idf::state();
+    const uint8_t answer[1] = {0x41};
+    TEST_ASSERT_TRUE(line.park());
+    tapeSends(1);
+    fake_idf::tx_advance(100000);
+    s.rx = {0xAA, 0x55};
+    s.failUartFlush = true;
+    TEST_ASSERT_FALSE(line.resume());
+    TEST_ASSERT_TRUE(line.parked());
+    TEST_ASSERT_FALSE(line.write(Span<const uint8_t>{answer, 1}).ok());
+    TEST_ASSERT_EQUAL_UINT(2, s.rx.size());
+    s.failUartFlush = false;
+    TEST_ASSERT_TRUE(line.resume());
+    TEST_ASSERT_FALSE(line.parked());
+    TEST_ASSERT_EQUAL_UINT(0, s.rx.size());
+    TEST_ASSERT_TRUE(line.write(Span<const uint8_t>{answer, 1}).ok());
+}
+
+// end() then begin() (the console's `sio` restart) starts a line that serves: nothing parked is left behind.
+void test_a_new_begin_is_not_parked()
+{
+    EspSioUart& line = sharedLine();
+    TEST_ASSERT_TRUE(line.park());
+    line.end();
+    TEST_ASSERT_FALSE(line.parked());
+    TEST_ASSERT_TRUE(line.begin());
+    const uint8_t answer[1] = {0x41};
+    TEST_ASSERT_TRUE(line.write(Span<const uint8_t>{answer, 1}).ok());
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -237,5 +415,13 @@ int main()
     RUN_TEST(test_a_whole_frame_through_the_transport);
     RUN_TEST(test_a_late_fall_still_keeps_the_first_bytes);
     RUN_TEST(test_write_ends_at_the_same_line_time_with_the_tx_ring);
+    RUN_TEST(test_park_waits_for_an_empty_tx);
+    RUN_TEST(test_a_parked_line_neither_writes_nor_reads_frames);
+    RUN_TEST(test_resume_restores_and_checks_the_disk_line);
+    RUN_TEST(test_resume_accepts_the_divisor_but_not_a_wrong_rate);
+    RUN_TEST(test_a_failed_resume_keeps_the_disk_parked);
+    RUN_TEST(test_park_and_resume_need_the_line);
+    RUN_TEST(test_a_new_begin_is_not_parked);
+    RUN_TEST(test_a_failed_flush_keeps_the_disk_parked);
     return UNITY_END();
 }

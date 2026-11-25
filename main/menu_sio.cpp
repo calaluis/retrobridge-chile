@@ -1,6 +1,7 @@
 #include "menu_sio.hpp"
 
 #include "cassette_ports.hpp"
+#include "sio_disk_line.hpp"
 
 #include "sdkconfig.h"
 
@@ -29,6 +30,7 @@
 #include "rb/esp/esp_sio_uart.hpp"
 #include "rb/esp/sd_card_storage.hpp"
 #include "rb/menu/data_in_arbiter.hpp"
+#include "rb/menu/data_in_handover.hpp"
 #include "rb/menu/drive_memory.hpp"
 #include "rb/menu/drive_memory_link.hpp"
 #include "rb/menu/drive_slot_store.hpp"
@@ -172,44 +174,25 @@ bool g_tapeApplied = false;                        // SIO task only
 rb::host::StartupFlags g_startup;                  // finish(): publishTape(), then publishPlan()
 rb::esp::EspMotorIn* g_motor = nullptr;            // finish(), before publishTape(); reads off without M3a
 // "The tape played to its end" (menu-cinta T9a.7, requirement 2): the cassette task publishes it every tick
-// through g_progressSink (given before start()); the SIO task reads it with tapeEnded() (T9a.7b). Both
+// through g_progressSink (given before start()); the SIO task reads it with tapeEnded() every step. Both
 // accesses are in cassette_ports.cpp, the object CI checks for lock-free atomics.
 rb::host::TapeProgress g_progress;
 ProgressSink g_progressSink{g_progress};
 
 // Who owns DATA IN (menu-cinta T7, plan §2.3): one arbiter, stepped by the SIO task between two frames.
-// The disk line is the SIO UART. The tape line is not built yet: CassetteService chooses its outputs once,
-// at start(), so it cannot take DATA IN while it runs (T9, after M3a/H4). kTapeOutput keeps the arbiter's
-// gates closed until then: the disk never lets go and the SIO UART is never ended (AC8, rule 4).
+// kTapeOutput keeps the arbiter's gates closed until T9b (the 65XE bench): the disk never lets go (AC8,
+// rule 4), UART2 is installed without the cassette's TX ring, and the cassette never shares DATA IN.
 constexpr bool kTapeOutput = false;
+// Decision 3: with the cassette sharing UART2, the disk installs it once at boot with the TX ring.
+constexpr int kDiskTxRing = kTapeOutput ? rb::esp::EspSioUart::kSharedTxRing : rb::esp::EspSioUart::kUartTxBuffer;
 
-// T9a.1 changed the line contract (park/resume, asynchronous take/release). These adapters keep
-// today's behaviour and are never reached while kTapeOutput is false (the gates stay closed). T9a.7
-// replaces them: park/resume without deleting the UART2 driver, and the cassette over DataInHandover.
-class SioDiskLine final : public rb::host::DiskLine {
-public:
-    bool park() noexcept override
-    {
-        if (g_line != nullptr) {
-            g_line->end();
-        }
-        return true;
-    }
-    rb::host::LineResult resume() noexcept override
-    {
-        return g_line != nullptr && g_line->begin() ? rb::host::LineResult::Done : rb::host::LineResult::Failed;
-    }
-};
-
-class PendingTapeLine final : public rb::host::TapeLine {
-public:
-    rb::host::LineResult take() noexcept override { return rb::host::LineResult::Failed; }  // never reached
-    rb::host::LineResult release() noexcept override { return rb::host::LineResult::Done; }
-    void abandon() noexcept override {}
-};
-
-SioDiskLine g_diskLine;
-PendingTapeLine g_tapeLine;
+// The handover (menu-cinta T9a.7b, plan §2.4): the SIO task asks through g_tapeLine, the cassette task
+// answers through g_lender on its tick; atomics only (data_in_handover.cpp). The disk parks and resumes
+// the same UART2 driver: nothing is installed or deleted while the line changes hands (decision 1).
+rb::host::DataInHandover g_handover;
+HandoverLender g_lender{g_handover};
+UartDiskLine g_diskLine;  // start() attaches the line
+rb::host::HandoverTapeLine g_tapeLine{g_handover};
 rb::host::DataInArbiter g_arbiter{g_diskLine, g_tapeLine};  // SIO task only
 bool g_atariOff = false;                                     // SIO task only: SioPowerWatch's last event
 
@@ -495,6 +478,7 @@ void sioTask(void*)
             readings.commandHigh = g_line->commandHigh();
             readings.tapeOnC = g_tape->deck().loaded()[0] != '\0';
             readings.atariOff = g_atariOff;
+            readings.tapeEnded = tapeEnded(g_progress);  // the cassette task's last publish
             const rb::host::DataInChange change =
                 g_arbiter.step(rb::host::dataInInputs(readings), static_cast<uint64_t>(now));
             if (change != rb::host::DataInChange::None) {
@@ -709,8 +693,10 @@ bool start(const rb::board::BoardProfile& board)
         return false;
     }
 
-    static rb::esp::EspSioUart line{rb::esp::EspSioUart::Pins{board.sio.command, board.sio.rx, board.sio.tx}};
+    static rb::esp::EspSioUart line{rb::esp::EspSioUart::Pins{board.sio.command, board.sio.rx, board.sio.tx},
+                                    kDiskTxRing};
     g_line = &line;
+    g_diskLine.attach(line);
     ESP_LOGI(kTag, "idle levels before the UART: COMMAND %s, DATA OUT %s", line.commandHigh() ? "high" : "LOW",
              line.dataOutHigh() ? "high" : "LOW");
     if (!line.begin()) {
@@ -793,6 +779,13 @@ static void startCassette(bool sdMounted, rb::esp::CassetteService& cassette, rb
     ESP_LOGI(kTag, "PSRAM libre antes de la casetera: %u B (bloque mayor %u B)", static_cast<unsigned>(freeBefore),
              static_cast<unsigned>(largestBefore));
     cassette.reportEnd(g_progressSink);  // before start(): the loop publishes from its first tick
+    if (kTapeOutput) {
+        // T9a.7b: DATA IN shared with the disk, lent through g_handover (before start(): it picks the mode).
+        const auto pins = rb::board::validate_for_cassette_output(*g_board);
+        if (!pins.ok() || !cassette.shareDataIn(pins.value(), rb::esp::EspSioUart::kSharedTxRing, g_lender)) {
+            ESP_LOGW(kTag, "cas: DATA IN no compartido; la cinta no sale por SIO");
+        }
+    }
     const bool started = cassette.start();
     ESP_LOGI(kTag, "PSRAM libre despues de la casetera: %u B (bloque mayor %u B); RAM interna libre %u B",
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),

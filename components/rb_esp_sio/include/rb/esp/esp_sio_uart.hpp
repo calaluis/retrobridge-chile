@@ -41,6 +41,13 @@ public:
     bool begin() noexcept;
     void end() noexcept;
     bool ready() const noexcept { return ready_; }
+    // menu-cinta T9a.7b (plan decision 1): DATA IN lent to the cassette without deleting UART2.
+    // park(): only with the TX empty (false otherwise: try again next step); then the line neither writes
+    // nor reads frames. resume(): back to the disk's rate, checked (within 2 %), 8N1 checked, the input
+    // flushed; false (still parked) if any step fails. Neither installs, deletes nor allocates.
+    bool park() noexcept;
+    bool resume() noexcept;
+    bool parked() const noexcept { return parked_; }
     int txRing() const noexcept { return txRing_; }
 
     // Levels for the console (`sio status`): true = high (idle).
@@ -54,9 +61,12 @@ public:
     void idleLine() override;
 
 private:
+    bool flushed() noexcept;  // the one uart_flush_input(): true only if the input was emptied
+
     Pins pins_;
     int txRing_;
     bool ready_ = false;
+    bool parked_ = false;
 };
 
 }  // namespace rb::esp

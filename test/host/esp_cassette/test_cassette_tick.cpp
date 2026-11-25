@@ -17,9 +17,11 @@
 #include "rb/cassette/discard_outputs.hpp"
 #include "rb/cassette/fsk_loader.hpp"
 #include "rb/esp/esp_data_in.hpp"
+#include "rb/esp/esp_sio_uart.hpp"
 #include "rb/menu/data_in_arbiter.hpp"
 #include "rb/menu/data_in_handover.hpp"
 #include "rb/menu/tape_progress.hpp"
+#include "sio_disk_line.hpp"
 #include "unity.h"
 
 using rb::cassette::ByteOut;
@@ -360,6 +362,7 @@ rb::board::CassetteOutputAssignment granted()
 }
 
 alignas(rb::esp::EspDataIn) unsigned char g_dataInStorage[sizeof(rb::esp::EspDataIn)];
+alignas(rb::esp::EspSioUart) unsigned char g_sioStorage[sizeof(rb::esp::EspSioUart)];
 
 }  // namespace
 
@@ -589,6 +592,142 @@ void test_a_new_take_after_a_lost_line_publishes_the_end_again()
     TEST_ASSERT_TRUE(rb::menusio::tapeEnded(d.progress));
 }
 
+// Third review of PR #106: after Lost, the arbiter (Released) asks the release again every 100 ms. Once the
+// line comes back to UART2 (Uart, TX empty), Disk is confirmed and the end is published again, with no new take.
+void test_a_released_line_comes_back_on_a_new_release_and_the_end_is_published_again()
+{
+    Deck d(fuji() + chunk("data", 0, Bytes(20, 0x55)));
+    for (int i = 0; i < 20000 && !d.tape.player.atEnd(); ++i) {
+        (void)d.step();
+    }
+    TEST_ASSERT_TRUE(d.tape.player.atEnd());
+    TEST_ASSERT_TRUE(d.arbiter.owner() == DataInOwner::Tape);
+    d.line.answer = LiveLine::GiveBack::Lost;
+    d.motor.motor = false;  // end of tape and MOTOR off: rule 3
+    DataInChange change = DataInChange::None;
+    for (int i = 0; i < 50 && change != DataInChange::Released; ++i) {
+        change = d.step();
+    }
+    TEST_ASSERT_TRUE(change == DataInChange::Released);
+    for (int i = 0; i < 10; ++i) {
+        (void)d.step();
+        TEST_ASSERT_FALSE(rb::menusio::tapeEnded(d.progress));  // Lost: no end
+    }
+    d.line.answer = LiveLine::GiveBack::Uart;  // UART2 has GPIO21 again, TX empty
+    for (int i = 0; i < 200 && change != DataInChange::ToDisk; ++i) {
+        change = d.step();
+    }
+    TEST_ASSERT_TRUE(change == DataInChange::ToDisk);
+    TEST_ASSERT_EQUAL(1, d.disk.resumes);
+    (void)d.step();
+    TEST_ASSERT_TRUE(rb::menusio::tapeEnded(d.progress));
+}
+
+// ---- T9a.7b: the whole handover on one UART2, the real disk line and the real cassette line ----
+
+namespace {
+
+// The menu's UART2 (EspSioUart, installed once with the TX ring of decision 3) lent to the cassette's
+// EspDataIn in shared mode through the arbiter, DataInHandover and CassetteTick, on fake_idf's TX model.
+struct SioAndTape {
+    fake_idf::State& s;
+    rb::esp::EspSioUart* sio = nullptr;
+    rb::esp::EspDataIn* dataIn = nullptr;
+    rb::cassette::DiscardByteOut discardBytes;
+    rb::cassette::DiscardWaveOut discardWave;
+    PlayerOutputs outputs{discardBytes, discardWave};
+    FakeMotor motor;
+    Tape tape;
+    CassetteTick tick{tape.player, outputs, motor};
+    DataInHandover handover;
+    rb::menusio::HandoverLender lender{handover};
+    rb::host::TapeProgress progress;
+    rb::menusio::ProgressSink sink{progress};
+    rb::menusio::UartDiskLine disk;
+    HandoverTapeLine tapeLine{handover};
+    DataInArbiter arbiter{disk, tapeLine};
+
+    static fake_idf::State& freshIdf()
+    {
+        fake_idf::reset();
+        auto& st = fake_idf::state();
+        st.txModel = true;
+        st.commandPin = 39;
+        return st;
+    }
+
+    SioAndTape() : s(freshIdf()), tape(fuji() + chunk("data", 0, {0x11, 0x22, 0x33}), discardWave)
+    {
+        sio = new (g_sioStorage) rb::esp::EspSioUart{rb::esp::EspSioUart::Pins{39, 33, 21},
+                                                     rb::esp::EspSioUart::kSharedTxRing};
+        TEST_ASSERT_TRUE(sio->begin());  // the disk installs UART2 once, at boot
+        disk.attach(*sio);
+        dataIn = new (g_dataInStorage) rb::esp::EspDataIn();
+        TEST_ASSERT_TRUE(dataIn->attachShared(granted(), rb::esp::EspSioUart::kSharedTxRing));
+        outputs.setLive(*dataIn, *dataIn);
+        tick.lend(lender, *dataIn);
+        tick.report(sink);
+    }
+
+    DataInChange step()
+    {
+        tape.produce();
+        tick.tick(static_cast<uint64_t>(s.nowUs));
+        fake_idf::tx_advance(static_cast<int64_t>(kTickUs));
+        DataInInputs in = inputs(motor.motor);
+        in.tapeEnded = rb::menusio::tapeEnded(progress);
+        const DataInChange change = arbiter.step(in, static_cast<uint64_t>(s.nowUs));
+        TEST_ASSERT_FALSE_MESSAGE(!sio->parked() && outputs.live(), "the disk and the tape both own DATA IN");
+        return change;
+    }
+
+    bool diskAnswers()
+    {
+        const uint8_t answer[1] = {0x41};
+        return sio->write(Span<const uint8_t>{answer, 1}).ok();
+    }
+};
+
+}  // namespace
+
+// T9a.7b: D1 answers at 19200; MOTOR on parks the disk (driver kept) and the tape plays at 600 baud on the
+// same UART2; at the end, with MOTOR off, the disk gets the line back at 19200, verified, its input flushed,
+// and answers again. UART2 is installed once and never deleted.
+void test_the_disk_lends_uart2_to_the_tape_and_gets_it_back()
+{
+    SioAndTape c;
+    TEST_ASSERT_TRUE(c.diskAnswers());
+    c.s.written.clear();
+    DataInChange change = DataInChange::None;
+    bool toTape = false;
+    for (int i = 0; i < 400 && !toTape; ++i) {
+        change = c.step();
+        toTape = change == DataInChange::ToTape;
+    }
+    TEST_ASSERT_TRUE(toTape);
+    TEST_ASSERT_TRUE(c.sio->parked());
+    TEST_ASSERT_FALSE(c.diskAnswers());  // parked: D1 silent while the tape owns DATA IN
+    for (int i = 0; i < 20000 && !c.tape.player.atEnd(); ++i) {
+        (void)c.step();
+    }
+    TEST_ASSERT_TRUE(c.tape.player.atEnd());
+    TEST_ASSERT_EQUAL_INT(600, c.s.uartBaud);
+    c.motor.motor = false;
+    c.s.rx = {0xAA, 0x55};  // what the Atari sent at 19200, read at 600: garbage for the disk
+    for (int i = 0; i < 400 && change != DataInChange::ToDisk; ++i) {
+        change = c.step();
+    }
+    TEST_ASSERT_TRUE(change == DataInChange::ToDisk);
+    TEST_ASSERT_FALSE(c.sio->parked());
+    TEST_ASSERT_EQUAL_INT(19200, c.s.uartBaud);
+    TEST_ASSERT_EQUAL_UINT(0, c.s.rx.size());
+    const Bytes tape{0x11, 0x22, 0x33};
+    TEST_ASSERT_TRUE(c.s.written == tape);
+    TEST_ASSERT_TRUE(c.diskAnswers());
+    TEST_ASSERT_EQUAL_UINT(1, c.s.uartInstalls);
+    TEST_ASSERT_EQUAL_UINT(0, c.s.uartDeletes);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -600,5 +739,7 @@ int main(void)
     RUN_TEST(test_a_release_with_bytes_left_in_uart2_does_not_publish_the_end);
     RUN_TEST(test_a_lost_line_with_bytes_left_in_uart2_never_publishes_the_end);
     RUN_TEST(test_a_new_take_after_a_lost_line_publishes_the_end_again);
+    RUN_TEST(test_a_released_line_comes_back_on_a_new_release_and_the_end_is_published_again);
+    RUN_TEST(test_the_disk_lends_uart2_to_the_tape_and_gets_it_back);
     return UNITY_END();
 }

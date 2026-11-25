@@ -49,6 +49,13 @@ struct State {
     // --- SIO line (menu-sio-fisico T4) ------------------------------------------------------
     int64_t nowUs = 0;                   // esp_timer_get_time(); vTaskDelay, delays and reads advance it
     int uartBaud = 0;                    // uart_param_config
+    int uartWordLength = -1;             // uart_param_config (the uart_word_length_t value)
+    int uartParity = -1;
+    int uartStopBits = -1;
+    int uartBaudReadback = 0;            // > 0: uart_get_baudrate() returns it (the divisor is not exact)
+    bool failUartSetBaudrate = false;    // uart_set_baudrate() fails and leaves the rate as it was
+    unsigned uartSetBaudrates = 0;
+    bool failUartFlush = false;          // uart_flush_input() fails and leaves the input as it was
     int uartRxFullThreshold = -1;        // uart_set_rx_full_threshold (-1: driver default, 120)
     int uartRxTimeout = -1;              // uart_set_rx_timeout (-1: driver default, 10 characters)
     int uartTxPin = -1;                  // uart_set_pin

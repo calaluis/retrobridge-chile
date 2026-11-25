@@ -63,6 +63,17 @@ public:
 
     // Before start(). Shared mode: who lends DATA IN (the SIO task, through DataInHandover).
     void lendDataIn(rb::cassette::DataInLender& lender) noexcept { lender_ = &lender; }
+    // Before start() (menu-cinta T9a.7b): DATA IN on UART2 as the disk installed it (EspDataIn shared
+    // mode, `txRing` its TX ring), lent by `lender`. False: not shared, the cassette never drives DATA IN.
+    bool shareDataIn(const rb::board::CassetteOutputAssignment& pins, std::size_t txRing,
+                     rb::cassette::DataInLender& lender) noexcept
+    {
+        if (!dataIn_.attachShared(pins, txRing)) {
+            return false;
+        }
+        lender_ = &lender;
+        return true;
+    }
     // Before start(): where "the tape played to its end" goes every tick (TapeProgress).
     void reportEnd(rb::cassette::EndSink& sink) noexcept { tick_.report(sink); }
 

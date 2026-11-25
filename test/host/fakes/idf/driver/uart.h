@@ -6,9 +6,10 @@
 typedef int uart_port_t;
 #define UART_NUM_2 2
 #define UART_PIN_NO_CHANGE (-1)
-enum uart_word_length_t { UART_DATA_8_BITS = 3 };
-enum uart_parity_t { UART_PARITY_DISABLE = 0 };
-enum uart_stop_bits_t { UART_STOP_BITS_1 = 1 };
+// The values of ESP-IDF's hal/uart_types.h: the fake must hold every value the real enums hold (UBSan).
+enum uart_word_length_t { UART_DATA_5_BITS = 0, UART_DATA_6_BITS = 1, UART_DATA_7_BITS = 2, UART_DATA_8_BITS = 3 };
+enum uart_parity_t { UART_PARITY_DISABLE = 0, UART_PARITY_EVEN = 2, UART_PARITY_ODD = 3 };
+enum uart_stop_bits_t { UART_STOP_BITS_1 = 1, UART_STOP_BITS_1_5 = 2, UART_STOP_BITS_2 = 3 };
 enum uart_hw_flowcontrol_t { UART_HW_FLOWCTRL_DISABLE = 0 };
 enum uart_sclk_t { UART_SCLK_DEFAULT = 0 };
 struct uart_config_t {
@@ -30,6 +31,11 @@ esp_err_t uart_wait_tx_done(uart_port_t port, uint32_t ticks);
 esp_err_t uart_set_baudrate(uart_port_t port, uint32_t baud);
 int uart_write_bytes(uart_port_t port, const void* src, size_t size);
 esp_err_t uart_get_tx_buffer_free_size(uart_port_t port, size_t* size);  // menu-cinta T9a.2
+// DiskLine resume() checks (menu-cinta T9a.7b, plan "Reanudar el disco").
+esp_err_t uart_get_baudrate(uart_port_t port, uint32_t* baudrate);
+esp_err_t uart_get_word_length(uart_port_t port, uart_word_length_t* data_bit);
+esp_err_t uart_get_parity(uart_port_t port, uart_parity_t* parity_mode);
+esp_err_t uart_get_stop_bits(uart_port_t port, uart_stop_bits_t* stop_bit);
 
 // SIO line adapter (menu-sio-fisico T4): reception.
 int uart_read_bytes(uart_port_t port, void* buf, uint32_t length, uint32_t ticks);

@@ -24,8 +24,10 @@ ESP32, es decir, qué periférico tiene el pin. No mide tensiones en la línea.
 
 ## 1. Qué hace el firmware de banco
 
-El paquete `bench-c8` es el firmware de `cassette-lectura` con la opción `CONFIG_RB_BENCH_C8`. Al arrancar, después de
-montar la microSD, ejecuta **una sola vez** `rb::bench::run_c8` (`main/bench_c8.cpp`):
+El paquete `bench-c8` es el firmware de `cassette-lectura` con la opción `CONFIG_RB_BENCH_C8`. Desde la fase F1 de C8a
+(`banco-c8a-aislado.md` §6) **no se ejecuta al arrancar**: la orden `c8a run` de la consola USB lee SIO_5V en GPIO35
+y, solo si no hay tensión del Atari y la lectura es válida, ejecuta **una vez por arranque** `rb::bench::run_c8`
+(`main/bench_c8.cpp`):
 
 | Paso | Acción | Dueño esperado de GPIO21 |
 |---|---|---|
@@ -39,12 +41,13 @@ montar la microSD, ejecuta **una sola vez** `rb::bench::run_c8` (`main/bench_c8.
 | 7 | Sin fallos: `faulted`, `pinFaults` y `failures` en cero | — |
 | 8 | `release()`: borra el driver de UART2 y aplica `gpio_reset_pin(21)` | Liberado (salida desactivada) |
 
-- **Estímulo:** sustituye a MOTOR una señal cuadrada de prueba. MOTOR no se lee: GPIO36 no se configura.
+- **Estímulo:** sustituye a MOTOR una señal cuadrada de prueba. Con M3a aprobada, `app_main` configura GPIO36
+  (MOTOR) como **entrada**; el banco no lo usa.
 - **Ruta del pin:** se lee en la matriz GPIO del ESP32, sin escribir ningún registro. El campo `out_sel` vale 198 para
   UART2 TX y entre 87 y 94 para los canales del RMT. `oe` es la habilitación de salida.
 - **Llamadas de ESP-IDF:** cada llamada del driver que cambia el pin o sus periféricos se registra con su resultado
   (`0` = `ESP_OK`).
-- **Casetera:** tras la prueba, la casetera arranca como en `cassette-lectura` y no recibe DATA IN.
+- **Casetera:** desde F1 no arranca en el firmware de banco: su bucle movería el mismo driver de DATA IN.
 
 **Controles del empaquetador** (`tools/ci/firmware_package.py`, variante `bench-c8`):
 - H4 y M3a sin aprobar, en el perfil y en el registro;
@@ -103,6 +106,9 @@ El script de consola reinicia la placa por RTS, captura 8 s de arranque y despu�
 ```
 
 Para repetir la prueba basta con volver a ejecutarlo: se ejecuta en cada arranque.
+
+> **Desde F1 de C8a** el banco no corre al arrancar: la captura debe enviar `c8a run`, y la línea `cassette ready`
+> de §6 ya no aparece. Este procedimiento se actualiza con F2 (variante) y F4 (ejecución).
 
 ## 6. Salida esperada si pasa
 

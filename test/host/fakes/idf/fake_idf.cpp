@@ -433,7 +433,7 @@ esp_err_t rmt_del_encoder(rmt_encoder_handle_t)
     ++s.rmtDelEncoderCalls;
     s.encoderCallback = nullptr;
     s.encoderArg = nullptr;
-    return ESP_OK;
+    return s.failRmtDelEncoder ? ESP_FAIL : ESP_OK;
 }
 
 esp_err_t rmt_enable(rmt_channel_handle_t)
@@ -596,4 +596,7 @@ void vTaskDelay(TickType_t ticks)
     auto& s = fake_idf::state();
     s.nowUs += static_cast<int64_t>(ticks) * 1000;
     ++s.taskDelays;
+    if (s.onDelay != nullptr) {
+        s.onDelay();
+    }
 }

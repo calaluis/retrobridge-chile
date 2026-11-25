@@ -44,7 +44,10 @@ struct State {
     bool failRmtDelChannel = false; // rmt_del_channel() fails: the channel and the pin stay the RMT's
     unsigned rmtDelChannelCalls = 0;
     unsigned rmtDelEncoderCalls = 0;
+    bool failRmtDelEncoder = false;  // rmt_del_encoder() fails: nothing else changes (bench C8a, call count)
     bool failGpioReset = false;
+    // Called by vTaskDelay() after the time moves (bench C8a sequence test: the RMT plays a run as time passes).
+    void (*onDelay)() = nullptr;
 
     // --- SIO line (menu-sio-fisico T4) ------------------------------------------------------
     int64_t nowUs = 0;                   // esp_timer_get_time(); vTaskDelay, delays and reads advance it

@@ -129,21 +129,23 @@ extern "C" void app_main(void)
 #endif
     // The cassette needs the microSD (its tapes) and PSRAM (its bank).
     (void)g_motor.configure(kBoard);
-#if CONFIG_RB_BENCH_C8
-    // Bench test C8 (H4-C): DATA IN on the board alone, then released. The cassette never drives it.
-    (void)rb::bench::run_c8(kBoard, g_dataIn);
-#else
+#if !CONFIG_RB_BENCH_C8
     // DATA IN only with both gates signed; otherwise no SIO pin is touched.
     const auto output = rb::board::validate_for_cassette_output(kBoard);
     if (output.ok()) {
         (void)g_dataIn.configure(output.value());
     }
-#endif
     if (mounted.ok() && !g_cassette.start()) {
         ESP_LOGW(kTag, "cassette not started");
     }
+#endif
 
     if (!rb::console::start_diagnostic_console(g_console)) {
         ESP_LOGE(kTag, "diagnostic console could not start");
     }
+#if CONFIG_RB_BENCH_C8
+    // Bench C8a (F1): never at boot. The console order `c8a run` runs it once, after the SIO +5 V interlock.
+    // The cassette is not started: its loop would pump the same EspDataIn, which only one task may drive.
+    (void)rb::bench::start_c8_command(kBoard, g_dataIn);
+#endif
 }

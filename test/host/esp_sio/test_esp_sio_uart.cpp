@@ -346,14 +346,14 @@ void test_a_failed_resume_keeps_the_disk_parked()
     TEST_ASSERT_EQUAL_INT(600, s.uartBaud);
     TEST_ASSERT_FALSE(line.write(Span<const uint8_t>{answer, 1}).ok());
     s.failUartSetBaudrate = false;
-    s.uartParity = 2;  // even parity
+    s.uartParity = static_cast<int>(UART_PARITY_EVEN);
     TEST_ASSERT_FALSE(line.resume());
     TEST_ASSERT_TRUE(line.parked());
     s.uartParity = static_cast<int>(UART_PARITY_DISABLE);
-    s.uartStopBits = 3;  // 2 stop bits
+    s.uartStopBits = static_cast<int>(UART_STOP_BITS_2);
     TEST_ASSERT_FALSE(line.resume());
     s.uartStopBits = static_cast<int>(UART_STOP_BITS_1);
-    s.uartWordLength = 2;  // 7 bits
+    s.uartWordLength = static_cast<int>(UART_DATA_7_BITS);
     TEST_ASSERT_FALSE(line.resume());
     s.uartWordLength = static_cast<int>(UART_DATA_8_BITS);
     TEST_ASSERT_TRUE(line.resume());

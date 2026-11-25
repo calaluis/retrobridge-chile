@@ -6,9 +6,10 @@
 typedef int uart_port_t;
 #define UART_NUM_2 2
 #define UART_PIN_NO_CHANGE (-1)
-enum uart_word_length_t { UART_DATA_8_BITS = 3 };
-enum uart_parity_t { UART_PARITY_DISABLE = 0 };
-enum uart_stop_bits_t { UART_STOP_BITS_1 = 1 };
+// The values of ESP-IDF's hal/uart_types.h: the fake must hold every value the real enums hold (UBSan).
+enum uart_word_length_t { UART_DATA_5_BITS = 0, UART_DATA_6_BITS = 1, UART_DATA_7_BITS = 2, UART_DATA_8_BITS = 3 };
+enum uart_parity_t { UART_PARITY_DISABLE = 0, UART_PARITY_EVEN = 2, UART_PARITY_ODD = 3 };
+enum uart_stop_bits_t { UART_STOP_BITS_1 = 1, UART_STOP_BITS_1_5 = 2, UART_STOP_BITS_2 = 3 };
 enum uart_hw_flowcontrol_t { UART_HW_FLOWCTRL_DISABLE = 0 };
 enum uart_sclk_t { UART_SCLK_DEFAULT = 0 };
 struct uart_config_t {

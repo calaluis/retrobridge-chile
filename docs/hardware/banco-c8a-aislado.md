@@ -5,6 +5,9 @@
 > - Este PR no añade la variante, no genera ninguna imagen, no añade ningún job de CI y no flashea nada.
 > - Cada fase de §6 necesita una decisión aparte del responsable.
 > - C8a no aprueba H4, no acepta R2 ni R7 y no conecta el Atari.
+>
+> **F1 implementada** (rama `feat/banco-c8a-f1`): C-1 y C-2 en código, con pruebas de host. Sin variante, sin imagen
+> y sin job de CI: F2, F3 y F4 siguen sin aprobar.
 
 ## 1. Para qué sirve
 
@@ -24,7 +27,7 @@ desde el PR #110 ningún paquete lo compila (`procedimiento-prueba-banco-c8.md`)
 | Concesión del banco | `validate_for_bench_data_in()` no mira las puertas | El banco funciona con H4 sin aprobar |
 | Salida de casetera | `validate_for_cassette_output()` exige H4 y M3a | Con H4 = false, la casetera nunca toma DATA IN |
 | Menú SIO | `RB_MENU_SIO` depende de `!RB_BENCH_C8` | El banco no incluye el menú ni responde como D1 |
-| MOTOR | Con M3a aprobada, `app_main` configura GPIO36 como **entrada** | **Cambio respecto de la doc. del banco**: §1 de `procedimiento-prueba-banco-c8.md` dice «GPIO36 no se configura». Hay que corregirlo al recuperar el banco |
+| MOTOR | Con M3a aprobada, `app_main` configura GPIO36 como **entrada** | Corregido en F1: §1 de `procedimiento-prueba-banco-c8.md` ya dice que GPIO36 es una entrada |
 | Empaquetador | Toda variante rechaza `CONFIG_RB_BENCH_C8` (`BENCH_CHECK`) | Hace falta una variante nueva con `bench=True` |
 | Ejecución | `run_c8` corre **sola, al arrancar** | Ver control C-2 |
 | Atari conectado | El banco solo lo avisa por consola | Ver control C-1 |
@@ -68,6 +71,24 @@ desde el PR #110 ningún paquete lo compila (`procedimiento-prueba-banco-c8.md`)
 | F2 | Variante `bench-c8a` en el empaquetador y sus pruebas en `tools/tests` (C-3, C-4, C-5) | Del responsable | `tools/tests` en verde; ninguna imagen distribuida |
 | F3 | Job de CI que compila y verifica, **sin** `upload-artifact` (C-6) | Del responsable | CI en verde |
 | F4 | Distribuir la imagen y ejecutar C8a por USB, sin el Atari | Autorización escrita del responsable, una por sesión | Registro en `docs/mediciones/banco-c8-AAAA-MM-DD.md` |
+
+### Estado de F1
+
+- **C-1, enclavamiento SIO_5V** (`main/bench_c8_gate.hpp`, `classifySio5v`): 8 lecturas sueltas de GPIO35 (ADC1
+  canal 7, 12 dB, 12 bits, como `menu-sio`). El banco corre solo si **todas** leen, están entre 0 y 3300 mV en el pin,
+  difieren 200 mV o menos y quedan por debajo de 500 mV. Una lectura fallida, menos de 8 muestras, un valor fuera de
+  rango o lecturas dispersas dan **no válida**: GPIO21 no se toca (fallo seguro). Un ADC que no arranca deja todas
+  las lecturas como fallidas.
+- **C-2, orden manual** (`C8Trigger`, `main/bench_c8_console.cpp`): `run_c8` ya no corre al arrancar. La orden
+  `c8a run` de la consola USB lee GPIO35, consulta el enclavamiento y solo con «ausente» llama a `run_c8`. Una vez
+  por arranque; un rechazo por tensión presente permite volver a pedirla tras desconectar el cable.
+- **Casetera:** el firmware de banco ya no la arranca. Su bucle movería el mismo `EspDataIn`, que solo admite una
+  tarea. Las órdenes `cas` responden que no está iniciada.
+- **Pruebas de host:** `test_bench_c8_gate` (11, enclavamiento y orden), `test_bench_c8_sequence` (7, secuencia
+  UART2 → RMT → UART2 → liberación de `bench_c8.cpp` sobre el modelo de la matriz GPIO) y
+  `tools/tests/test_bench_c8_wiring.py` (5, cableado en `app_main.cpp` y `main/CMakeLists.txt`).
+- **Límite:** `bench_c8_console.cpp` y `bench_c8.cpp` no se compilan con ESP-IDF en ningún job hasta F3. El modelo
+  del host registra dueños del pin, no niveles eléctricos (eso es C8b).
 
 ## 7. Riesgos
 

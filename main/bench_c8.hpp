@@ -12,4 +12,8 @@ namespace rb::bench {
 // the pin after each step. Leaves `dataIn` released (enabled() false). True when every step passed.
 bool run_c8(const rb::board::BoardProfile& profile, rb::esp::EspDataIn& dataIn) noexcept;
 
+// Bench C8a, phase F1 (main/bench_c8_console.cpp): registers the console order `c8a run`, which reads the
+// SIO +5 V on GPIO35, asks the gate (bench_c8_gate.hpp) and only then calls run_c8. Never runs the bench itself.
+bool start_c8_command(const rb::board::BoardProfile& profile, rb::esp::EspDataIn& dataIn) noexcept;
+
 }  // namespace rb::bench

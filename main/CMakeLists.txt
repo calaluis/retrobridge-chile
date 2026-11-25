@@ -4,7 +4,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/../cmake/rb_build_flags.cmake)
 
 set(rb_main_srcs "app_main.cpp")
 if(CONFIG_RB_BENCH_C8)
-    list(APPEND rb_main_srcs "bench_c8.cpp")  # bench test C8 only (H4-C)
+    list(APPEND rb_main_srcs "bench_c8.cpp" "bench_c8_console.cpp")  # bench test C8 only (H4-C; C8a F1 order)
 endif()
 # REQUIRES cannot depend on sdkconfig: ESP-IDF expands component requirements before it reads the
 # configuration, so CONFIG_* is empty there. The menu-sio components are always required (and compiled);

@@ -1338,5 +1338,62 @@ class BenchC8aPackageTest(unittest.TestCase):
         for step in uploads:
             self.assertNotIn("bench", step.lower())
 
+
+class BenchC8aCiJobTest(unittest.TestCase):
+    """bench-c8a, phase F3 (docs/hardware/banco-c8a-aislado.md, C-6): one CI job builds the bench with ESP-IDF,
+    packages it as bench-c8a and verifies it, and distributes nothing: no upload-artifact, no other action than the
+    checkouts. The real tree passes the source checks of the variant."""
+
+    JOB = "firmware-package-bench-c8a"
+
+    @classmethod
+    def setUpClass(cls):
+        repo = Path(__file__).resolve().parents[2]
+        cls.repo = repo
+        cls.ci = (repo / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8").replace("\r\n", "\n")
+
+    def job(self):
+        """The job's text: from its key, two spaces in, to the next job key or the end."""
+        match = re.search(rf"^  {re.escape(self.JOB)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", self.ci, re.S | re.M)
+        self.assertIsNotNone(match, f"job {self.JOB} in ci.yml")
+        return match.group(1)
+
+    def test_the_job_builds_the_bench_with_esp_idf(self):
+        job = self.job()
+        self.assertIn("container: espressif/idf:v6.1", job)
+        self.assertIn('SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board.fujinet-atari-v1x;sdkconfig.bench-c8"',
+                      job)
+        self.assertIn("grep -q '^CONFIG_RB_BENCH_C8=y'", job)
+
+    def test_the_job_packages_and_verifies_bench_c8a(self):
+        job = self.job()
+        self.assertIn("--variant bench-c8a", job)
+        self.assertRegex(job, r"firmware_package\.py verify ")
+
+    def test_the_job_distributes_nothing(self):
+        job = self.job()
+        self.assertNotIn("upload-artifact", job)
+        self.assertNotIn("GITHUB_OUTPUT", job)  # nothing handed on to another step or job
+        uses = re.findall(r"uses:\s*(\S+)", job)
+        self.assertTrue(uses)
+        self.assertTrue(all(u.startswith("actions/checkout@") for u in uses), uses)
+        self.assertNotIn(self.JOB, re.sub(r"^  " + re.escape(self.JOB) + r":\n", "", self.ci, flags=re.M))  # no needs:
+
+    def test_the_job_never_writes_to_the_board(self):
+        job = self.job()
+        for word in ("flash", "erase", "esptool", "write_flash", "monitor"):
+            self.assertNotRegex(job, rf"idf\.py[^\n]*\b{word}\b")
+        self.assertNotIn("esptool", job)
+
+    def test_the_real_tree_passes_the_source_checks_of_bench_c8a(self):
+        spec = fp.VARIANTS["bench-c8a"]
+        for name, (ok, detail) in (
+                ("llamadas SIO", fp.check_sio_calls(self.repo, spec.sio_calls, fp.MENU_SIO_SOURCES)),
+                ("NVS", fp.check_nvs(self.repo)), ("concesión", fp.check_bench_grant(self.repo))):
+            self.assertTrue(ok, f"{name}: {detail}")
+        self.assertEqual(fp.profile_gates(self.repo), spec.gates)
+        ok, detail, _record = fp.read_gate_record(self.repo, spec.gates)
+        self.assertTrue(ok, detail)
+
 if __name__ == "__main__":
     unittest.main()

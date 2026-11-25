@@ -87,6 +87,54 @@ jobs:
   # menu-sio is installed (docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md). The read-only cassette-lectura and
   # bench-c8 packages, which needed both gates unsigned, are retired.
 
+  # Bench C8a, phase F3 (docs/hardware/banco-c8a-aislado.md, variant "bench-c8a"): bench C8 with the F1 controls
+  # (SIO_5V interlock on GPIO35, `c8a run` only), H4 unapproved and M3a approved. Built from the commit under test,
+  # packaged and verified so the ESP-IDF image is checked (bench and c8a markers, cassette not started, no menu).
+  # C-6: distributes nothing. No upload-artifact and no output: the package stays on the runner and is discarded
+  # with it. Distributing an image (F4) needs the owner's written decision. Pull Requests and manual runs only.
+  firmware-package-bench-c8a:
+    name: Firmware package bench-c8a (FujiNet Atari FN32ROV-1.3/1.5, bench C8a, build and verify only, not distributed)
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    container: espressif/idf:v6.1   # D-12: pinned ESP-IDF release
+    env:
+      FW_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout packaging tools (commit under test)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.FW_COMMIT }}
+          path: ci
+          persist-credentials: false
+      - name: Checkout firmware source (commit under test)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.FW_COMMIT }}
+          path: src
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build firmware (RB_BOARD_FUJINET_ATARI_V1X + RB_BENCH_C8)
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/ci"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/src"
+          . "$IDF_PATH/export.sh"
+          mkdir reports
+          cd src
+          idf.py -B build-bench-c8a -D SDKCONFIG=build-bench-c8a/sdkconfig                  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board.fujinet-atari-v1x;sdkconfig.bench-c8" build
+          grep -q '^CONFIG_RB_BENCH_C8=y' build-bench-c8a/sdkconfig
+          if grep -q '^CONFIG_RB_MENU_SIO=y' build-bench-c8a/sdkconfig; then echo "menu-sio in the bench"; exit 1; fi
+          idf.py -B build-bench-c8a -D SDKCONFIG=build-bench-c8a/sdkconfig size > ../reports/size.txt
+          idf.py -B build-bench-c8a -D SDKCONFIG=build-bench-c8a/sdkconfig size-components > ../reports/size-components.txt
+      - name: Verify and package (kept on the runner, not uploaded)
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          out="out/retrobridge-BENCH-C8A-NO-SIO-fujinet-atari-v1x-${FW_COMMIT:0:7}"
+          python3 -I ci/tools/ci/firmware_package.py package --src src --build src/build-bench-c8a                   --reports reports --out "$out" --baseline "$FW_COMMIT" --variant bench-c8a
+          python3 -I ci/tools/ci/firmware_package.py verify "$out"
+          { echo '```'; cat "$out/reports/checks.txt"; echo '```'; echo 'Not distributed (C-6).'; } >> "$GITHUB_STEP_SUMMARY"
+
   # Test package menu-sio (menu-sio-fisico E1, variant "menu-sio"): the menu served as D1 on the physical SIO
   # (UART2: TX DATA IN GPIO21, RX DATA OUT GPIO33, COMMAND GPIO39), with M3a approved by the owner's risk acceptance
   # of R1 (MOTOR read on GPIO36) and H4 unapproved, so the tape never leaves by the SIO. The only package to install

@@ -1,5 +1,5 @@
 # Bench test C8 (H4-C): DATA IN hand-over on the FujiNet alone, USB only, the Atari disconnected.
-# No CI package builds it since 2026-11-25 (recovery: docs/hardware/procedimiento-prueba-banco-c8.md).
+# No CI job builds it since 2026-11-25; the bench-c8a packager variant accepts it (C8a F2) (recovery: docs/hardware/procedimiento-prueba-banco-c8.md).
 # Applied after the board fragment, only for a bench package:
 #   idf.py -B build-bench -D SDKCONFIG=build-bench/sdkconfig \
 #          -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board.fujinet-atari-v1x;sdkconfig.bench-c8" build

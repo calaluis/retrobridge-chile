@@ -6,8 +6,9 @@
 > - Cada fase de §6 necesita una decisión aparte del responsable.
 > - C8a no aprueba H4, no acepta R2 ni R7 y no conecta el Atari.
 >
-> **F1 implementada** (rama `feat/banco-c8a-f1`): C-1 y C-2 en código, con pruebas de host. Sin variante, sin imagen
-> y sin job de CI: F2, F3 y F4 siguen sin aprobar.
+> **F1 implementada** (PR #114): C-1 y C-2 en código, con pruebas de host.
+> **F2 implementada** (rama `feat/banco-c8a-f2`): variante `bench-c8a` del empaquetador (C-3 a C-7) y sus pruebas.
+> Sin imagen y sin job de CI: F3 y F4 siguen sin aprobar.
 
 ## 1. Para qué sirve
 
@@ -16,7 +17,8 @@ terminar un tramo y al cancelarlo, y que al final queda liberado. Lee la **matri
 pin. **No mide niveles eléctricos**: eso es C8b.
 
 El código del banco sigue en el árbol (`main/bench_c8.cpp`, `sdkconfig.bench-c8`, `CONFIG_RB_BENCH_C8`), pero
-desde el PR #110 ningún paquete lo compila (`procedimiento-prueba-banco-c8.md`).
+desde el PR #110 ningún job de CI lo compila (`procedimiento-prueba-banco-c8.md`). Desde F2, solo la variante
+`bench-c8a` del empaquetador lo acepta; ningún job la usa hasta F3.
 
 ## 2. ¿Es compatible con el estado vigente (H4 = false, M3a = true)?
 
@@ -89,6 +91,25 @@ desde el PR #110 ningún paquete lo compila (`procedimiento-prueba-banco-c8.md`)
   `tools/tests/test_bench_c8_wiring.py` (5, cableado en `app_main.cpp` y `main/CMakeLists.txt`).
 - **Límite:** `bench_c8_console.cpp` y `bench_c8.cpp` no se compilan con ESP-IDF en ningún job hasta F3. El modelo
   del host registra dueños del pin, no niveles eléctricos (eso es C8b).
+
+### Estado de F2
+
+La variante `bench-c8a` de `tools/ci/firmware_package.py`:
+
+- **C-3:** paquete `retrobridge-BENCH-C8A-NO-SIO-fujinet-atari-v1x`; el título dice «NO CONECTAR AL SIO».
+  `PROVENANCE.json` declara `"bench": true` y `"sio": "no autorizado"`, y `verify` rechaza el paquete si faltan.
+- **C-4:** exige en la imagen las marcas del banco C8 y de la orden C8a (`C8A READY`, `start_c8_command`). Rechaza
+  el menú (`CONFIG_RB_MENU_SIO` o sus marcas), el banco antiguo que corría al arrancar (sin la orden C8a) y un ELF
+  con `CassetteService::start`, porque el banco no arranca la casetera.
+- **C-5:** puertas `(H4 = false, M3a = true)` leídas del perfil y de `puertas.json` (`check_gate_record`). Con otras
+  puertas, el empaquetado falla.
+- **C-6:** ningún paso `upload-artifact` de la CI menciona el banco (prueba estructural sobre `ci.yml`).
+- **C-7:** sin `nvs_*` (`NVS_CHECK`, como todas las variantes).
+- Las llamadas SIO permitidas son las de la casetera, en su número exacto. La concesión de banco sigue solo en
+  `main/bench_c8.cpp`. Las demás variantes siguen rechazando la opción y el código de banco.
+- **Pruebas:** 11 nuevas en `tools/tests/test_firmware_package.py` (`BenchC8aPackageTest`).
+- **Límite:** las marcas y la ausencia de `CassetteService::start` se comprueban con imágenes sintéticas. Que una
+  compilación real de ESP-IDF las cumpla se verifica en F3.
 
 ## 7. Riesgos
 

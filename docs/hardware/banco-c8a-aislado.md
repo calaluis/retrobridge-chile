@@ -102,7 +102,8 @@ La variante `bench-c8a` de `tools/ci/firmware_package.py`:
   `PROVENANCE.json` declara `"bench": true` y `"sio": "no autorizado"`, y `verify` rechaza el paquete si faltan.
 - **C-4:** exige en la imagen las marcas del banco C8 y de la orden C8a (`C8A READY`, `start_c8_command`). Rechaza
   el menú (`CONFIG_RB_MENU_SIO` o sus marcas), el banco antiguo que corría al arrancar (sin la orden C8a) y un ELF
-  con `CassetteService::start`, porque el banco no arranca la casetera.
+  con `CassetteService::start` **enlazada**: el banco no arranca la casetera. Desde F3 (revisión del PR #116) se
+  lee la tabla de símbolos del ELF, no sus bytes; un ELF sin tabla legible se rechaza.
 - **C-5:** puertas `(H4 = false, M3a = true)` leídas del perfil y de `puertas.json` (`check_gate_record`). Con otras
   puertas, el empaquetado falla.
 - **C-6:** ningún paso `upload-artifact` de la CI menciona el banco (prueba estructural sobre `ci.yml`).
@@ -123,8 +124,19 @@ La variante `bench-c8a` de `tools/ci/firmware_package.py`:
 - **Pruebas:** `BenchC8aCiJobTest` (5) en `tools/tests/test_firmware_package.py`: el job compila el banco,
   empaqueta y verifica `bench-c8a`, solo usa `actions/checkout`, no publica, no flashea, y el árbol real pasa las
   comprobaciones de fuente de la variante.
-- **Límite:** compilar y verificar en la CI no demuestra que el banco funcione en la FujiNet. Eso es F4, con
-  autorización escrita del responsable.
+- **Casetera sin arrancar (revisión 1 del PR #116, H1):** la primera compilación real (`dee10ec`, ejecución
+  `45700584507`) falló en C-4: el empaquetador buscaba el nombre `CassetteService::start` en todos los bytes del
+  ELF, y la información de depuración conserva el nombre de una función que el enlazador descartó. Ahora:
+  - **ELF:** la función no debe estar **definida** en `.symtab` (`STT_FUNC` con sección). Si el nombre aparece fuera
+    de `.symtab`, el resumen lo dice. Un ELF sin tabla de símbolos legible falla.
+  - **Fuente** (`test_bench_c8_wiring.py`): `start()` no es virtual. Solo la llaman `app_main.cpp`, fuera de la rama
+    del banco, y `menu_sio.cpp`, que CMake compila solo con `CONFIG_RB_MENU_SIO`, y Kconfig exige
+    `!RB_BENCH_C8`. Cualquier otra llamada en `main/` o `components/` hace fallar la prueba.
+  - **Controles negativos:** volver a llamar a `g_cassette.start()` en la rama del banco, añadir otra llamada en un
+    componente, buscar bytes en todo el ELF o aceptar un ELF ilegible: los cuatro mutantes fallan.
+- **Límite:** que la función no esté enlazada prueba que el banco no puede arrancar la casetera, pero compilar y
+  verificar en la CI no demuestra que el banco funcione en la FujiNet. Eso es F4, con autorización escrita del
+  responsable.
 
 ## 7. Riesgos
 

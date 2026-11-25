@@ -66,6 +66,26 @@ class BenchC8WiringTest(unittest.TestCase):
         self.assertTrue(all(bench is False for bench in starts),
                         "g_cassette.start() only where CONFIG_RB_BENCH_C8 is off")
 
+    def test_nothing_built_with_the_bench_starts_the_cassette(self):
+        # CassetteService::start() is not virtual: only a direct call links it. Outside app_main's non-bench branch,
+        # the only caller is menu_sio.cpp, built only with CONFIG_RB_MENU_SIO, which Kconfig keeps off with the bench.
+        callers = []
+        for path in sorted((REPO / "main").glob("*.cpp")) + sorted((REPO / "components").rglob("*.cpp")):
+            if "test" in path.relative_to(REPO).parts:
+                continue
+            if re.search(r"\b(?:g_)?cassette\s*(?:\.|->)\s*start\s*\(", code(path.read_text(encoding="utf-8"))):
+                callers.append(path.relative_to(REPO).as_posix())
+        self.assertEqual(callers, ["main/app_main.cpp", "main/menu_sio.cpp"])
+        cmake = "\n".join(line.split("#", 1)[0] for line in MAIN_CMAKE.read_text(encoding="utf-8").splitlines())
+        block = re.search(r"if\(CONFIG_RB_MENU_SIO\)(.*?)endif\(\)", cmake, re.S)
+        self.assertIsNotNone(block)
+        self.assertIn("menu_sio.cpp", block.group(1))
+        self.assertEqual(cmake.count("menu_sio.cpp"), 1)
+        kconfig = (REPO / "main" / "Kconfig.projbuild").read_text(encoding="utf-8")
+        menu = re.search(r"config RB_MENU_SIO\n(.*?)\n\s*config ", kconfig, re.S)
+        self.assertIsNotNone(menu)
+        self.assertRegex(menu.group(1), r"depends on [^\n]*!RB_BENCH_C8")
+
     def test_only_the_console_order_runs_the_bench_after_the_gate(self):
         self.assertTrue(CONSOLE.exists(), "main/bench_c8_console.cpp")
         text = code(CONSOLE.read_text(encoding="utf-8"))

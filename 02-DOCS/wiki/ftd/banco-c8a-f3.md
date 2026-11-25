@@ -31,7 +31,11 @@ Fuera:
   (caracterización).
 - [x] GREEN — prueba: `tools/tests` 316 OK; el YAML se lee con 4 pasos en el job.
 - [x] Las pruebas pueden fallar — prueba: un paso `upload-artifact` añadido y `--variant menu-sio` fallan.
-- [ ] El job pasa en la CI del PR (compilación ESP-IDF real de `bench_c8_console.cpp`).
+- [x] Compilación ESP-IDF real de `bench_c8.cpp` y `bench_c8_console.cpp` — prueba: ejecución `45700584507`, paso
+  de compilación correcto.
+- [x] Revisión 1, H1 (C-4 falló con la imagen real) — prueba: la comprobación lee `.symtab`; 3 pruebas nuevas
+  del ELF y 1 de llamadas; 4 mutantes detectados; `tools/tests` 319 OK.
+- [ ] El job pasa entero (`package` y `verify`) en la CI del SHA nuevo.
 
 ## Next step
 

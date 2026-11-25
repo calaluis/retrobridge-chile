@@ -1237,9 +1237,16 @@ class MenuSioPackageTest(unittest.TestCase):
 # (SIO_5V interlock, `c8a run` only). Its image: the bench and the C8a order in, the cassette never started, no menu.
 C8A_APP_MARKERS = BENCH_APP_MARKERS + (b"\x1b[0;32mI (%lu) %s: C8A READY: type c8a run (USB only, SIO cable "
                                        b"disconnected)\x1b[0m\n\0")
-C8A_ELF = (ELF_BYTES + b"\0_ZN2rb3esp9EspDataIn9configureERKNS_5board24CassetteOutputAssignmentE\0"
-           b"_ZN2rb5bench6run_c8ERKNS_5board12BoardProfileERNS_3esp9EspDataInE\0"
-           b"_ZN2rb5bench16start_c8_commandERKNS_5board12BoardProfileERNS_3esp9EspDataInE\0")
+C8A_MARKERS = (b"\0_ZN2rb3esp9EspDataIn9configureERKNS_5board24CassetteOutputAssignmentE\0"
+               b"_ZN2rb5bench6run_c8ERKNS_5board12BoardProfileERNS_3esp9EspDataInE\0"
+               b"_ZN2rb5bench16start_c8_commandERKNS_5board12BoardProfileERNS_3esp9EspDataInE\0")
+C8A_FUNCTIONS = {"app_main": 80, "_ZN2rb5bench16start_c8_commandERKNS_5board12BoardProfileERNS_3esp9EspDataInE": 48}
+CASSETTE_START = "_ZN2rb3esp15CassetteService5startEv"
+
+
+def c8a_elf(functions=None):
+    """The bench C8a ELF: a real symbol table (app_main, the c8a order) plus the marker names, as debug info has."""
+    return xtensa_elf(C8A_FUNCTIONS if functions is None else functions) + C8A_MARKERS
 
 
 class BenchC8aPackageTest(unittest.TestCase):
@@ -1259,7 +1266,8 @@ class BenchC8aPackageTest(unittest.TestCase):
     gates = CassettePackageTest.gates
     failed = CassettePackageTest.failed
 
-    def build(self, sdk="CONFIG_RB_BENCH_C8=y\n", app=C8A_APP_MARKERS, elf=C8A_ELF):
+    def build(self, sdk="CONFIG_RB_BENCH_C8=y\n", app=C8A_APP_MARKERS, elf=None):
+        elf = c8a_elf() if elf is None else elf
         write(self.f.build / "sdkconfig", SDKCONFIG + sdk)
         write(self.f.build / "retrobridge.elf", elf)
         write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=elf, extra=app))
@@ -1301,19 +1309,31 @@ class BenchC8aPackageTest(unittest.TestCase):
         self.assert_refused(fp.BENCH_CHECK)
 
     def test_bench_c8a_refuses_the_bench_that_runs_at_boot(self):
-        self.build(app=BENCH_APP_MARKERS, elf=C8A_ELF.replace(b"_ZN2rb5bench16start_c8_command", b"_ZN2rb5bench0x"))
+        self.build(app=BENCH_APP_MARKERS, elf=c8a_elf().replace(b"_ZN2rb5bench16start_c8_command", b"_ZN2rb5bench0x"))
         log = self.package()
         self.assertFalse(log.ok)
         self.assertIn(f"{fp.FEATURE_LABELS['bench_c8a']} (aplicación)", self.failed(log))
         self.assertIn(f"{fp.FEATURE_LABELS['bench_c8a']} (ELF)", self.failed(log))
 
-    def test_bench_c8a_refuses_an_image_that_starts_the_cassette(self):
-        self.build(elf=C8A_ELF + b"_ZN2rb3esp15CassetteService5startEv\0")
+    def test_bench_c8a_refuses_an_image_that_links_the_cassette_start(self):
+        # CassetteService::start() linked in as a function: something in the bench build calls it.
+        self.build(elf=c8a_elf({**C8A_FUNCTIONS, CASSETTE_START: 32}))
+        self.assert_refused(fp.CASSETTE_START_CHECK)
+
+    def test_bench_c8a_accepts_the_cassette_start_named_only_outside_the_symbol_table(self):
+        # Real ESP-IDF build (dee10ec, run 45700584507): with the start() call compiled out, the name was still in
+        # the ELF. A name outside .symtab (debug information) is no linked code.
+        self.build(elf=c8a_elf() + CASSETTE_START.encode() + b"\0")
+        log = self.package()
+        self.assertTrue(log.ok, self.failed(log))
+
+    def test_bench_c8a_refuses_an_elf_it_cannot_read(self):
+        self.build(elf=ELF_BYTES + C8A_MARKERS)  # no symbol table: cannot prove the start is not linked
         self.assert_refused(fp.CASSETTE_START_CHECK)
 
     def test_bench_c8a_refuses_the_menu(self):
         self.build(sdk="CONFIG_RB_BENCH_C8=y\nCONFIG_RB_MENU_SIO=y\n", app=C8A_APP_MARKERS + MENU_APP_MARKERS,
-                   elf=C8A_ELF + MENU_ELF)
+                   elf=c8a_elf() + MENU_ELF)
         self.assert_refused(fp.MENU_SIO_CHECK)
 
     def test_verify_refuses_a_manifest_without_the_bench_declaration(self):

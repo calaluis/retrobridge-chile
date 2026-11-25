@@ -47,8 +47,8 @@ menu "RetroBridge Chile"
             Test package only (menu-sio-fisico). Serves the boot menu as D1 over
             UART2 (DATA IN GPIO21, DATA OUT GPIO33) and COMMAND (GPIO39); reads
             ButtonA (GPIO0) and the SIO +5 V (GPIO35, ADC). The cassette is not
-            started. H4 stays unsigned (R2, R6, R7 not accepted): connecting it to
-            the 65XE needs the owner's separate decision. M3a is signed by risk
+            started. H4 stays unsigned (R2, R7 not accepted; R6 accepted on USB
+            power only): connecting it to the 65XE is not authorized. M3a is signed by risk
             acceptance of R1 only: MOTOR (GPIO36) is read as an input.
 
     config RB_DRIVE_SAVE_STACK

@@ -31,7 +31,7 @@ constexpr BoardProfile fujinet_atari_v1x_profile() noexcept
                         SdSpiPins{18, 23, 19, 5},
                         SpiHost::Spi3,  // VSPI: the native controller for these pins
                         kNoPin,
-                        false,  // H4 not approved (docs/hardware/h4-puerta-sio.md); R2, R6 and R7 not accepted
+                        false,  // H4 not approved (docs/hardware/h4-puerta-sio.md); R2, R7 not accepted; R6 USB only (docs/mediciones/riesgos-h4-2026-11-25.md)
                         SioPins{39, 33, 21},
                         36,      // MOTOR: GPIO36 (SENSOR_VP), straight from SIO pin 8
                         true};   // M3a signed by risk acceptance of R1 (docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md)

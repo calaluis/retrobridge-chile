@@ -31,9 +31,10 @@ aprobada, el firmware lee MOTOR por ese pin. Las instrucciones del adaptador en 
 4. **[CONFIRMAR] Flashear** con la FujiNet solo por USB y el SIO desconectado, con los mismos comandos de §4. Sin
    `erase_flash` y sin escribir la NVS.
 5. Banco por USB (sin el Atari), como en §5. El aviso de la consola ahora dice:
-   `menu-sio TEST PACKAGE: transmits on SIO DATA IN. H4 NOT approved (R2, R6, R7 not accepted). M3a approved by risk
-   acceptance of R1 only: MOTOR read on GPIO36. Tape output off.`
-   El aviso es anterior a `docs/mediciones/riesgos-h4-2026-11-25.md`: R6 está aceptado solo con USB. Se corregirá en un PR de código aparte.
+   `menu-sio TEST PACKAGE: transmits on SIO DATA IN. H4 NOT approved (R2, R7 not accepted; R6 accepted on USB power
+   only). M3a approved by risk acceptance of R1 only: MOTOR read on GPIO36. Tape output off.`
+   Un firmware compilado antes de la rama `fix/textos-riesgos-h4` muestra el aviso anterior, «(R2, R6, R7 not
+   accepted)». Solo cambia el texto: el comportamiento es el mismo.
 6. **Conexión al 65XE:** sin autorización. R2 y R7 no están aceptados (`docs/mediciones/riesgos-h4-2026-11-25.md`).
 
 ---

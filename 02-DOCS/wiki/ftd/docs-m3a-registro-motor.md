@@ -41,7 +41,10 @@ Fuera:
       sin aprobar ninguna solución — prueba: diff del PR.
 - [x] Segunda revisión (`916ba21`): H3, D3 conciliada con la aceptación de riesgo; H4, el riel 3V3 con S5 apagado
       queda como no medido; H5, FTD y descripción del PR actualizados — prueba: diff del PR.
-- [ ] Tercera revisión independiente.
+- [x] Tercera revisión (`6e38b94`), H6: la excepción operativa D3 se refleja en `h4-puerta-sio.md` (§3.4, R1, §7),
+      `procedimiento-medicion-pasiva-sio.md` (cabecera, §3, §4) y `ficha-medicion-m3a-motor.md` §6, sin cubrir
+      mediciones ni validaciones — prueba: diff del PR.
+- [ ] Cuarta revisión independiente.
 
 ## Evidence
 

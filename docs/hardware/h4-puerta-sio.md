@@ -251,6 +251,9 @@ coincidir con un esquema de terceros.
 - No se conectan los dos equipos para descubrir después que la tensión supera el límite del ESP32.
 - **Si la señal puede superar los niveles admisibles del ESP32, no se autoriza ninguna conexión** de la FujiNet al
   Atari hasta diseñar, revisar y validar una mitigación aprobada.
+- **Excepción operativa D3** (más arriba): uso acotado a disco, menú y TNFS por aceptación de riesgo del responsable.
+  No se aplica a las mediciones ni a las validaciones: M3–M6 y cualquier prueba con MOTOR conectado a la placa
+  siguen bajo la regla anterior.
 
 **Alternativa de mitigación, pendiente de análisis y aprobación (no recomendada todavía):** excluir el pin 8 entre el
 Atari y la FujiNet, por ejemplo con un cable o adaptador de prueba sin ese pin. RetroBridge v1 no usa MOTOR, que no
@@ -319,7 +322,7 @@ Especificación de esta alternativa: `mitigacion-c-motor-pin8.md` (**PROPUESTA N
 
 | # | Riesgo | Causa | Impacto | Prevención | Verificación |
 |---|---|---|---|---|---|
-| R1 | Sobretensión en GPIO36 y alimentación parásita | MOTOR (pin 8) directo a IO36, solo con R2 de 10 k a GND [E]. En el 65XE del equipo, el esquema indica un PNP saturado a +5 V sin resistencia en serie: ≈ 4,7–4,9 V previstos (§3.4) [E-Atari][T][I]; **medido el 2026-11-25: 4,89 V sin carga en el Atari solo**, y en el conector posterior de la FujiNet, sin USB, **4,87 V con S5 encendido** y **3,16 V con S5 apagado** (causa sin verificar; `docs/mediciones/m3a-motor-2026-11-25.md` §4). Con la FujiNet apagada, posible alimentación parásita por la protección del pin [I]. Antecedente: MOTOR activo 15 min 27 s en G5-2 T5 con funcionamiento satisfactorio [H], sin medición eléctrica. La FN32ROV-1.6 pasó MOTOR por un buffer (README) | Riesgo de daño o degradación del ESP32 (no confirmado) | **Medir primero en el Atari solo, con la FujiNet desconectada; sin conexión si supera el límite** hasta tener una mitigación validada; no usar MOTOR en la v1. Alternativa pendiente de análisis y aprobación: excluir el pin 8 (§3.4) | M3a: B4 medido, **«Detener»**; picos, A, D y E pendientes; causa de la caída con S5 apagado sin verificar [P] |
+| R1 | Sobretensión en GPIO36 y alimentación parásita | MOTOR (pin 8) directo a IO36, solo con R2 de 10 k a GND [E]. En el 65XE del equipo, el esquema indica un PNP saturado a +5 V sin resistencia en serie: ≈ 4,7–4,9 V previstos (§3.4) [E-Atari][T][I]; **medido el 2026-11-25: 4,89 V sin carga en el Atari solo**, y en el conector posterior de la FujiNet, sin USB, **4,87 V con S5 encendido** y **3,16 V con S5 apagado** (causa sin verificar; `docs/mediciones/m3a-motor-2026-11-25.md` §4). Con la FujiNet apagada, posible alimentación parásita por la protección del pin [I]. Antecedente: MOTOR activo 15 min 27 s en G5-2 T5 con funcionamiento satisfactorio [H], sin medición eléctrica. La FN32ROV-1.6 pasó MOTOR por un buffer (README) | Riesgo de daño o degradación del ESP32 (no confirmado) | **Medir primero en el Atari solo, con la FujiNet desconectada; sin conexión si supera el límite** hasta tener una mitigación validada (excepción operativa D3: uso acotado por aceptación de riesgo, sin mediciones ni casete); no usar MOTOR en la v1. Alternativa pendiente de análisis y aprobación: excluir el pin 8 (§3.4) | M3a: B4 medido, **«Detener»**; picos, A, D y E pendientes; causa de la caída con S5 apagado sin verificar [P] |
 | R2 | Bus bloqueado en bajo | GPIO21 configurado en bajo (o TX mal enrutado) | El Atari no puede comunicarse con ningún periférico | H5 sin TX; verificar con `gpio_dump_io_configuration` que GPIO21 no está asignado | Revisión de código y M5 |
 | R3 | Posible recepción errónea en DATA OUT [I] | El esquema no muestra pull-up en IO33; el comportamiento real no está medido | Tramas corruptas, si la hipótesis se confirma | Medir nivel y flanco; decidir en H5 (por ejemplo, el pull-up interno) | M4, M5 [P] |
 | R4 | Flancos falsos de COMMAND | Errata GPIO-3.11 (ADC) | Tramas fantasma | Sin ADC durante la escucha; filtro por duración | Pruebas de host y M5 |
@@ -355,7 +358,8 @@ Especificación de esta alternativa: `mitigacion-c-motor-pin8.md` (**PROPUESTA N
 H4 se aprueba **solo** cuando todos los puntos estén marcados y el equipo firme la revisión:
 
 - [ ] **MOTOR CONTROL medido en el Atari solo, con la FujiNet desconectada, incluidos sus picos:** dentro de lo
-      que admite un pin del ESP32, o mitigación aprobada y validada. **Sin esto no hay conexión** (M3a).
+      que admite un pin del ESP32, o mitigación aprobada y validada. **Sin esto no hay conexión para medir ni validar**
+      (M3a). La excepción operativa D3 es una aceptación de riesgo y **no marca este punto**.
 - [ ] Continuidad de J1 a U3/U4 y a los GPIO de §2, y paso de J1 a J2, con la placa desenergizada (M0).
 - [ ] R11, R2, R4/R5 y su relación con IO39, IO36 e IO35 comprobadas (M0).
 - [ ] VCC, VCC_BUF y +3V3 medidos solo con USB, con S5 encendido y apagado (M1, M2).

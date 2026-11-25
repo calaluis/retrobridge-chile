@@ -1,7 +1,7 @@
 # Procedimiento de medición pasiva del SIO (H4): FujiNet FN32ROV-1.3-Q24
 
-> **NO EJECUTAR sin autorización explícita para cada etapa.** Ninguna medición está hecha: todos los resultados
-> están **pendientes**. M3a (Atari solo) requiere una autorización aparte. Las etapas que conectan la FujiNet al
+> **NO EJECUTAR sin autorización explícita para cada etapa.** Solo hay una medición hecha: M3a parcial (B4 =
+> 4,89 V, «Detener»; `docs/mediciones/m3a-motor-2026-11-25.md`). El resto de los resultados está **pendiente**. M3a (Atari solo) requiere una autorización aparte. Las etapas que conectan la FujiNet al
 > Atari (M3–M6) requieren además que **M3a haya pasado su punto de detención**.
 >
 > Análisis eléctrico: `h4-puerta-sio.md`. El firmware en la placa (`1b1527d`) no configura ningún GPIO del SIO.
@@ -41,6 +41,13 @@
 > §3.4). Por eso la FujiNet **no se conecta al SIO del Atari** (ni encendida ni apagada) hasta que M3a haya medido,
 > **en el Atari solo**, que el nivel alto de MOTOR no supera lo que admite un pin del ESP32. Si la señal puede
 > superar ese límite, **no se autoriza ninguna conexión** hasta diseñar y validar una mitigación aprobada.
+>
+> **Excepción operativa D3 (2026-11-25, `enmienda-motor-gpio36.md` §7).** El responsable acepta el riesgo R1 de su
+> placa y permite conectarla **solo para usar** disco, menú y TNFS, sin casete ni lectura de MOTOR. Es una decisión
+> de uso, no una validación eléctrica. **No cambia ninguna etapa de este procedimiento:**
+> - M3–M6 siguen bloqueadas hasta que M3a pase su punto de detención o haya una mitigación validada;
+> - ninguna medición conecta MOTOR a la placa sin un procedimiento seguro aprobado;
+> - las demás puertas (H4, DATA IN) siguen como están.
 
 ## 3. Etapas
 
@@ -104,7 +111,7 @@ cable SIO de prueba sin ningún periférico, respecto de GND (pin 4 o 6).
   margen. Además hay que considerar que, con la FujiNet apagada, un nivel alto en IO36 podría entrar por las
   protecciones del pin [I].
 - **Detener** si supera ese límite o no se puede determinar con confianza. Entonces no se autoriza ninguna
-  conexión de la FujiNet al Atari hasta diseñar, revisar y validar una mitigación, por ejemplo una adaptación de
+  conexión de la FujiNet al Atari (salvo la excepción operativa D3, que no cubre mediciones ni validaciones) hasta diseñar, revisar y validar una mitigación, por ejemplo una adaptación de
   nivel en la línea o la desconexión de MOTOR en el cable. Una mitigación implica cambios de hardware o de cableado
   y requiere una aprobación aparte.
 
@@ -155,7 +162,7 @@ instrumento, frecuencia de muestreo, y mínimo, máximo y P99 sobre al menos 1 0
 ## 4. Criterios para detener
 
 - **MOTOR (M3a):** nivel alto, o picos, por encima de lo que admite un pin del ESP32, o imposible de determinar.
-  No se conecta la FujiNet al Atari sin una mitigación aprobada y validada.
+  No se conecta la FujiNet al Atari sin una mitigación aprobada y validada (salvo la excepción operativa D3, que no cubre mediciones ni validaciones).
 - Cualquier tensión mayor que 3,6 V en un GPIO.
 - Calor, olor o consumo anómalo.
 - VCC_BUF presente con S5 apagado (falla el aislamiento).

@@ -93,6 +93,11 @@ Las siguientes explicaciones de por qué la placa sobrevive son **hipótesis [P]
 | P2 | Esos diodos limitan IO36 a **≈ 3,9 V** (3,3 V + caída de un diodo) | Depende de P1, de la caída real y de la corriente | Medir IO36 con la placa conectada. **Solo después de M3a** y con una protección aprobada |
 | P3 | La ESP32 absorbe la corriente que entra al riel de 3,3 V con su propio consumo, así que el riel no sube | Depende de P1, del consumo en cada momento y del regulador | Medir el riel de 3V3 con MOTOR encendido. Mismas condiciones que P2 |
 
+**Actualización del 2026-11-25:** con la FujiNet conectada y S5 encendido, el conector posterior marcó 4,87 V
+(`docs/mediciones/m3a-motor-2026-11-25.md` §4). Si P1 y P2 fueran ciertas tal como están escritas, el nodo debería
+quedar cerca de 3,9 V. **P2 no se observa en el conector** [I]. Como no se midió el pad, las tres siguen siendo
+hipótesis [P].
+
 **Reglas para estas hipótesis:**
 - No cambian el estado de M3a, de H4 ni de R1.
 - Aunque las tres fueran ciertas, IO36 seguiría fuera de su rango de entrada especificado (tabla 15) [D]. Trabajar

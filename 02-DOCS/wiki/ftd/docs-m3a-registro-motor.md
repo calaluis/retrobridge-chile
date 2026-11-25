@@ -32,6 +32,11 @@ Fuera:
 - [x] Revisión independiente 1 (`db93d20`), H1: 4,89 V es sin carga; la tensión con 10 kΩ o con la FujiNet
       conectada queda como no medida — prueba: cabecera y §4 del registro; `h4-puerta-sio.md` §1 y §3.4; enmienda §7.
 - [x] H2: A, D y E quedan pendientes; solo C es opcional, como dice la ficha §5 — prueba: §3 y §5 del registro.
+- [x] Evidencia nueva del responsable: M-2 (S5 apagado, 3,16 V) y M-3 (S5 encendido, 4,87 V), con la FujiNet
+      conectada, en su conector posterior y sin USB — prueba: §2 y §4 del registro; no se registran como medición C.
+- [x] Hallazgo S5 con hipótesis HS1–HS4 no verificadas — prueba: §4 del registro.
+- [x] R1 (`h4-puerta-sio.md` §5), §3.4, `proteccion-motor-gpio36.md` §1, P4 y §7, y la enmienda §4 actualizados,
+      sin aprobar ninguna solución — prueba: diff del PR.
 - [ ] Segunda revisión independiente.
 
 ## Evidence

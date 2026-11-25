@@ -8,7 +8,7 @@
 > - Solo el responsable la cambia (§7).
 >
 > **Estado vigente (2026-11-25):** **M3a aprobada por aceptación de riesgo** del responsable, que cubre solo R1
-> (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). **H4 sigue sin aprobar:** R2, R6 y R7 no están aceptados. **La validación eléctrica sigue
+> (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). **H4 sigue sin aprobar:** R2 y R7 no están aceptados; R6 está aceptado solo con la FujiNet por USB (`docs/mediciones/riesgos-h4-2026-11-25.md`). **La validación eléctrica sigue
 > pendiente** para las dos. Antes del banco T9b solo se instala `menu-sio`.
 >
 > Amplía, sin reemplazarlos: `h4-puerta-sio.md` §3.4 y §5 (R1), `proteccion-motor-gpio36.md`,
@@ -159,7 +159,9 @@ habilita**. Para que valga hace falta, como mínimo:
   aceptación de riesgo, solo R1**, sin hardware adicional (se rechazó el camino A) y sin más mediciones. Registro,
   con sus palabras exactas: `docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`.
   - **No es una validación eléctrica:** B4 sigue en «Detener» y los puntos sin medir siguen sin medir.
-  - **H4 sigue sin aprobar:** R2, R6 y R7 no están aceptados y se evaluarán por separado.
+  - **H4 sigue sin aprobar:** R2, R6 y R7 no estaban aceptados y se evaluarían por separado.
+  - **Después (mismo día, `docs/mediciones/riesgos-h4-2026-11-25.md`):** R2 y R7 no aceptados; R6 aceptado solo con la FujiNet por USB. H4 sigue sin
+    aprobar.
   - `kTapeOutput` sigue en `false` hasta el banco T9b. Antes de T9b solo se instala `menu-sio`.
 - **Orden acordado para el resto (anterior a la opción C, histórico):** D2 → D4 → D5. Para D2 se prioriza completar M3a con osciloscopio (picos) y
   después diseñar y validar una adaptación de nivel para MOTOR. Ninguna resistencia ni buffer queda aprobado todavía.

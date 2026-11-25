@@ -5,6 +5,8 @@
 > - **M3a** queda aprobada en `docs/mediciones/puertas.json` y en el perfil `fujinet_atari_v1x`, para la FujiNet
 >   FN32ROV-1.3-Q24 del responsable con su 65XE. Cubre **solo R1**.
 > - **H4 sigue sin aprobar.** R2, R6 y R7 **no** están aceptados.
+>   **Actualización del mismo día (`docs/mediciones/riesgos-h4-2026-11-25.md`):** R2 y R7 siguen sin aceptar; R6 queda aceptado solo con la FujiNet
+>   por USB. H4 sigue sin aprobar.
 > - La ficha M3a y el checklist de H4 (`docs/hardware/h4-puerta-sio.md` §7) **no se cumplieron**. Los puntos sin
 >   medir siguen sin medir.
 > - Especificación: `02-DOCS/wiki/sdd/specs/puertas-aceptacion-riesgo.md`.

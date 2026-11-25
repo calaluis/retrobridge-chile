@@ -15,7 +15,7 @@
 > riesgo de la placa del comportamiento del firmware. No cambia ninguna puerta.
 >
 > **Estado vigente (2026-11-25):** **M3a aprobada por aceptación de riesgo** del responsable, que cubre solo R1
-> (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). **H4 sigue sin aprobar:** R2, R6 y R7 no están aceptados. **La validación eléctrica sigue
+> (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). **H4 sigue sin aprobar:** R2 y R7 no están aceptados; R6 está aceptado solo con la FujiNet por USB (`docs/mediciones/riesgos-h4-2026-11-25.md`). **La validación eléctrica sigue
 > pendiente** para las dos. Antes del banco T9b solo se instala `menu-sio`.
 > Donde este documento dice «M3a pendiente», describe el estado anterior a esa decisión.
 
@@ -338,12 +338,12 @@ Especificación de esta alternativa: `mitigacion-c-motor-pin8.md` (**PROPUESTA N
 | # | Riesgo | Causa | Impacto | Prevención | Verificación |
 |---|---|---|---|---|---|
 | R1 | Sobretensión en GPIO36 y alimentación parásita | MOTOR (pin 8) directo a IO36, solo con R2 de 10 k a GND [E]. En el 65XE del equipo, el esquema indica un PNP saturado a +5 V sin resistencia en serie: ≈ 4,7–4,9 V previstos (§3.4) [E-Atari][T][I]; **medido el 2026-11-25: 4,89 V sin carga en el Atari solo**, y en el conector posterior de la FujiNet, sin USB, **4,87 V con S5 encendido** y **3,16 V con S5 apagado** (causa sin verificar; `docs/mediciones/m3a-motor-2026-11-25.md` §4). Con la FujiNet apagada, posible alimentación parásita por la protección del pin [I]. Antecedente: MOTOR activo 15 min 27 s en G5-2 T5 con funcionamiento satisfactorio [H], sin medición eléctrica. La FN32ROV-1.6 pasó MOTOR por un buffer (README) | Riesgo de daño o degradación del ESP32 (no confirmado) | **Medir primero en el Atari solo, con la FujiNet desconectada; sin conexión si supera el límite** hasta tener una mitigación validada (excepción operativa D3: uso acotado por aceptación de riesgo, sin mediciones ni casete); no usar MOTOR en la v1. Alternativa pendiente de análisis y aprobación: excluir el pin 8 (§3.4) | M3a: B4 medido, **«Detener»**; picos, A, D y E pendientes; causa de la caída con S5 apagado sin verificar [P]. **Riesgo aceptado por el responsable el 2026-11-25**, sin validación eléctrica (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`) |
-| R2 | Bus bloqueado en bajo | GPIO21 configurado en bajo (o TX mal enrutado) | El Atari no puede comunicarse con ningún periférico | H5 sin TX; verificar con `gpio_dump_io_configuration` que GPIO21 no está asignado | Revisión de código y M5 |
+| R2 | Bus bloqueado en bajo | GPIO21 configurado en bajo (o TX mal enrutado) | El Atari no puede comunicarse con ningún periférico | H5 sin TX; verificar con `gpio_dump_io_configuration` que GPIO21 no está asignado | Revisión de código y M5. **No aceptado** por el responsable (2026-11-25, `docs/mediciones/riesgos-h4-2026-11-25.md`) |
 | R3 | Posible recepción errónea en DATA OUT [I] | El esquema no muestra pull-up en IO33; el comportamiento real no está medido | Tramas corruptas, si la hipótesis se confirma | Medir nivel y flanco; decidir en H5 (por ejemplo, el pull-up interno) | M4, M5 [P] |
 | R4 | Flancos falsos de COMMAND | Errata GPIO-3.11 (ADC) | Tramas fantasma | Sin ADC durante la escucha; filtro por duración | Pruebas de host y M5 |
 | R5 | Interrupciones perdidas | Errata GPIO-3.14 (flanco en el grupo 32–39) | COMMAND perdido | Interrupción por nivel emulando flancos | Pruebas de host y M5 |
-| R6 | Sobrecarga del pin 10 del Atari [I] | Placa alimentada desde el SIO (límite de 50 mA); consumo real no medido | Caída del +5 V del Atari | Alimentar siempre por USB en H4/H5 | M6 [P] |
-| R7 | 74LS07 posiblemente por debajo de 4,75 V [I] | Caída estimada en D4/D5 y Q2 (estimación, no medición) | Márgenes de entrada y salida reducidos | Medir VCC_BUF con carga | M1 [P] |
+| R6 | Sobrecarga del pin 10 del Atari [I] | Placa alimentada desde el SIO (límite de 50 mA); consumo real no medido | Caída del +5 V del Atari | Alimentar siempre por USB en H4/H5 | M6 [P]. **Aceptado solo con la FujiNet por USB** (2026-11-25, `docs/mediciones/riesgos-h4-2026-11-25.md`); solo por SIO, pendiente de evaluación |
+| R7 | 74LS07 posiblemente por debajo de 4,75 V [I] | Caída estimada en D4/D5 y Q2 (estimación, no medición) | Márgenes de entrada y salida reducidos | Medir VCC_BUF con carga | M1 [P]. **No aceptado** por el responsable (2026-11-25, `docs/mediciones/riesgos-h4-2026-11-25.md`) |
 | R8 | Lazos de masa | PC y Atari en distintas tomas | Ruido, errores o daño | Misma toma, o portátil con batería | Procedimiento §2 |
 | R9 | Daño de un instrumento | Sonda de 3,3 V en una línea de 5 V | Daño del instrumento o de la placa | Usar solo instrumentos con tolerancia a 5 V confirmada, u osciloscopio con sonda 10× | Procedimiento §1 |
 | R10 | Descarga electrostática por USB | La 1.3 no tiene TVS | Daño del CP2102 o del ESP32 | Pulsera antiestática; conectar primero la masa | — |

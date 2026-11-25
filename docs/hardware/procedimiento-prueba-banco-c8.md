@@ -11,7 +11,7 @@
 >   `BENCH_GRANT_CHECK`), que hoy hacen que todo paquete rechace el código de banco.
 > - Hace falta, en un PR aparte: una variante de banco en `tools/ci/firmware_package.py` con `bench=True` y
 >   `gates=(False, True)` (el estado vigente), sus pruebas y un job de CI como el que se retiró.
-> - La prueba sigue siendo solo por USB y con el Atari desconectado. No acepta R2, R6 ni R7.
+> - La prueba sigue siendo solo por USB y con el Atari desconectado. No acepta R2 ni R7, y no cambia la aceptación de R6, que vale solo con USB (`docs/mediciones/riesgos-h4-2026-11-25.md`).
 >
 > Texto original: **H4 y M3a siguen sin aprobar.** Esta prueba no aprueba ninguna puerta y no conecta el Atari.
 

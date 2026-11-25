@@ -104,3 +104,4 @@ El responsable es el único usuario. Revisa el firmware viéndolo en la FujiNet 
   pendiente → palabras del responsable en el registro.
 - 2026-11-25 · Revisión del PR #110, H2: ¿qué firmware se instala antes de T9b? → Solo `menu-sio` → el paquete
   `cassette` puede transmitir sin depender de `kTapeOutput`.
+- 2026-11-25 · Después del PR #110: R2 y R7 no aceptados; R6 aceptado solo con USB; H4 sigue pendiente → `docs/mediciones/riesgos-h4-2026-11-25.md`.

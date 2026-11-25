@@ -1,7 +1,7 @@
 ---
 author: Calaluis
 branch: feat/banco-c8a-f3
-status: in-review
+status: done
 ---
 # Banco C8a, fase F3: job de CI que compila y verifica `bench-c8a`
 
@@ -35,7 +35,8 @@ Fuera:
   de compilación correcto.
 - [x] Revisión 1, H1 (C-4 falló con la imagen real) — prueba: la comprobación lee `.symtab`; 3 pruebas nuevas
   del ELF y 1 de llamadas; 4 mutantes detectados; `tools/tests` 319 OK.
-- [ ] El job pasa entero (`package` y `verify`) en la CI del SHA nuevo.
+- [x] El job pasa entero (`package` y `verify`) — prueba: ejecución manual `45709127519` sobre `main` `d5934bb`,
+  5 jobs correctos.
 
 ## Next step
 

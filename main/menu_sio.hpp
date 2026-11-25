@@ -2,8 +2,9 @@
 
 // menu-sio test package (menu-sio-fisico T5): the RetroBridge menu served as D1
 // over the physical SIO of the FujiNet 1.3. Only built with CONFIG_RB_MENU_SIO.
-// It transmits on DATA IN with H4 unsigned: R2, R6 and R7 are not accepted, and
-// connecting it to the 65XE needs the owner's separate decision. M3a is signed by
+// It transmits on DATA IN with H4 unsigned: R2 and R7 are not accepted, R6 is
+// accepted on USB power only (docs/mediciones/riesgos-h4-2026-11-25.md), and
+// connecting it to the 65XE is not authorized. M3a is signed by
 // the owner's risk acceptance of R1 only, so MOTOR is read on GPIO36 as an input
 // (docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md).
 //

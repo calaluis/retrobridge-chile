@@ -74,6 +74,9 @@ bool on_tx_done(rmt_channel_handle_t /*channel*/, const rmt_tx_done_event_data_t
 
 bool EspDataIn::configure(const rb::board::CassetteOutputAssignment& pins) noexcept
 {
+    if (uartDeleted_) {
+        return false;  // a release() did not complete: UART2 is gone; release() first, then configure()
+    }
     if (enabled()) {
         return true;
     }
@@ -150,8 +153,8 @@ bool EspDataIn::hardwareFree() const noexcept
 
 EspDataIn::GiveBack EspDataIn::giveBack() noexcept
 {
-    if (!enabled()) {
-        return GiveBack::Lost;
+    if (!enabled() || uartDeleted_) {
+        return GiveBack::Lost;  // no UART2 to give the line to (a release() did not complete)
     }
     stop();  // any FSK run ends; the RMT lets go of the pin (or keeps it: releasePending)
     if (releasePending_) {
@@ -424,6 +427,10 @@ bool EspDataIn::recover() noexcept
     if (!faulted_) {
         return true;
     }
+    if (uartDeleted_) {
+        ESP_LOGE(kTag, "recover: UART2 was deleted by an incomplete release(); release() again, then configure()");
+        return false;
+    }
     if (shared_) {
         // Routed and checked in the GPIO matrix, or the pin is reset again and the fault stays. Bytes still
         // in UART2 go out on DATA IN afterwards; hardwareFree() stays false until they have.
@@ -466,12 +473,24 @@ bool EspDataIn::release() noexcept
         shared_ = false;
         return true;
     }
-    (void)traced("uart_driver_delete", uart_driver_delete(kUart));
-    // No peripheral keeps the pin: output off, pull-up, so the 74LS07 lets DATA IN go.
-    (void)traced("gpio_reset_pin", gpio_reset_pin(static_cast<gpio_num_t>(pin_)));
+    if (!uartDeleted_) {
+        (void)traced("uart_driver_delete", uart_driver_delete(kUart));
+        uartDeleted_ = true;  // from here only a completed release() ends this state (PR #113 review H1)
+    }
+    // No peripheral keeps the pin: output off, pull-up, so the 74LS07 lets DATA IN go. A failed reset leaves
+    // the GPIO matrix as it was: not released, faulted (everything refused), and a later release() retries.
+    if (traced("gpio_reset_pin", gpio_reset_pin(static_cast<gpio_num_t>(pin_))) != ESP_OK) {
+        if (!faulted_) {
+            ++pinFaults_;
+        }
+        faulted_ = true;
+        ESP_LOGE(kTag, "DATA IN NOT released: GPIO%d not reset after UART2 was deleted; release() again later", pin_);
+        return false;
+    }
     ESP_LOGI(kTag, "DATA IN released: UART2 deleted, GPIO%d reset (output off)", pin_);
     pin_ = -1;
     faulted_ = false;
+    uartDeleted_ = false;
     return true;
 }
 

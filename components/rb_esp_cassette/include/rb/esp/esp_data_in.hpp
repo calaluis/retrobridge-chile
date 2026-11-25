@@ -119,7 +119,10 @@ public:
 
     // Undoes configure(): stops any run, deletes the UART2 driver and resets the pin (output off,
     // pull-up). enabled() is false afterwards. Used by the bench test C8. False: the RMT did not let
-    // go of the pin (releasePending()); nothing else was undone and a later release() retries.
+    // go of the pin (releasePending()); nothing else was undone and a later release() retries. Also
+    // false when gpio_reset_pin() fails: UART2 is already deleted, the driver stays enabled and faulted, and
+    // only a later release() ends that state (it does not delete UART2 again). Until then configure() returns
+    // false, recover() keeps the fault and giveBack() returns Lost.
     // Shared mode: deletes and resets nothing; detaches only when giveBack() returns Uart (pin on UART2
     // TX, checked in the matrix, nothing left to send). Otherwise false and still attached: Busy, ask
     // again; Lost, the pin is reset and the driver stays faulted.
@@ -161,6 +164,7 @@ private:
     uint32_t pinFaults_ = 0;
     bool faulted_ = false;
     bool releasePending_ = false;
+    bool uartDeleted_ = false;   // own mode: release() deleted UART2 but did not reset the pin yet
     bool discardFeed_ = false;   // a cancelled or dropped run: clear the feed once the RMT is disabled
     CallTrace trace_ = nullptr;
     uint32_t lastSize_ = 0;     // feed size at the previous pump()

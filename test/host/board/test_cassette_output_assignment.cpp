@@ -45,10 +45,23 @@ void expectError(ErrorCode expected, const BoardProfile& profile)
 void setUp() {}
 void tearDown() {}
 
-static void test_real_fujinet_profile_is_refused(void)
+static void test_real_fujinet_profile_is_granted(void)
 {
-    expectError(ErrorCode::BoardNotConfirmed, fujinet_atari_v1x_profile());
+    const auto result = validate_for_cassette_output(fujinet_atari_v1x_profile());
+    TEST_ASSERT_TRUE(result.ok());
+    TEST_ASSERT_EQUAL_INT8(21, result.value().dataIn());
+    TEST_ASSERT_EQUAL_INT8(36, result.value().motor());
     expectError(ErrorCode::BoardNotConfirmed, unconfirmed_profile());
+}
+
+static void test_real_fujinet_profile_with_a_gate_unsigned_is_refused(void)
+{
+    BoardProfile p = fujinet_atari_v1x_profile();
+    p.sioGateApproved = false;
+    expectError(ErrorCode::BoardNotConfirmed, p);
+    p = fujinet_atari_v1x_profile();
+    p.motorGateApproved = false;
+    expectError(ErrorCode::BoardNotConfirmed, p);
 }
 
 static void test_both_gates_grant_data_in_and_motor(void)
@@ -100,9 +113,9 @@ static void test_bad_pins_are_refused(void)
 
 static void test_bench_grants_data_in_without_gates_or_motor(void)
 {
-    const BoardProfile real = fujinet_atari_v1x_profile();
-    TEST_ASSERT_FALSE(real.sioGateApproved);  // the real profile: H4 and M3a stay unsigned
-    TEST_ASSERT_FALSE(real.motorGateApproved);
+    BoardProfile real = fujinet_atari_v1x_profile();
+    real.sioGateApproved = false;  // the bench grant does not look at the gates
+    real.motorGateApproved = false;
     const auto result = validate_for_bench_data_in(real);
     TEST_ASSERT_TRUE(result.ok());
     TEST_ASSERT_EQUAL_INT8(21, result.value().dataIn());
@@ -135,7 +148,8 @@ static void test_bench_refuses_bad_pins(void)
 int main(void)
 {
     UNITY_BEGIN();
-    RUN_TEST(test_real_fujinet_profile_is_refused);
+    RUN_TEST(test_real_fujinet_profile_is_granted);
+    RUN_TEST(test_real_fujinet_profile_with_a_gate_unsigned_is_refused);
     RUN_TEST(test_both_gates_grant_data_in_and_motor);
     RUN_TEST(test_h4_alone_is_not_enough);
     RUN_TEST(test_m3a_alone_is_not_enough);

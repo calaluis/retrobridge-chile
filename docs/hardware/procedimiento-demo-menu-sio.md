@@ -2,7 +2,12 @@
 
 > **Estado: preparado, no ejecutado.** Cada paso marcado con **[CONFIRMAR]** requiere la confirmación explícita del
 > responsable: construir el adaptador, flashear, conectar el SIO y encender el 65XE.
-> **H4 y M3a siguen sin aprobar.** Esta demo no aprueba ninguna puerta. Se hace solo con la aceptación de riesgo
+> **Actualización 2026-11-25:** H4 y M3a quedaron aprobadas por aceptación de riesgo del responsable
+> (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). Desde entonces el paquete `menu-sio` se genera con las dos puertas aprobadas, y ya no se exige el
+> adaptador sin el pin 8. El paquete `cassette-lectura` se retiró de la CI; el respaldo verificado de `f405106`
+> sigue sirviendo como vuelta atrás (§8). Esta demo no aprueba ninguna puerta.
+>
+> Texto original (anterior a la aprobación): H4 y M3a sin aprobar; la demo se hacía solo con la aceptación de riesgo
 > firmada (`docs/mediciones/menu-sio-fisico-registro.md` §1) y con el adaptador sin el pin 8.
 
 **Objetivo:** demostrar en el 65XE real los criterios 1–4 de E1 (`02-DOCS/wiki/sdd/specs/menu-sio-fisico.md`):

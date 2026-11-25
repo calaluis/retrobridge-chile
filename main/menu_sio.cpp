@@ -47,6 +47,7 @@
 
 #include "esp_pthread.h"
 #include "esp_tape_deck.hpp"
+#include "tape_gates.hpp"
 #include "tnfs_link.hpp"
 #include "tnfs_loader.hpp"
 #include "udp_tnfs_port.hpp"
@@ -791,7 +792,7 @@ static void startCassette(bool sdMounted, rb::esp::CassetteService& cassette, rb
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
              static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)),
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)));
-    g_tape = createOnce<EspTapeDeck>(cassette, *g_board);
+    g_tape = createOnce<EspTapeDeck>(cassette, rb::menusio::tapeGatesOpen(kTapeOutput, *g_board));  // T3b: gates and output
     if (g_tape == nullptr) {
         ESP_LOGE(kTag, "cas: sin memoria para el deck; C: dice CASETERA NO DISPONIBLE");
         return;

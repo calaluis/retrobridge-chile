@@ -1,7 +1,11 @@
 # Prueba de banco C8: DATA IN en la FujiNet FN32ROV-1.3-Q24, solo por USB
 
 > **Estado: preparada, no ejecutada.** Flashear requiere la confirmación explícita del responsable.
-> **H4 y M3a siguen sin aprobar.** Esta prueba no aprueba ninguna puerta y no conecta el Atari.
+> **Retirada de la CI el 2026-11-25.** El paquete `bench-c8` solo se generaba con H4 y M3a sin aprobar. Desde que el
+> responsable las aprobó por aceptación de riesgo (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`), el job `firmware-package-bench-c8` ya no existe. El
+> código de banco sigue en el árbol; ningún paquete lo compila. Este documento queda como registro.
+>
+> Texto original: H4 y M3a sin aprobar; esta prueba no aprueba ninguna puerta y no conecta el Atari.
 
 **Objetivo:** demostrar en el ESP32 real el criterio C8 de H4-C (`h4-c-casetera.md` §3): GPIO21 (DATA IN) pasa
 de UART2 al RMT al reproducir un tramo FSK, vuelve a UART2 al terminar el tramo y también al cancelarlo, y queda

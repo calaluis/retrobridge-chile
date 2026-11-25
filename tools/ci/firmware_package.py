@@ -21,8 +21,7 @@ Re-check a downloaded package (no hardware, no build tree needed):
 Variants (closed set): h3c and diag (diagnostic, no SIO pin call at all) and cassette (C107: the
 UART and GPIO calls of rb_esp_cassette, listed one by one, and only with H4 and M3a approved both in
 the board profile compiled in and in docs/mediciones/puertas.json; checked when packaging and again
-when verifying); cassette-lectura (the same calls, packaged only while H4 and M3a are both unsigned in
-the profile and in the record, so the firmware never configures DATA IN or MOTOR; checked the same way).
+when verifying); menu-sio (the cassette calls plus the menu's SIO calls, with the same gate checks).
 """
 
 import argparse
@@ -140,7 +139,7 @@ CASSETTE_SIO_CALLS = (
     (_DATA_IN, "gpio_reset_pin", 2),  # H4-C C8: output off when the UART refuses the pin, and release()
     (_SERVICE, "gpio_config", 1), (_SERVICE, "gpio_get_level", 1),  # MOTOR, input only
 )
-# The same calls before H4-C C8 (firmware up to f405106, the commit the cassette-lectura job pins):
+# The same calls before H4-C C8 (firmware up to f405106, the commit the retired cassette-lectura job pinned):
 # five uart_set_pin(), no gpio_reset_pin(), two rmt_disable() and the end of a run polled with
 # rmt_tx_wait_all_done() instead of on_trans_done. Accepted as a whole, never mixed with the set above.
 CASSETTE_SIO_CALLS_BEFORE_C8 = tuple(
@@ -233,8 +232,6 @@ CODE_CHECK = "sin GPIO/UART del SIO (código)"
 CASSETTE_CODE_CHECK = "GPIO/UART del SIO solo en rb_esp_cassette (código)"
 PROFILE_CHECK = "puertas H4 y M3a (perfil)"
 RECORD_CHECK = "puertas H4 y M3a (registro)"
-CLOSED_PROFILE_CHECK = "puertas H4 y M3a sin aprobar (perfil)"
-CLOSED_RECORD_CHECK = "puertas H4 y M3a sin aprobar (registro)"
 PROFILE_HEADER = "components/rb_board/include/rb/board/fujinet_atari_v1x.hpp"
 GATE_RECORD = "docs/mediciones/puertas.json"
 GATE_RECORD_IN_PACKAGE = "config/puertas.json"
@@ -253,7 +250,6 @@ class Variant:
     sio_calls: tuple = ()                 # (file, call, count) allowed; empty: no SIO call at all
     earlier_sio_calls: tuple = ()         # an older exact set also accepted (a pinned commit), or none
     gates: bool = False                   # H4 and M3a must be approved (profile and record)
-    closed_gates: bool = False            # H4 and M3a must NOT be approved (profile and record)
     bench: bool = False                   # the bench test C8 build (CONFIG_RB_BENCH_C8); every other variant refuses it
     menu_sio: bool = False                # the menu-sio test package (CONFIG_RB_MENU_SIO); every other variant refuses it
     profile_text: str = "microSD por SPI3 en GPIO 18/23/19/5; sin pines SIO"
@@ -277,37 +273,17 @@ VARIANTS = {
                         earlier_sio_calls=CASSETTE_SIO_CALLS_BEFORE_C8, gates=True,
                         profile_text="microSD por SPI3 en GPIO 18/23/19/5; DATA IN en GPIO21 y MOTOR en GPIO36, "
                                      "con H4 y M3a aprobadas"),
-    # The same cassette code, read-only on the board: with H4 and M3a unsigned in the compiled profile,
-    # validate_for_cassette_output() and validate_for_motor() fail, so DATA IN and MOTOR are never
-    # configured; `cas mount` and `cas status` still read the tapes on the microSD. Only with both unsigned.
-    "cassette-lectura": Variant("retrobridge-fw-cassette-lectura-fujinet-atari-v1x",
-                                "firmware con casetera .cas en solo lectura (sin DATA IN ni MOTOR) para FujiNet "
-                                "Atari FN32ROV-1.3/1.5",
-                                features=("cassette",), version_matches_commit=True, sio_calls=CASSETTE_SIO_CALLS,
-                                earlier_sio_calls=CASSETTE_SIO_CALLS_BEFORE_C8, closed_gates=True,
-                                profile_text="microSD por SPI3 en GPIO 18/23/19/5; H4 y M3a sin aprobar: la casetera "
-                                             "no configura DATA IN (GPIO21) ni MOTOR (GPIO36)"),
-    # Bench test C8 (H4-C): the read-only cassette plus, at boot, one run of DATA IN on the board alone
-    # (USB only, the Atari disconnected): GPIO21 UART2 -> RMT -> UART2, then released. H4 and M3a unsigned.
-    "bench-c8": Variant("retrobridge-fw-bench-c8-fujinet-atari-v1x",
-                        "firmware de prueba de banco C8 (DATA IN sin el Atari, H4 y M3a sin aprobar) para FujiNet "
-                        "Atari FN32ROV-1.3/1.5",
-                        features=("cassette", "bench_c8"), version_matches_commit=True, sio_calls=CASSETTE_SIO_CALLS,
-                        closed_gates=True, bench=True,
-                        profile_text="microSD por SPI3 en GPIO 18/23/19/5; H4 y M3a sin aprobar; prueba de banco C8: "
-                                     "GPIO21 por UART2 y RMT al arrancar, solo con el Atari desconectado, y luego liberado"),
     # menu-sio test package (menu-sio-fisico E1): the menu served as D1 on the physical SIO (UART2: TX DATA IN
-    # GPIO21, RX DATA OUT GPIO33; COMMAND GPIO39 input), with H4 and M3a unsigned, under the owner's written risk
-    # acceptance and the SIO adapter without pin 8. The cassette is not started (its source calls are still counted,
-    # exactly as in cassette-lectura), so the cassette feature is not required in the application.
+    # GPIO21, RX DATA OUT GPIO33; COMMAND GPIO39 input), with H4 and M3a approved by the owner's risk acceptance
+    # (docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md). The cassette source calls are counted, but the tape
+    # does not leave by the SIO (kTapeOutput), so the cassette feature is not required in the application.
     "menu-sio": Variant("retrobridge-fw-menu-sio-fujinet-atari-v1x",
-                        "firmware de prueba menu-sio (menú como D1 por el SIO físico, H4 y M3a sin aprobar) para "
-                        "FujiNet Atari FN32ROV-1.3/1.5",
+                        "firmware de prueba menu-sio (menú como D1 por el SIO físico) para FujiNet Atari FN32ROV-1.3/1.5",
                         features=("menu_sio",), version_matches_commit=True,
-                        sio_calls=CASSETTE_SIO_CALLS + MENU_SIO_CALLS, closed_gates=True, menu_sio=True,
-                        profile_text="microSD por SPI3 en GPIO 18/23/19/5; H4 y M3a sin aprobar; paquete de prueba "
-                                     "menu-sio: UART2 TX en DATA IN (GPIO21), RX en DATA OUT (GPIO33), COMMAND en GPIO39; "
-                                     "solo con aceptación de riesgo escrita y el adaptador sin pin 8"),
+                        sio_calls=CASSETTE_SIO_CALLS + MENU_SIO_CALLS, gates=True, menu_sio=True,
+                        profile_text="microSD por SPI3 en GPIO 18/23/19/5; paquete de prueba menu-sio: UART2 TX en "
+                                     "DATA IN (GPIO21), RX en DATA OUT (GPIO33), COMMAND en GPIO39; con H4 y M3a "
+                                     "aprobadas por aceptación de riesgo"),
 }
 
 
@@ -680,33 +656,6 @@ def check_gate_record(record, src=None):
     return not problems, ", ".join(problems) or "H4 y M3a aprobadas, con registro"
 
 
-def check_gate_closed(record):
-    """Returns (ok, detail). Both gates present and not approved (JSON false, nothing else)."""
-    if not isinstance(record, dict):
-        return False, "no es un objeto JSON"
-    problems = []
-    for gate in GATES:
-        entry = record.get(gate)
-        if not isinstance(entry, dict):
-            problems.append(f"{gate}: ausente")
-        elif entry.get("aprobada") is not False:
-            problems.append(f"{gate}: no figura como no aprobada")
-    return not problems, ", ".join(problems) or "H4 y M3a sin aprobar"
-
-
-def read_closed_record(src: Path):
-    """Returns (ok, detail, record) for docs/mediciones/puertas.json, both gates unsigned."""
-    path = src / GATE_RECORD
-    if not path.is_file():
-        return False, f"falta {GATE_RECORD}", None
-    try:
-        record = load_record_json(path.read_text(encoding="utf-8"))
-    except ValueError as error:
-        return False, f"{GATE_RECORD}: {error}", None
-    ok, detail = check_gate_closed(record)
-    return ok, detail, record
-
-
 def valid_date(value) -> bool:
     """A real calendar date written YYYY-MM-DD in ASCII digits."""
     if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
@@ -942,14 +891,6 @@ def check_build(src: Path, build: Path, source: SourceState, baseline: str, vari
         record_ok, record_detail, record = read_gate_record(src)
         log.require(RECORD_CHECK, record_ok, f"{GATE_RECORD}: {record_detail}")
         log.facts["gates"] = record
-    if variant.closed_gates:
-        gates = profile_gates(src)
-        log.require(CLOSED_PROFILE_CHECK, gates == (False, False),
-                    f"{PROFILE_HEADER}: " + ("no se pudo leer el perfil" if gates is None
-                                             else f"H4={'sí' if gates[0] else 'no'}, M3a={'sí' if gates[1] else 'no'}"))
-        record_ok, record_detail, record = read_closed_record(src)
-        log.require(CLOSED_RECORD_CHECK, record_ok, f"{GATE_RECORD}: {record_detail}")
-        log.facts["gates"] = record
     sdk = parse_sdkconfig((build / "sdkconfig").read_text(encoding="utf-8")) if (build / "sdkconfig").is_file() else {}
     files = build_files(build, src, sdk)
     check_files(files, log, build_relative=build)
@@ -1041,7 +982,7 @@ def package(src: Path, build: Path, reports: Path, out: Path, source: SourceStat
     if variant != "h3c":  # the H3c record keeps exactly its original fields
         provenance["variant"] = variant
         provenance["features"] = list(spec.features)
-    if spec.gates or spec.closed_gates:
+    if spec.gates:
         provenance["gates"] = log.facts["gates"]
         (out / GATE_RECORD_IN_PACKAGE).write_text(json.dumps(log.facts["gates"], indent=2, ensure_ascii=False) + "\n",
                                                   encoding="utf-8")
@@ -1093,13 +1034,10 @@ def verify_package(root: Path) -> CheckLog:
     required = ["commit del firmware", "checkout limpio", known.code_check if known else CODE_CHECK]
     if known is not None and known.gates:
         required += [PROFILE_CHECK, RECORD_CHECK]
-    if known is not None and known.closed_gates:
-        required += [CLOSED_PROFILE_CHECK, CLOSED_RECORD_CHECK]
     for name in required:
         log.require(f"registrado en CI: {name}", recorded.get(name) is True, "PROVENANCE.json")
-    if known is not None and (known.gates or known.closed_gates):
-        check, check_name = ((check_gate_record, RECORD_CHECK) if known.gates
-                             else (check_gate_closed, CLOSED_RECORD_CHECK))
+    if known is not None and known.gates:
+        check, check_name = check_gate_record, RECORD_CHECK
         path = root / GATE_RECORD_IN_PACKAGE
         try:
             record = load_record_json(path.read_text(encoding="utf-8")) if path.is_file() else None
@@ -1173,8 +1111,7 @@ def main(argv=None) -> int:
     p.add_argument("--baseline", required=True)
     p.add_argument("--variant", choices=sorted(VARIANTS), default="h3c",
                    help="package identity: h3c (default, unchanged), diag (H4, requires rb_hw_diag) or "
-                        "cassette (C107, requires H4 and M3a approved), cassette-lectura, bench-c8 or menu-sio "
-                        "(require both unsigned)")
+                        "cassette (C107) or menu-sio, both requiring H4 and M3a approved")
     v = sub.add_parser("verify")
     v.add_argument("package_dir", type=Path)
     args = parser.parse_args(argv)

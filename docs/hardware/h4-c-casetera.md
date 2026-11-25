@@ -1,5 +1,9 @@
 # H4-C: criterio acotado a la casetera (DATA IN y MOTOR)
 
+> **2026-11-25:** H4 y M3a quedaron aprobadas por aceptación de riesgo del responsable (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`), no por
+> H4-C. Las variantes `cassette-lectura` y `bench-c8` se retiraron, y `menu-sio` exige ahora las dos puertas
+> aprobadas, como `cassette`.
+>
 > **PROPUESTA NO APROBADA.** Este documento no aprueba H4 ni M3a, no cambia `docs/mediciones/puertas.json` y no
 > autoriza ninguna conexión al Atari ni ningún flasheo. Todo lo que dice «cubierto» es evidencia; la decisión es
 > del responsable.

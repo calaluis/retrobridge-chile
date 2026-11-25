@@ -481,7 +481,7 @@ class CassettePackageTest(unittest.TestCase):
         self.assertIn(check_name, self.failed(log))
         self.assertFalse(self.f.out.exists())  # nothing written
 
-    # positive case (test data only: the real profile and record stay unsigned)
+    # positive case (test data; the real profile and record are checked at the end)
 
     def test_cassette_package_with_both_gates_approved(self):
         log = self.package()
@@ -699,7 +699,7 @@ class CassettePackageTest(unittest.TestCase):
         self.assert_refused("puertas H4 y M3a (registro)")
 
     def test_the_calls_before_c8_are_accepted_as_a_whole(self):
-        # The cassette-lectura job pins f405106, written before H4-C C8.
+        # The retired cassette-lectura job pinned f405106, written before H4-C C8.
         write(self.f.src / "components" / "rb_esp_cassette" / "src" / "esp_data_in.cpp",
               cassette_source("components/rb_esp_cassette/src/esp_data_in.cpp", fp.CASSETTE_SIO_CALLS_BEFORE_C8))
         self.assertTrue(fp.check_sio_calls(self.f.src, fp.CASSETTE_SIO_CALLS_BEFORE_C8)[0])
@@ -748,168 +748,18 @@ class CassettePackageTest(unittest.TestCase):
         self.assertIn("registrado en CI: sin GPIO/UART del SIO (código)", names)
         self.assertNotIn("puertas H4 y M3a (registro)", names)
 
-    def test_real_profile_and_record_refuse_the_cassette_package(self):
+    def test_real_profile_and_record_allow_the_cassette_package(self):
+        # docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md: approved by the owner's risk acceptance
         repo = Path(__file__).resolve().parents[2]
-        self.assertEqual(fp.profile_gates(repo), (False, False))
-        ok, _detail, _record = fp.read_gate_record(repo)
-        self.assertFalse(ok)
-
-
-def closed_record():
-    return {"H4": {"aprobada": False, "fecha": None, "registro": None},
-            "M3a": {"aprobada": False, "fecha": None, "registro": None},
-            "nota": "datos de prueba"}
-
-
-CLOSED_PROFILE = "puertas H4 y M3a sin aprobar (perfil)"
-CLOSED_RECORD = "puertas H4 y M3a sin aprobar (registro)"
-
-
-class CassetteReadOnlyPackageTest(unittest.TestCase):
-    """cassette-lectura: the same cassette code and calls, packaged only while H4 and M3a are unsigned."""
-
-    def setUp(self):
-        CassettePackageTest.setUp(self)
-        self.profile(False, False)
-        self.gates(closed_record())
-
-    tearDown = CassettePackageTest.tearDown
-    profile = CassettePackageTest.profile
-    gates = CassettePackageTest.gates
-    failed = CassettePackageTest.failed
-
-    def package(self, variant="cassette-lectura"):
-        return CassettePackageTest.package(self, variant)
-
-    def assert_refused(self, check_name, variant="cassette-lectura"):
-        CassettePackageTest.assert_refused(self, check_name, variant)
-
-    def edit_out(self, rel, change):
-        path = self.f.out / rel
-        data = json.loads(path.read_text(encoding="utf-8"))
-        change(data)
-        path.write_text(json.dumps(data), encoding="utf-8")
-        fp.write_manifest(self.f.out)  # a consistent manifest does not help
-
-    # positive case
-
-    def test_read_only_package_with_both_gates_unsigned(self):
-        log = self.package()
-        self.assertTrue(log.ok, self.failed(log))
-        provenance = json.loads((self.f.out / "PROVENANCE.json").read_text(encoding="utf-8"))
-        self.assertEqual(provenance["package"], "retrobridge-fw-cassette-lectura-fujinet-atari-v1x")
-        self.assertEqual(provenance["variant"], "cassette-lectura")
-        self.assertEqual(provenance["features"], ["cassette"])
-        self.assertEqual(provenance["gates"], closed_record())
-        self.assertEqual(json.loads((self.f.out / "config" / "puertas.json").read_text(encoding="utf-8")),
-                         closed_record())
-        self.assertIn("sin aprobar", (self.f.out / "LEEME.md").read_text(encoding="utf-8"))
-        log = fp.verify_package(self.f.out)
-        self.assertTrue(log.ok, self.failed(log))
-        self.assertIn("registrado en CI: " + CLOSED_PROFILE, [c.name for c in log.checks])
-
-    # any approval refuses it, at generation
-
-    def test_h4_signed_in_the_profile_is_refused(self):
-        self.profile(True, False)
-        self.assert_refused(CLOSED_PROFILE)
-
-    def test_m3a_signed_in_the_profile_is_refused(self):
-        self.profile(False, True)
-        self.assert_refused(CLOSED_PROFILE)
-
-    def test_profile_that_cannot_be_read_is_refused(self):
-        write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp",
-              "constexpr BoardProfile fujinet_atari_v1x_profile() noexcept { return kUnsigned; }\n")
-        self.assert_refused(CLOSED_PROFILE)
-
-    def test_an_approved_profile_behind_a_define_is_refused(self):
-        write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp",
-              "#define false true\n" + PROFILE_HEADER % ("false", "false"))  # reads unsigned, compiles approved
-        self.assert_refused(CLOSED_PROFILE)
-
-    def test_h4_approved_in_the_record_is_refused(self):
-        record = closed_record()
-        record["H4"]["aprobada"] = True
-        self.gates(record)
-        self.assert_refused(CLOSED_RECORD)
-
-    def test_m3a_approved_in_the_record_is_refused(self):
-        record = closed_record()
-        record["M3a"]["aprobada"] = True
-        self.gates(record)
-        self.assert_refused(CLOSED_RECORD)
-
-    def test_not_approved_must_be_the_json_false(self):
-        record = closed_record()
-        record["H4"]["aprobada"] = "no"
-        self.gates(record)
-        self.assert_refused(CLOSED_RECORD)
-
-    def test_a_gate_missing_from_the_record_is_refused(self):
-        record = closed_record()
-        del record["M3a"]
-        self.gates(record)
-        self.assert_refused(CLOSED_RECORD)
-
-    def test_a_repeated_key_in_the_record_is_refused(self):
-        text = json.dumps(closed_record())[:-1] + ', "H4": {"aprobada": true}}'
-        write(self.f.src / "docs" / "mediciones" / "puertas.json", text)
-        self.assert_refused(CLOSED_RECORD)
-
-    def test_the_record_missing_is_refused(self):
-        (self.f.src / "docs" / "mediciones" / "puertas.json").unlink()
-        self.assert_refused(CLOSED_RECORD)
-
-    def test_the_code_scan_still_applies(self):
-        write(self.f.src / "components" / "rb_sio" / "tx.cpp", "void f() { gpio_set_level(21, 0); }\n")
-        self.assert_refused("GPIO/UART del SIO solo en rb_esp_cassette (código)")
-
-    def test_cassette_feature_must_be_linked_in(self):
-        write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=CASSETTE_ELF))
-        self.assert_refused("casetera incorporada (aplicación)")
-
-    # and at verification
-
-    def test_verify_refuses_a_record_changed_to_approved(self):
-        self.assertTrue(self.package().ok)
-        self.edit_out("config/puertas.json", lambda r: r["M3a"].update(aprobada=True))
-        self.assertIn(CLOSED_RECORD, self.failed(fp.verify_package(self.f.out)))
-
-    def test_verify_refuses_a_record_that_differs_from_provenance(self):
-        self.assertTrue(self.package().ok)
-        self.edit_out("config/puertas.json", lambda r: r.update(nota="otra"))
-        self.assertIn(CLOSED_RECORD, self.failed(fp.verify_package(self.f.out)))
-
-    def test_verify_requires_the_closed_profile_check_recorded(self):
-        self.assertTrue(self.package().ok)
-        self.edit_out("PROVENANCE.json",
-                      lambda p: p.update(checks=[c for c in p["checks"] if c["name"] != CLOSED_PROFILE]))
-        self.assertIn("registrado en CI: " + CLOSED_PROFILE, self.failed(fp.verify_package(self.f.out)))
-
-    def test_verify_refuses_a_package_renamed_to_the_approved_variant(self):
-        self.assertTrue(self.package().ok)
-        self.edit_out("PROVENANCE.json", lambda p: p.update(variant="cassette",
-                                                            package="retrobridge-fw-cassette-fujinet-atari-v1x"))
-        failed = self.failed(fp.verify_package(self.f.out))
-        self.assertIn("registrado en CI: puertas H4 y M3a (perfil)", failed)
-        self.assertIn("puertas H4 y M3a (registro)", failed)
-
-    # the other variants keep their controls
-
-    def test_the_approved_cassette_package_is_still_refused(self):
-        self.assert_refused("puertas H4 y M3a (perfil)", variant="cassette")
-
-    def test_diag_and_h3c_still_refuse_the_cassette_calls(self):
-        for variant in ("diag", "h3c"):
-            self.assert_refused("sin GPIO/UART del SIO (código)", variant=variant)
-
-    def test_real_profile_and_record_allow_only_the_read_only_package(self):
-        repo = Path(__file__).resolve().parents[2]
-        self.assertEqual(fp.profile_gates(repo), (False, False))
-        ok, detail, _record = fp.read_closed_record(repo)
+        self.assertEqual(fp.profile_gates(repo), (True, True))
+        ok, detail, _record = fp.read_gate_record(repo)
         self.assertTrue(ok, detail)
 
+    def test_the_retired_variants_no_longer_exist(self):
+        # spec puertas-aceptacion-riesgo CA4: they only made sense with H4 and M3a unsigned
+        for name in ("cassette-lectura", "bench-c8"):
+            self.assertNotIn(name, fp.VARIANTS)
+        self.assertTrue(fp.VARIANTS["menu-sio"].gates)
 
 
 BENCH_APP_MARKERS = CASSETTE_APP_MARKERS + (b"\x1b[0;33mW (%lu) %s: C8 BENCH BEGIN: board '%s', H4 %s, M3a %s; USB "
@@ -918,57 +768,46 @@ BENCH_ELF = CASSETTE_ELF + b"_ZN2rb5bench6run_c8ERKNS_5board12BoardProfileERNS_3
 BENCH_SOURCE = "void f() { (void)rb::board::validate_for_bench_data_in(kBoard); REG_READ(GPIO_ENABLE_REG); }\n"
 
 
-class BenchC8PackageTest(unittest.TestCase):
-    """bench-c8: the read-only cassette plus the bench test C8, only with H4 and M3a unsigned and the
-    bench option on; every other variant refuses the bench option and the bench code."""
+class BenchC8CodeTest(unittest.TestCase):
+    """The bench test C8 code stays in the tree, but no package may build it (bench-c8 was retired with the
+    gates approved): every variant refuses the bench option and the bench code, and the bench grant stays in
+    main/bench_c8.cpp."""
 
     def setUp(self):
-        CassetteReadOnlyPackageTest.setUp(self)
+        CassettePackageTest.setUp(self)
         write(self.f.src / "main" / "bench_c8.cpp", BENCH_SOURCE)
-        write(self.f.build / "sdkconfig", SDKCONFIG + "CONFIG_RB_BENCH_C8=y\n")
-        write(self.f.build / "retrobridge.elf", BENCH_ELF)
-        write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=BENCH_ELF, extra=BENCH_APP_MARKERS))
 
     tearDown = CassettePackageTest.tearDown
     profile = CassettePackageTest.profile
     gates = CassettePackageTest.gates
     failed = CassettePackageTest.failed
 
-    def package(self, variant="bench-c8"):
+    def package(self, variant="cassette"):
         return CassettePackageTest.package(self, variant)
 
-    def assert_refused(self, check_name, variant="bench-c8"):
+    def assert_refused(self, check_name, variant="cassette"):
         CassettePackageTest.assert_refused(self, check_name, variant)
 
-    def test_bench_package_with_both_gates_unsigned(self):
+    def bench_build(self, option=True, app=BENCH_APP_MARKERS):
+        write(self.f.build / "sdkconfig", SDKCONFIG + ("CONFIG_RB_BENCH_C8=y\n" if option else ""))
+        write(self.f.build / "retrobridge.elf", BENCH_ELF)
+        write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=BENCH_ELF, extra=app))
+
+    def test_the_bench_source_alone_does_not_fail_the_package(self):
         log = self.package()
         self.assertTrue(log.ok, self.failed(log))
-        provenance = json.loads((self.f.out / "PROVENANCE.json").read_text(encoding="utf-8"))
-        self.assertEqual(provenance["package"], "retrobridge-fw-bench-c8-fujinet-atari-v1x")
-        self.assertEqual(provenance["features"], ["cassette", "bench_c8"])
-        self.assertEqual(provenance["gates"], closed_record())
-        log = fp.verify_package(self.f.out)
-        self.assertTrue(log.ok, self.failed(log))
 
-    def test_bench_package_refuses_signed_gates(self):
-        self.profile(True, True)
-        self.gates(gate_record())
-        self.assert_refused(CLOSED_PROFILE)
-
-    def test_bench_package_needs_the_bench_option(self):
-        write(self.f.build / "sdkconfig", SDKCONFIG)
+    def test_cassette_package_refuses_the_bench_option(self):
+        self.bench_build()
         self.assert_refused(fp.BENCH_CHECK)
 
-    def test_bench_package_needs_the_bench_code(self):
-        write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=BENCH_ELF, extra=CASSETTE_APP_MARKERS))
+    def test_cassette_package_refuses_the_bench_code_without_the_option(self):
+        self.bench_build(option=False)
         self.assert_refused(fp.BENCH_CHECK)
 
-    def test_read_only_package_refuses_the_bench_option(self):
-        self.assert_refused(fp.BENCH_CHECK, variant="cassette-lectura")
-
-    def test_read_only_package_refuses_the_bench_code_without_the_option(self):
-        write(self.f.build / "sdkconfig", SDKCONFIG)
-        self.assert_refused(fp.BENCH_CHECK, variant="cassette-lectura")
+    def test_cassette_package_refuses_the_bench_option_without_the_code(self):
+        self.bench_build(app=CASSETTE_APP_MARKERS)
+        self.assert_refused(fp.BENCH_CHECK)
 
     def test_bench_grant_outside_the_bench_file_is_refused(self):
         write(self.f.src / "main" / "app_main.cpp", BENCH_SOURCE)
@@ -1086,12 +925,12 @@ MENU_SIO_CHECK = "paquete de prueba menu-sio (sdkconfig, aplicación y ELF)"
 
 
 class MenuSioPackageTest(unittest.TestCase):
-    """menu-sio: the read-only cassette plus the menu as D1 on the physical SIO, only with H4 and M3a unsigned and
+    """menu-sio: the cassette calls plus the menu as D1 on the physical SIO, only with H4 and M3a approved and
     CONFIG_RB_MENU_SIO on; its UART2 and button calls exact and on the board's pins; every other variant refuses
     the option and the code, and leaves its two sources out of the scan."""
 
     def setUp(self):
-        CassetteReadOnlyPackageTest.setUp(self)
+        CassettePackageTest.setUp(self)
         write(self.f.src / "components" / "rb_esp_sio" / "src" / "esp_sio_uart.cpp", SIO_UART_SOURCE)
         write(self.f.src / "main" / "menu_sio.cpp", MENU_MAIN_SOURCE)
         self.build(menu_option=True, app=MENU_APP_MARKERS, elf=MENU_ELF)
@@ -1120,14 +959,15 @@ class MenuSioPackageTest(unittest.TestCase):
 
     # positive case
 
-    def test_menu_sio_package_with_both_gates_unsigned(self):
+    def test_menu_sio_package_with_both_gates_approved(self):
         log = self.package()
         self.assertTrue(log.ok, self.failed(log))
         provenance = json.loads((self.f.out / "PROVENANCE.json").read_text(encoding="utf-8"))
         self.assertEqual(provenance["package"], "retrobridge-fw-menu-sio-fujinet-atari-v1x")
         self.assertEqual(provenance["variant"], "menu-sio")
         self.assertEqual(provenance["features"], ["menu_sio"])
-        self.assertEqual(provenance["gates"], closed_record())
+        self.assertEqual(provenance["gates"], gate_record())
+        self.assertEqual(json.loads((self.f.out / "config" / "puertas.json").read_text(encoding="utf-8")), gate_record())
         self.assertIn("GPIO/UART del SIO solo en rb_esp_cassette y menu-sio (código)", [c["name"] for c in provenance["checks"]])
         self.assertIn("menu-sio", (self.f.out / "LEEME.md").read_text(encoding="utf-8"))
         log = fp.verify_package(self.f.out)
@@ -1135,10 +975,41 @@ class MenuSioPackageTest(unittest.TestCase):
 
     # gates, option and code
 
-    def test_menu_sio_package_refuses_signed_gates(self):
-        self.profile(True, True)
-        self.gates(gate_record())
-        self.assert_refused(CLOSED_PROFILE)
+    def test_menu_sio_package_refuses_h4_unsigned_in_the_profile(self):
+        self.profile(False, True)
+        self.assert_refused(fp.PROFILE_CHECK)
+
+    def test_menu_sio_package_refuses_m3a_unsigned_in_the_profile(self):
+        self.profile(True, False)
+        self.assert_refused(fp.PROFILE_CHECK)
+
+    def test_menu_sio_package_refuses_a_gate_unapproved_in_the_record(self):
+        for gate in ("H4", "M3a"):
+            record = gate_record()
+            record[gate]["aprobada"] = False
+            self.gates(record)
+            self.assert_refused(fp.RECORD_CHECK)
+
+    def test_menu_sio_package_refuses_a_missing_record(self):
+        (self.f.src / "docs" / "mediciones" / "puertas.json").unlink()
+        self.assert_refused(fp.RECORD_CHECK)
+
+    def test_menu_sio_verify_refuses_a_record_changed_to_unapproved(self):
+        self.assertTrue(self.package().ok)
+        path = self.f.out / "config" / "puertas.json"
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["M3a"]["aprobada"] = False
+        path.write_text(json.dumps(record), encoding="utf-8")
+        self.assertFalse(fp.verify_package(self.f.out).ok)
+
+    def test_menu_sio_verify_requires_the_profile_check_recorded(self):
+        self.assertTrue(self.package().ok)
+        path = self.f.out / "PROVENANCE.json"
+        provenance = json.loads(path.read_text(encoding="utf-8"))
+        provenance["checks"] = [c for c in provenance["checks"] if c["name"] != fp.PROFILE_CHECK]
+        path.write_text(json.dumps(provenance), encoding="utf-8")
+        log = fp.verify_package(self.f.out)
+        self.assertIn("registrado en CI: " + fp.PROFILE_CHECK, self.failed(log))
 
     def test_menu_sio_package_needs_the_option(self):
         self.build(menu_option=False, app=MENU_APP_MARKERS, elf=MENU_ELF)
@@ -1166,32 +1037,25 @@ class MenuSioPackageTest(unittest.TestCase):
 
     def test_other_variants_accept_the_menu_sources_when_not_built_in(self):
         self.build(menu_option=False, app=CASSETTE_APP_MARKERS, elf=CASSETTE_ELF)
-        log = CassettePackageTest.package(self, "cassette-lectura")
+        log = CassettePackageTest.package(self, "cassette")
         self.assertTrue(log.ok, self.failed(log))
 
-    def test_read_only_package_refuses_the_menu_sio_build(self):
-        self.assert_refused(MENU_SIO_CHECK, variant="cassette-lectura")
+    def test_cassette_package_refuses_the_menu_sio_build(self):
+        self.assert_refused(MENU_SIO_CHECK, variant="cassette")
 
-    def test_read_only_package_refuses_menu_symbols_without_the_option(self):
+    def test_cassette_package_refuses_menu_symbols_without_the_option(self):
         self.build(menu_option=False, app=CASSETTE_APP_MARKERS, elf=MENU_ELF)
-        self.assert_refused(MENU_SIO_CHECK, variant="cassette-lectura")
+        self.assert_refused(MENU_SIO_CHECK, variant="cassette")
 
-    def test_read_only_package_refuses_menu_literals_without_the_option(self):
+    def test_cassette_package_refuses_menu_literals_without_the_option(self):
         self.build(menu_option=False, app=MENU_APP_MARKERS, elf=CASSETTE_ELF)
-        self.assert_refused(MENU_SIO_CHECK, variant="cassette-lectura")
-
-    def test_bench_package_refuses_the_menu_option(self):
-        write(self.f.src / "main" / "bench_c8.cpp", BENCH_SOURCE)
-        write(self.f.build / "sdkconfig", SDKCONFIG + "CONFIG_RB_MENU_SIO=y\nCONFIG_RB_BENCH_C8=y\n")
-        write(self.f.build / "retrobridge.elf", BENCH_ELF)
-        write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=BENCH_ELF, extra=BENCH_APP_MARKERS))
-        self.assert_refused(MENU_SIO_CHECK, variant="bench-c8")
+        self.assert_refused(MENU_SIO_CHECK, variant="cassette")
 
     def test_menu_calls_outside_the_two_sources_fail_every_variant(self):
         write(self.f.src / "main" / "app_main.cpp", "void f() { (void)uart_write_bytes(kUart, b, 1); }\n")
         self.assert_refused(fp.MENU_CODE_CHECK)
         self.build(menu_option=False, app=CASSETTE_APP_MARKERS, elf=CASSETTE_ELF)
-        self.assert_refused(fp.CASSETTE_CODE_CHECK, variant="cassette-lectura")
+        self.assert_refused(fp.CASSETTE_CODE_CHECK, variant="cassette")
 
     # the menu-sio calls: exact, and only on the board's SIO pins and button A
 

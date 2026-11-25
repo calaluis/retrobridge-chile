@@ -7,6 +7,9 @@
 > - No hubo pruebas físicas, mediciones, flasheos ni cambios de GPIO.
 > - Solo el responsable la cambia (§7).
 >
+> **2026-11-25, después de esta enmienda:** el responsable aprobó M3a y H4 por aceptación de riesgo (opción C, §7).
+> Registro: `docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`. No es una validación eléctrica.
+>
 > Amplía, sin reemplazarlos: `h4-puerta-sio.md` §3.4 y §5 (R1), `proteccion-motor-gpio36.md`,
 > `ficha-medicion-m3a-motor.md` y `mitigacion-c-motor-pin8.md`.
 
@@ -151,7 +154,14 @@ habilita**. Para que valga hace falta, como mínimo:
   - D3 solo trata el riesgo de MOTOR. El uso de DATA IN sigue regido por sus propias puertas y paquetes.
   Base: `docs/mediciones/m3a-motor-2026-11-25.md` (B4 = **4,89 V** sin carga, «Detener»; M-2 y M-3 con la placa
   conectada).
-- **Orden acordado para el resto:** D2 → D4 → D5. Para D2 se prioriza completar M3a con osciloscopio (picos) y
+- **Opción C (mismo día, reemplaza a D3):** el responsable aprueba **M3a y H4 por aceptación de riesgo**, sin hardware
+  adicional y sin más mediciones. Base: la FN32ROV-1.3-Q24 funciona desde que se compró con el pin 8 directo a GPIO36 y
+  el firmware de FujiNet, sin daños físicos conocidos. Registro: `docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`.
+  - **No es una validación eléctrica:** B4 sigue en «Detener» y los puntos sin medir siguen sin medir.
+  - `puertas.json` y el perfil `fujinet_atari_v1x` quedan con las dos puertas aprobadas.
+  - `kTapeOutput` sigue en `false` hasta el banco T9b, en un PR aparte.
+  - Se rechazó el camino A (adaptador con Rs): no se agrega hardware.
+- **Orden acordado para el resto (anterior a la opción C):** D2 → D4 → D5. Para D2 se prioriza completar M3a con osciloscopio (picos) y
   después diseñar y validar una adaptación de nivel para MOTOR. Ninguna resistencia ni buffer queda aprobado todavía.
 - La tabla siguiente se conserva como registro de las opciones.
 

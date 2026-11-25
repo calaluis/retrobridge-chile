@@ -15,7 +15,8 @@ namespace rb::board {
 // SIO pins from the same 1.3 schematic (docs/hardware/h4-puerta-sio.md section 2):
 // COMMAND GPIO39 (through U3, R11 10k pull-up), Atari DATA OUT GPIO33 (through
 // U4), Atari DATA IN GPIO21 (to U4, open collector; output forbidden until H6).
-// Its H4 gate is not signed, so validate_for_sio() never authorizes them;
+// H4 and M3a are signed by the owner's risk acceptance, not by a measurement
+// (docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md), so validate_for_sio() grants them;
 // check_sio_pins() only checks the assignment. Configures nothing by itself. Selecting it
 // (RB_BOARD_FUJINET_ATARI_V1X) asserts that the board's silkscreen revision and
 // pinout were checked against this data; until then RB_BOARD_UNCONFIRMED stays
@@ -29,10 +30,10 @@ constexpr BoardProfile fujinet_atari_v1x_profile() noexcept
                         SdSpiPins{18, 23, 19, 5},
                         SpiHost::Spi3,  // VSPI: the native controller for these pins
                         kNoPin,
-                        false,  // H4 not approved (docs/hardware/h4-puerta-sio.md)
+                        true,   // H4 signed by risk acceptance (docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md)
                         SioPins{39, 33, 21},
                         36,      // MOTOR: GPIO36 (SENSOR_VP), straight from SIO pin 8
-                        false};  // M3a not signed (docs/hardware/procedimiento-medicion-pasiva-sio.md)
+                        true};   // M3a signed by risk acceptance (same record; MOTOR measured at 4.89 V)
 }
 
 }  // namespace rb::board

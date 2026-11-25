@@ -42,7 +42,10 @@
 > **en el Atari solo**, que el nivel alto de MOTOR no supera lo que admite un pin del ESP32. Si la señal puede
 > superar ese límite, **no se autoriza ninguna conexión** hasta diseñar y validar una mitigación aprobada.
 >
-> **Excepción operativa D3 (2026-11-25, `enmienda-motor-gpio36.md` §7).** El responsable acepta el riesgo R1 de su
+> **Actualización 2026-11-25 (opción C):** H4 y M3a quedaron aprobadas por aceptación de riesgo del responsable
+> (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). Eso **no** cuenta como ninguna etapa de este procedimiento: M0–M6 siguen sin hacerse.
+>
+> **Excepción operativa D3 (2026-11-25, `enmienda-motor-gpio36.md` §7; reemplazada por la opción C).**** El responsable acepta el riesgo R1 de su
 > placa y permite conectarla **solo para usar** disco, menú y TNFS, sin casete ni lectura de MOTOR. Es una decisión
 > de uso, no una validación eléctrica. **No cambia ninguna etapa de este procedimiento:**
 > - M3–M6 siguen bloqueadas hasta que M3a pase su punto de detención o haya una mitigación validada;

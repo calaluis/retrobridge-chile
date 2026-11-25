@@ -191,6 +191,9 @@ SIO, porque H4 eléctrico sigue EN PREPARACIÓN.
 > **Ejecutado el 2026-11-20** (hora local), solo por USB y sin el Atari: respaldo D7, instalación y prueba de
 > `cas mount`/`cas status` con las dos cintas. Resultados: `docs/mediciones/cassette-lectura-usb-2026-11-20.md`.
 > Cada repetición sigue requiriendo una autorización explícita.
+>
+> **2026-11-25:** el job `firmware-package-cassette-lectura` se retiró de la CI, porque H4 y M3a quedaron aprobadas
+> por aceptación de riesgo (`docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md`). El paquete `f405106` ya verificado sigue en el respaldo D7.
 
 Paquete `retrobridge-fw-cassette-lectura-fujinet-atari-v1x-f405106` (job `firmware-package-cassette-lectura`,
 commit `f405106`). Solo se genera con **H4 y M3a sin aprobar**, en el perfil compilado y en

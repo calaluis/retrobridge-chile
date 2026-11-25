@@ -7,8 +7,9 @@
 > - C8a no aprueba H4, no acepta R2 ni R7 y no conecta el Atari.
 >
 > **F1 implementada** (PR #114): C-1 y C-2 en código, con pruebas de host.
-> **F2 implementada** (rama `feat/banco-c8a-f2`): variante `bench-c8a` del empaquetador (C-3 a C-7) y sus pruebas.
-> Sin imagen y sin job de CI: F3 y F4 siguen sin aprobar.
+> **F2 implementada** (PR #115): variante `bench-c8a` del empaquetador (C-3 a C-7) y sus pruebas.
+> **F3 implementada** (rama `feat/banco-c8a-f3`): job de CI que compila, empaqueta y verifica `bench-c8a`, sin
+> `upload-artifact`. Ninguna imagen se distribuye: F4 sigue sin aprobar.
 
 ## 1. Para qué sirve
 
@@ -17,8 +18,9 @@ terminar un tramo y al cancelarlo, y que al final queda liberado. Lee la **matri
 pin. **No mide niveles eléctricos**: eso es C8b.
 
 El código del banco sigue en el árbol (`main/bench_c8.cpp`, `sdkconfig.bench-c8`, `CONFIG_RB_BENCH_C8`), pero
-desde el PR #110 ningún job de CI lo compila (`procedimiento-prueba-banco-c8.md`). Desde F2, solo la variante
-`bench-c8a` del empaquetador lo acepta; ningún job la usa hasta F3.
+desde el PR #110 ningún job de CI lo empaquetaba (`procedimiento-prueba-banco-c8.md`). Desde F2, solo la variante
+`bench-c8a` del empaquetador lo acepta; desde F3, el job `firmware-package-bench-c8a` la compila y verifica sin
+distribuirla.
 
 ## 2. ¿Es compatible con el estado vigente (H4 = false, M3a = true)?
 
@@ -100,7 +102,8 @@ La variante `bench-c8a` de `tools/ci/firmware_package.py`:
   `PROVENANCE.json` declara `"bench": true` y `"sio": "no autorizado"`, y `verify` rechaza el paquete si faltan.
 - **C-4:** exige en la imagen las marcas del banco C8 y de la orden C8a (`C8A READY`, `start_c8_command`). Rechaza
   el menú (`CONFIG_RB_MENU_SIO` o sus marcas), el banco antiguo que corría al arrancar (sin la orden C8a) y un ELF
-  con `CassetteService::start`, porque el banco no arranca la casetera.
+  con `CassetteService::start` **enlazada**: el banco no arranca la casetera. Desde F3 (revisión del PR #116) se
+  lee la tabla de símbolos del ELF, no sus bytes; un ELF sin tabla legible se rechaza.
 - **C-5:** puertas `(H4 = false, M3a = true)` leídas del perfil y de `puertas.json` (`check_gate_record`). Con otras
   puertas, el empaquetado falla.
 - **C-6:** ningún paso `upload-artifact` de la CI menciona el banco (prueba estructural sobre `ci.yml`).
@@ -110,6 +113,30 @@ La variante `bench-c8a` de `tools/ci/firmware_package.py`:
 - **Pruebas:** 11 nuevas en `tools/tests/test_firmware_package.py` (`BenchC8aPackageTest`).
 - **Límite:** las marcas y la ausencia de `CassetteService::start` se comprueban con imágenes sintéticas. Que una
   compilación real de ESP-IDF las cumpla se verifica en F3.
+
+### Estado de F3
+
+- **Job** `firmware-package-bench-c8a` de `.github/workflows/ci.yml`, en Pull Requests y ejecuciones manuales:
+  compila con `sdkconfig.defaults;sdkconfig.board.fujinet-atari-v1x;sdkconfig.bench-c8` (ESP-IDF v6.1), comprueba
+  `CONFIG_RB_BENCH_C8=y` y que el menú no está, empaqueta con `--variant bench-c8a` y verifica el paquete.
+- **C-6:** sin `upload-artifact` y sin salidas a otros pasos o jobs. El paquete queda en el runner y se descarta
+  con él. El resumen del job muestra las comprobaciones y «Not distributed (C-6)».
+- **Pruebas:** `BenchC8aCiJobTest` (5) en `tools/tests/test_firmware_package.py`: el job compila el banco,
+  empaqueta y verifica `bench-c8a`, solo usa `actions/checkout`, no publica, no flashea, y el árbol real pasa las
+  comprobaciones de fuente de la variante.
+- **Casetera sin arrancar (revisión 1 del PR #116, H1):** la primera compilación real (`dee10ec`, ejecución
+  `45700584507`) falló en C-4: el empaquetador buscaba el nombre `CassetteService::start` en todos los bytes del
+  ELF, y la información de depuración conserva el nombre de una función que el enlazador descartó. Ahora:
+  - **ELF:** la función no debe estar **definida** en `.symtab` (`STT_FUNC` con sección). Si el nombre aparece fuera
+    de `.symtab`, el resumen lo dice. Un ELF sin tabla de símbolos legible falla.
+  - **Fuente** (`test_bench_c8_wiring.py`): `start()` no es virtual. Solo la llaman `app_main.cpp`, fuera de la rama
+    del banco, y `menu_sio.cpp`, que CMake compila solo con `CONFIG_RB_MENU_SIO`, y Kconfig exige
+    `!RB_BENCH_C8`. Cualquier otra llamada en `main/` o `components/` hace fallar la prueba.
+  - **Controles negativos:** volver a llamar a `g_cassette.start()` en la rama del banco, añadir otra llamada en un
+    componente, buscar bytes en todo el ELF o aceptar un ELF ilegible: los cuatro mutantes fallan.
+- **Límite:** que la función no esté enlazada prueba que el banco no puede arrancar la casetera, pero compilar y
+  verificar en la CI no demuestra que el banco funcione en la FujiNet. Eso es F4, con autorización escrita del
+  responsable.
 
 ## 7. Riesgos
 

@@ -1237,9 +1237,16 @@ class MenuSioPackageTest(unittest.TestCase):
 # (SIO_5V interlock, `c8a run` only). Its image: the bench and the C8a order in, the cassette never started, no menu.
 C8A_APP_MARKERS = BENCH_APP_MARKERS + (b"\x1b[0;32mI (%lu) %s: C8A READY: type c8a run (USB only, SIO cable "
                                        b"disconnected)\x1b[0m\n\0")
-C8A_ELF = (ELF_BYTES + b"\0_ZN2rb3esp9EspDataIn9configureERKNS_5board24CassetteOutputAssignmentE\0"
-           b"_ZN2rb5bench6run_c8ERKNS_5board12BoardProfileERNS_3esp9EspDataInE\0"
-           b"_ZN2rb5bench16start_c8_commandERKNS_5board12BoardProfileERNS_3esp9EspDataInE\0")
+C8A_MARKERS = (b"\0_ZN2rb3esp9EspDataIn9configureERKNS_5board24CassetteOutputAssignmentE\0"
+               b"_ZN2rb5bench6run_c8ERKNS_5board12BoardProfileERNS_3esp9EspDataInE\0"
+               b"_ZN2rb5bench16start_c8_commandERKNS_5board12BoardProfileERNS_3esp9EspDataInE\0")
+C8A_FUNCTIONS = {"app_main": 80, "_ZN2rb5bench16start_c8_commandERKNS_5board12BoardProfileERNS_3esp9EspDataInE": 48}
+CASSETTE_START = "_ZN2rb3esp15CassetteService5startEv"
+
+
+def c8a_elf(functions=None):
+    """The bench C8a ELF: a real symbol table (app_main, the c8a order) plus the marker names, as debug info has."""
+    return xtensa_elf(C8A_FUNCTIONS if functions is None else functions) + C8A_MARKERS
 
 
 class BenchC8aPackageTest(unittest.TestCase):
@@ -1259,7 +1266,8 @@ class BenchC8aPackageTest(unittest.TestCase):
     gates = CassettePackageTest.gates
     failed = CassettePackageTest.failed
 
-    def build(self, sdk="CONFIG_RB_BENCH_C8=y\n", app=C8A_APP_MARKERS, elf=C8A_ELF):
+    def build(self, sdk="CONFIG_RB_BENCH_C8=y\n", app=C8A_APP_MARKERS, elf=None):
+        elf = c8a_elf() if elf is None else elf
         write(self.f.build / "sdkconfig", SDKCONFIG + sdk)
         write(self.f.build / "retrobridge.elf", elf)
         write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=elf, extra=app))
@@ -1301,19 +1309,31 @@ class BenchC8aPackageTest(unittest.TestCase):
         self.assert_refused(fp.BENCH_CHECK)
 
     def test_bench_c8a_refuses_the_bench_that_runs_at_boot(self):
-        self.build(app=BENCH_APP_MARKERS, elf=C8A_ELF.replace(b"_ZN2rb5bench16start_c8_command", b"_ZN2rb5bench0x"))
+        self.build(app=BENCH_APP_MARKERS, elf=c8a_elf().replace(b"_ZN2rb5bench16start_c8_command", b"_ZN2rb5bench0x"))
         log = self.package()
         self.assertFalse(log.ok)
         self.assertIn(f"{fp.FEATURE_LABELS['bench_c8a']} (aplicación)", self.failed(log))
         self.assertIn(f"{fp.FEATURE_LABELS['bench_c8a']} (ELF)", self.failed(log))
 
-    def test_bench_c8a_refuses_an_image_that_starts_the_cassette(self):
-        self.build(elf=C8A_ELF + b"_ZN2rb3esp15CassetteService5startEv\0")
+    def test_bench_c8a_refuses_an_image_that_links_the_cassette_start(self):
+        # CassetteService::start() linked in as a function: something in the bench build calls it.
+        self.build(elf=c8a_elf({**C8A_FUNCTIONS, CASSETTE_START: 32}))
+        self.assert_refused(fp.CASSETTE_START_CHECK)
+
+    def test_bench_c8a_accepts_the_cassette_start_named_only_outside_the_symbol_table(self):
+        # Real ESP-IDF build (dee10ec, run 45700584507): with the start() call compiled out, the name was still in
+        # the ELF. A name outside .symtab (debug information) is no linked code.
+        self.build(elf=c8a_elf() + CASSETTE_START.encode() + b"\0")
+        log = self.package()
+        self.assertTrue(log.ok, self.failed(log))
+
+    def test_bench_c8a_refuses_an_elf_it_cannot_read(self):
+        self.build(elf=ELF_BYTES + C8A_MARKERS)  # no symbol table: cannot prove the start is not linked
         self.assert_refused(fp.CASSETTE_START_CHECK)
 
     def test_bench_c8a_refuses_the_menu(self):
         self.build(sdk="CONFIG_RB_BENCH_C8=y\nCONFIG_RB_MENU_SIO=y\n", app=C8A_APP_MARKERS + MENU_APP_MARKERS,
-                   elf=C8A_ELF + MENU_ELF)
+                   elf=c8a_elf() + MENU_ELF)
         self.assert_refused(fp.MENU_SIO_CHECK)
 
     def test_verify_refuses_a_manifest_without_the_bench_declaration(self):
@@ -1337,6 +1357,63 @@ class BenchC8aPackageTest(unittest.TestCase):
         self.assertTrue(uploads)
         for step in uploads:
             self.assertNotIn("bench", step.lower())
+
+
+class BenchC8aCiJobTest(unittest.TestCase):
+    """bench-c8a, phase F3 (docs/hardware/banco-c8a-aislado.md, C-6): one CI job builds the bench with ESP-IDF,
+    packages it as bench-c8a and verifies it, and distributes nothing: no upload-artifact, no other action than the
+    checkouts. The real tree passes the source checks of the variant."""
+
+    JOB = "firmware-package-bench-c8a"
+
+    @classmethod
+    def setUpClass(cls):
+        repo = Path(__file__).resolve().parents[2]
+        cls.repo = repo
+        cls.ci = (repo / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8").replace("\r\n", "\n")
+
+    def job(self):
+        """The job's text: from its key, two spaces in, to the next job key or the end."""
+        match = re.search(rf"^  {re.escape(self.JOB)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", self.ci, re.S | re.M)
+        self.assertIsNotNone(match, f"job {self.JOB} in ci.yml")
+        return match.group(1)
+
+    def test_the_job_builds_the_bench_with_esp_idf(self):
+        job = self.job()
+        self.assertIn("container: espressif/idf:v6.1", job)
+        self.assertIn('SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board.fujinet-atari-v1x;sdkconfig.bench-c8"',
+                      job)
+        self.assertIn("grep -q '^CONFIG_RB_BENCH_C8=y'", job)
+
+    def test_the_job_packages_and_verifies_bench_c8a(self):
+        job = self.job()
+        self.assertIn("--variant bench-c8a", job)
+        self.assertRegex(job, r"firmware_package\.py verify ")
+
+    def test_the_job_distributes_nothing(self):
+        job = self.job()
+        self.assertNotIn("upload-artifact", job)
+        self.assertNotIn("GITHUB_OUTPUT", job)  # nothing handed on to another step or job
+        uses = re.findall(r"uses:\s*(\S+)", job)
+        self.assertTrue(uses)
+        self.assertTrue(all(u.startswith("actions/checkout@") for u in uses), uses)
+        self.assertNotIn(self.JOB, re.sub(r"^  " + re.escape(self.JOB) + r":\n", "", self.ci, flags=re.M))  # no needs:
+
+    def test_the_job_never_writes_to_the_board(self):
+        job = self.job()
+        for word in ("flash", "erase", "esptool", "write_flash", "monitor"):
+            self.assertNotRegex(job, rf"idf\.py[^\n]*\b{word}\b")
+        self.assertNotIn("esptool", job)
+
+    def test_the_real_tree_passes_the_source_checks_of_bench_c8a(self):
+        spec = fp.VARIANTS["bench-c8a"]
+        for name, (ok, detail) in (
+                ("llamadas SIO", fp.check_sio_calls(self.repo, spec.sio_calls, fp.MENU_SIO_SOURCES)),
+                ("NVS", fp.check_nvs(self.repo)), ("concesión", fp.check_bench_grant(self.repo))):
+            self.assertTrue(ok, f"{name}: {detail}")
+        self.assertEqual(fp.profile_gates(self.repo), spec.gates)
+        ok, detail, _record = fp.read_gate_record(self.repo, spec.gates)
+        self.assertTrue(ok, detail)
 
 if __name__ == "__main__":
     unittest.main()

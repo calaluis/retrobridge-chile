@@ -114,9 +114,11 @@ BENCH_CHECK = "prueba de banco C8 (sdkconfig y aplicación)"
 BENCH_GRANT_CHECK = "concesión de banco solo en main/bench_c8.cpp (código)"
 BENCH_SOURCE = "main/bench_c8.cpp"
 # Bench C8a (docs/hardware/banco-c8a-aislado.md, C-4): its build never starts the cassette, whose loop would pump the
-# EspDataIn the bench drives; with CassetteService::start() unreferenced, the linker drops it from the ELF.
-CASSETTE_START_MARKER = b"_ZN2rb3esp15CassetteService5start"
-CASSETTE_START_CHECK = "casetera sin arrancar (banco C8a, ELF)"
+# EspDataIn the bench drives. CassetteService::start() is not virtual: only a direct call links it, and with none the
+# linker drops it. The check reads the ELF's symbol table, not its bytes: the debug information keeps the name of a
+# dropped function (the real build of dee10ec, CI run 45700584507). An ELF without a readable symbol table fails.
+CASSETTE_START_SYMBOL = "_ZN2rb3esp15CassetteService5startEv"
+CASSETTE_START_CHECK = "casetera sin arrancar (banco C8a, tabla de símbolos del ELF)"
 BENCH_DECLARED_CHECK = "banco declarado en PROVENANCE.json (bench, SIO no autorizado)"
 BENCH_SIO_TEXT = "no autorizado"
 BENCH_GRANT = re.compile(r"\bvalidate_for_bench_data_in\b")
@@ -518,6 +520,39 @@ def elf_function_frames(elf: bytes) -> dict:
     return frames
 
 
+def elf_defined_functions(elf: bytes) -> set:
+    """Names of the functions defined in a 32-bit little-endian ELF (STT_FUNC symbols of .symtab with a section).
+    Raises ValueError if it is not one or has no symbol table."""
+    if len(elf) < 52 or elf[:4] != b"\x7fELF" or elf[4] != 1 or elf[5] != 1:
+        raise ValueError("no es un ELF de 32 bits little-endian")
+    shoff, = struct.unpack_from("<I", elf, 32)
+    shentsize, shnum = struct.unpack_from("<HH", elf, 46)
+    sections = [struct.unpack_from("<IIIIIIIIII", elf, shoff + i * shentsize) for i in range(shnum)]
+    symtabs = [s for s in sections if s[1] == 2]  # SHT_SYMTAB
+    if not symtabs:
+        raise ValueError("sin tabla de símbolos")
+    symtab = symtabs[0]
+    strtab = sections[symtab[6]]
+    names = set()
+    for offset in range(symtab[4], symtab[4] + symtab[5], 16):
+        name_at, _value, _size, info, _other, shndx = struct.unpack_from("<IIIBBH", elf, offset)
+        if info & 0xF == 2 and shndx != 0:  # STT_FUNC, defined
+            start = strtab[4] + name_at
+            names.add(elf[start:elf.index(b"\0", start)].decode("ascii", "replace"))
+    return names
+
+
+def check_cassette_not_started(elf: bytes):
+    """Returns (ok, detail) for CASSETTE_START_CHECK: ok when CassetteService::start() is not a defined function."""
+    try:
+        linked = CASSETTE_START_SYMBOL in elf_defined_functions(elf)
+    except (ValueError, struct.error) as error:
+        return False, f"ELF ilegible: {error}"
+    named = CASSETTE_START_SYMBOL.encode() in elf
+    return not linked, (f"{CASSETTE_START_SYMBOL}: " + ("enlazada (función en .symtab)" if linked else
+                        "no enlazada" + ("; el nombre solo aparece fuera de .symtab (depuración)" if named else "")))
+
+
 def check_stack(elf: bytes, sdk: dict):
     """Returns (ok, detail) for STACK_CHECK."""
     try:
@@ -875,9 +910,7 @@ def check_variant(files: Files, variant: Variant, commit: str, log: CheckLog) ->
                 f"{MENU_SIO_KCONFIG}={'y' if menu_on else 'no'}, en la aplicación: {'sí' if menu_in_app else 'no'}, "
                 f"en el ELF: {'sí' if menu_in_elf else 'no'} (esperado: {'sí' if variant.menu_sio else 'no'})")
     if "bench_c8a" in variant.features:
-        started = CASSETTE_START_MARKER in elf
-        log.require(CASSETTE_START_CHECK, not started,
-                    f"{CASSETTE_START_MARKER.decode()}: " + ("presente" if started else "ausente"))
+        log.require(CASSETTE_START_CHECK, *check_cassette_not_started(elf))
     if variant.menu_sio:
         stack_ok, stack_detail = check_stack(elf, sdk)
         log.require(STACK_CHECK, stack_ok, stack_detail)

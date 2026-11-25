@@ -29,8 +29,8 @@ desde el PR #110 ningún paquete lo compila (`procedimiento-prueba-banco-c8.md`)
 | Menú SIO | `RB_MENU_SIO` depende de `!RB_BENCH_C8` | El banco no incluye el menú ni responde como D1 |
 | MOTOR | Con M3a aprobada, `app_main` configura GPIO36 como **entrada** | Corregido en F1: §1 de `procedimiento-prueba-banco-c8.md` ya dice que GPIO36 es una entrada |
 | Empaquetador | Toda variante rechaza `CONFIG_RB_BENCH_C8` (`BENCH_CHECK`) | Hace falta una variante nueva con `bench=True` |
-| Ejecución | `run_c8` corre **sola, al arrancar** | Ver control C-2 |
-| Atari conectado | El banco solo lo avisa por consola | Ver control C-1 |
+| Ejecución | Antes de F1, `run_c8` corría **sola, al arrancar** | Corregido en F1 (C-2): nunca al arrancar; solo con la orden `c8a run` por la consola USB, una vez por arranque |
+| Atari conectado | Antes de F1, el banco solo lo avisaba por consola | Corregido en F1 (C-1): antes de tocar GPIO21 lee SIO_5V en GPIO35 y no corre si hay tensión o la lectura no es válida. **No detecta un Atari apagado pero conectado**: la regla «cable SIO desconectado» sigue vigente |
 
 ## 3. La variante propuesta
 

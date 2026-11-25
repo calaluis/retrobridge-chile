@@ -17,6 +17,7 @@ Dentro:
 - `docs/hardware/enmienda-motor-gpio36.md`: propuesta de enmienda, con evidencias, criterios de aceptación y
   decisiones pendientes del responsable.
 - `docs/hardware/h4-puerta-sio.md`: una nota en la cabecera que apunta a la propuesta.
+- `docs/fuentes.md`: una fila con el uso de las tablas 13 y 15 de la hoja del ESP32-WROVER-B.
 
 Fuera:
 - `docs/mediciones/puertas.json`, el perfil de `rb_board`, `kTapeOutput` y cualquier código.
@@ -34,7 +35,15 @@ Fuera:
       `02-DOCS/wiki/`.
 - [x] Decisiones pendientes D1–D5 — prueba: §7.
 - [x] Diff sin archivos de puertas, perfil ni código — prueba: `git diff --stat origin/main` del PR.
-- [ ] Revisión independiente del PR.
+- [x] Primera revisión independiente (commit `9dc69ef`) — prueba: hallazgos atendidos abajo.
+- [x] H1: `VDD + 0,3 V` atribuido a V_IH máx (tabla 15, *DC Characteristics*), no a los máximos absolutos (tabla 13)
+      — prueba: §2, §4 y CA1; hoja del WROVER-B v2.4 leída (§5.1, §5.3, §11.2); fila nueva en `docs/fuentes.md`.
+- [x] H2: §5 separa el criterio vigente de M3a (medición) de la vía futura (protección o mitigación), propuesta y
+      sin habilitación automática; la alternativa A sigue dependiendo de M3a — prueba: §5, D2 y CA8; contrastado con
+      `proteccion-motor-gpio36.md` §5 y `mitigacion-c-motor-pin8.md` §8.
+- [x] Observación: D3(b) es una regla operativa de reducción de exposición, no una mitigación ni un sustituto de
+      M3a — prueba: D3 y CA9.
+- [ ] Segunda revisión independiente.
 
 ## Evidence
 

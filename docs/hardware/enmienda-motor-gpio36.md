@@ -1,11 +1,11 @@
 # Enmienda: MOTOR (pin 8 del SIO) y GPIO36 en la FN32ROV-1.3-Q24
 
-> **PROPUESTA DE ENMIENDA NO APROBADA. Solo documento.**
+> **ENMIENDA APROBADA (PR #108, `d48b245`). Solo documento.** Decisiones posteriores: §7.
 >
 > - No aprueba M3a, H4, H4-L, H4-T ni DATA IN.
 > - No cambia `docs/mediciones/puertas.json`, el perfil de la placa (`rb_board`) ni `kTapeOutput`, que sigue en `false`.
 > - No hubo pruebas físicas, mediciones, flasheos ni cambios de GPIO.
-> - Solo el responsable la aprueba, la rechaza o la cambia (§7).
+> - Solo el responsable la cambia (§7).
 >
 > Amplía, sin reemplazarlos: `h4-puerta-sio.md` §3.4 y §5 (R1), `proteccion-motor-gpio36.md`,
 > `ficha-medicion-m3a-motor.md` y `mitigacion-c-motor-pin8.md`.
@@ -93,6 +93,11 @@ Las siguientes explicaciones de por qué la placa sobrevive son **hipótesis [P]
 | P2 | Esos diodos limitan IO36 a **≈ 3,9 V** (3,3 V + caída de un diodo) | Depende de P1, de la caída real y de la corriente | Medir IO36 con la placa conectada. **Solo después de M3a** y con una protección aprobada |
 | P3 | La ESP32 absorbe la corriente que entra al riel de 3,3 V con su propio consumo, así que el riel no sube | Depende de P1, del consumo en cada momento y del regulador | Medir el riel de 3V3 con MOTOR encendido. Mismas condiciones que P2 |
 
+**Actualización del 2026-11-25:** con la FujiNet conectada y S5 encendido, el conector posterior marcó 4,87 V
+(`docs/mediciones/m3a-motor-2026-11-25.md` §4). Si P1 y P2 fueran ciertas tal como están escritas, el nodo debería
+quedar cerca de 3,9 V. **P2 no se observa en el conector** [I]. Como no se midió el pad, las tres siguen siendo
+hipótesis [P].
+
 **Reglas para estas hipótesis:**
 - No cambian el estado de M3a, de H4 ni de R1.
 - Aunque las tres fueran ciertas, IO36 seguiría fuera de su rango de entrada especificado (tabla 15) [D]. Trabajar
@@ -132,6 +137,23 @@ habilita**. Para que valga hace falta, como mínimo:
 - H4 sigue **no aprobada**. La matriz de riesgos (`h4-puerta-sio.md` §5) no cambia.
 
 ## 7. Decisiones pendientes del responsable
+
+**Actualización del 2026-11-25 (decisiones del responsable):**
+- **D1:** aprobada. El PR #108 se fusionó (`d48b245`).
+- **D3 (registrada primero como prohibición de conexión; el responsable la cambió el mismo día):** **aceptación de riesgo acotada**. El responsable asume el riesgo eléctrico preexistente de su FN32ROV-1.3-Q24 y
+  permite conectarla al SIO del 65XE **solo para disco, menú y TNFS**, hasta tener una protección de MOTOR validada.
+  Condiciones:
+  - sin casete ni lectura de MOTOR: `kTapeOutput` sigue en `false` y GPIO36 no se configura;
+  - regla operativa: no iniciar cargas de casete con la FujiNet conectada. Reduce la exposición, no la elimina:
+    MOTOR puede activarse por otro camino (un programa que maneje CA2, por ejemplo);
+  - **no es una validación eléctrica:** no aprueba M3a, H4 ni DATA IN, no autoriza las etapas M3–M6 del
+    procedimiento ni ninguna medición que conecte MOTOR a la placa, y no cambia `puertas.json`.
+  - D3 solo trata el riesgo de MOTOR. El uso de DATA IN sigue regido por sus propias puertas y paquetes.
+  Base: `docs/mediciones/m3a-motor-2026-11-25.md` (B4 = **4,89 V** sin carga, «Detener»; M-2 y M-3 con la placa
+  conectada).
+- **Orden acordado para el resto:** D2 → D4 → D5. Para D2 se prioriza completar M3a con osciloscopio (picos) y
+  después diseñar y validar una adaptación de nivel para MOTOR. Ninguna resistencia ni buffer queda aprobado todavía.
+- La tabla siguiente se conserva como registro de las opciones.
 
 | # | Decisión | Opciones | Efecto |
 |---|---|---|---|

@@ -30,7 +30,10 @@
   10 kΩ, a GND [E] (`h4-puerta-sio.md` §3.4; confirmado otra vez en §2.2).
 - GPIO36 es solo entrada. Máximo **VDD + 0,3 V ≈ 3,6 V** [D].
 - El 65XE da MOTOR con Q7 (PNP, emisor en +5 V), **sin resistencia en serie** [E-Atari]. Previsión: **4,7–4,9 V**
-  con el motor encendido [T]. **No medido** [P]: lo mide M3a.
+  con el motor encendido [T]. **Medido el 2026-11-25: 4,89 V** en el Atari solo, sin carga (B4 de M3a, «Detener»;
+  `docs/mediciones/m3a-motor-2026-11-25.md`). Picos sin medir [P].
+- Con la FujiNet conectada, en su conector posterior y sin USB: **4,87 V con S5 encendido** y **3,16 V con S5
+  apagado** [H]. La caída con S5 apagado no tiene causa verificada (hipótesis HS1–HS4 del registro) [P].
 - Para T9 de `menu-cinta` hay que **leer** MOTOR. Quitar el pin 8 (mitigación C) protege, pero impide T9.
 
 ## 2. Comparación de esquemas: FN32ROV-1.3-Q24 frente a FN32ROV-1.6
@@ -239,7 +242,7 @@ Usa la puerta 2 libre de U3 [E].
 | P1 | MOTOR real fuera de 4,7–5,25 V, o con picos | Todas | M3a antes de fijar Rs |
 | P2 | R2 fuera de ±5 % | A, B | M0: medir R2 |
 | P3 | Margen VIH de solo 0,25 V | A | Recalcular con M3a; V4 y V7 |
-| P4 | Corriente por la protección con la FujiNet apagada; alimentación parásita | A, B | Etapa V6 |
+| P4 | Corriente por la protección con la FujiNet apagada; alimentación parásita. **Indicio del 2026-11-25:** con S5 apagado MOTOR cae a 3,16 V; causa sin verificar (HS1–HS4) | A, B | Etapa V6; la protección debe limitar esa corriente con la placa apagada, sea cual sea la causa |
 | P5 | XC12 en J2 sin MOTOR completo | A, B | Limitación documentada; no usar XC12 detrás |
 | P6 | Adaptador mal montado (Rs en otro pin, puentes) | A, B | V2 con multímetro, sin energía |
 | P7 | Daño a la placa en el retrabajo | E | Decisión aparte; quien tenga práctica en SOIC/0402 |
@@ -248,7 +251,10 @@ Usa la puerta 2 libre de U3 [E].
 
 ## 7. Verificaciones pendientes
 
-- [ ] M3a: nivel estable y picos de MOTOR en el Atari solo, con y sin 10 kΩ (ficha existente).
+- [ ] M3a: nivel estable y picos de MOTOR en el Atari solo, con y sin 10 kΩ (ficha existente). B4 = 4,89 V ya
+      medido; picos, A, C, D y E pendientes.
+- [ ] Causa de la caída de MOTOR a 3,16 V con S5 apagado (HS1–HS4 del registro del 2026-11-25). Solo con un
+      procedimiento seguro aprobado si exige conectar MOTOR a la placa.
 - [ ] M0: R2 real; continuidad `SIO_MCTL`–IO36.
 - [ ] VIH/VIL de GPIO36 en la hoja de datos de la ESP32-WROVER del equipo.
 - [ ] Corriente admisible por la protección de los pines del ESP32 (si Espressif la da).

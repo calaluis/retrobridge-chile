@@ -1,7 +1,7 @@
 ---
 author: Calaluis
 branch: docs/enmienda-motor-gpio36
-status: in-review
+status: done
 ---
 # Enmienda de MOTOR y GPIO36 en la FN32ROV-1.3-Q24 (propuesta)
 
@@ -43,7 +43,7 @@ Fuera:
       `proteccion-motor-gpio36.md` §5 y `mitigacion-c-motor-pin8.md` §8.
 - [x] Observación: D3(b) es una regla operativa de reducción de exposición, no una mitigación ni un sustituto de
       M3a — prueba: D3 y CA9.
-- [ ] Segunda revisión independiente.
+- [x] Segunda revisión independiente y fusión — prueba: PR #108 fusionado en `d48b245`.
 
 ## Evidence
 

@@ -38,8 +38,11 @@ Fuera:
   `C8A REFUSED` (SIO +5V ≈1 V con solo USB). **C8a no pasa.**
 - [x] menu-sio restaurado y verificado; registro en `docs/mediciones/` — prueba: `bea39e1` con `verify_flash` OK y
   arranque correcto; `docs/mediciones/banco-c8a-2026-11-25.md`.
+- [x] Revisión 1, H1 (medición posterior del pin 10) — prueba: registro §6 separa ADC de GPIO35, valor calculado y
+  multímetro del pin 10 (dato del responsable); §8 deja GPIO35, la diferencia y el umbral como pendientes.
 
 ## Next step
 
-F4 ejecutada y rechazada por C-1. Siguiente: medir la línea SIO +5V con multímetro y decidir el umbral de C-1
-en su propio PR. Repetir `c8a run` solo con nueva autorización escrita.
+F4 ejecutada y rechazada por C-1. Pin 10 ya medido con multímetro (0,86–0,88 V con solo USB). Siguiente: medir
+GPIO35, explicar la diferencia con el valor calculado y decidir el umbral de C-1 en su propio PR. Repetir `c8a run`
+solo con nueva autorización escrita.

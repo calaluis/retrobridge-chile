@@ -12,7 +12,8 @@
 > **F4 autorizada por escrito** por el responsable (2026-11-25, «Procede con el F4»): la imagen se sube solo en una
 > ejecución manual sobre `main`, con retención de 7 días (§6, Estado de F4).
 > **F4 ejecutada** (2026-11-25, `docs/mediciones/banco-c8a-2026-11-25.md`): **rechazada por C-1**. Con solo USB, la
-> línea SIO +5V de la FujiNet 1.3 da ≈1 V (≈675 mV en GPIO35), por encima del umbral de «ausente». C8a no pasa.
+> línea SIO +5V de la FujiNet 1.3 tiene tensión (≈675 mV en GPIO35 por ADC; 0,86–0,88 V en el pin 10 con
+> multímetro), por encima del umbral de «ausente». C8a no pasa.
 
 ## 1. Para qué sirve
 
@@ -162,9 +163,11 @@ por USB (COM3), con el cable SIO desconectado y sin el Atari. Se vuelve a confir
    y restauración.
 
 **Resultado (2026-11-25):** imagen `d5934bb` instalada y verificada; `c8a run` respondió `C8A REFUSED`: 8 lecturas
-válidas de 670 a 681 mV en GPIO35, «presente». GPIO21 no se tocó. La misma lectura aparece con menu-sio antes y
-después, así que no la causa el banco. menu-sio `bea39e1` restaurado y verificado. El umbral de C-1 no cambia sin una
-medición con multímetro y una decisión del responsable (`docs/mediciones/banco-c8a-2026-11-25.md` §8).
+válidas de 670 a 681 mV en GPIO35, «presente». GPIO21 no se tocó. La misma lectura ADC aparece con menu-sio antes y
+después, así que no la causa el banco. menu-sio `bea39e1` restaurado y verificado. Después, el responsable midió con
+multímetro el pin 10 solo con USB: 0,86 V y 0,88 V (0,00 V sin USB). Esa medición está hecha, pero no basta para
+cambiar C-1 ni para repetir el banco: faltan GPIO35 con multímetro, explicar la diferencia con el valor calculado
+(≈1,02 V) y la decisión del responsable (`docs/mediciones/banco-c8a-2026-11-25.md` §6 y §8).
 
 C8a no aprueba H4, no acepta R2 ni R7, no mide niveles (C8b) y no conecta el Atari.
 

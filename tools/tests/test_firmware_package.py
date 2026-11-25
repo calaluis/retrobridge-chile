@@ -1349,14 +1349,16 @@ class BenchC8aPackageTest(unittest.TestCase):
         self.gates(gate_record())
         self.assert_refused(fp.BENCH_CHECK, "cassette")
 
-    def test_no_ci_step_uploads_a_bench_package(self):
-        # C-6: no distribution without an explicit decision. Each upload-artifact step, up to the next step.
+    def test_a_bench_package_is_uploaded_only_by_a_manual_run(self):
+        # C-6 as amended by F4 (owner's decision, 2026-11-25): a bench image leaves the runner only in a manual run
+        # (workflow_dispatch), never in a Pull Request or a push. Each upload-artifact step, up to the next step.
         ci = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        steps = re.split(r"\n\s*- (?:name|uses):", ci)
+        steps = re.split(r"\n\s*- (?:name|uses):", ci.replace("\r\n", "\n"))
         uploads = [s for s in steps if "actions/upload-artifact" in s]
         self.assertTrue(uploads)
         for step in uploads:
-            self.assertNotIn("bench", step.lower())
+            if "bench" in step.lower():
+                self.assertIn("if: github.event_name == 'workflow_dispatch'", step)
 
 
 class BenchC8aCiJobTest(unittest.TestCase):
@@ -1390,13 +1392,25 @@ class BenchC8aCiJobTest(unittest.TestCase):
         self.assertIn("--variant bench-c8a", job)
         self.assertRegex(job, r"firmware_package\.py verify ")
 
-    def test_the_job_distributes_nothing(self):
-        job = self.job()
-        self.assertNotIn("upload-artifact", job)
-        self.assertNotIn("GITHUB_OUTPUT", job)  # nothing handed on to another step or job
-        uses = re.findall(r"uses:\s*(\S+)", job)
-        self.assertTrue(uses)
-        self.assertTrue(all(u.startswith("actions/checkout@") for u in uses), uses)
+    def steps(self):
+        return re.split(r"\n      - ", self.job())[1:]
+
+    def test_the_job_uploads_only_in_a_manual_run(self):
+        # F4 (owner's decision): the image is uploaded only by workflow_dispatch, for 7 days, under the
+        # BENCH-C8A-NO-SIO name. Pull Requests build and verify it and upload nothing.
+        steps = self.steps()
+        uploads = [s for s in steps if "actions/upload-artifact@" in s]
+        self.assertEqual(len(uploads), 1)
+        upload = uploads[0]
+        self.assertIn("if: github.event_name == 'workflow_dispatch'", upload)
+        self.assertRegex(upload, r"retention-days: 7\b")
+        self.assertIn("name: ${{ steps.package.outputs.name }}", upload)
+        self.assertIn('name="retrobridge-BENCH-C8A-NO-SIO-fujinet-atari-v1x-${FW_COMMIT:0:7}"', self.job())
+        for step in steps:
+            if "steps.upload." in step:  # every step after the upload runs only when it ran
+                self.assertIn("if: github.event_name == 'workflow_dispatch'", step)
+        uses = re.findall(r"uses:\s*(\S+)", self.job())
+        self.assertTrue(all(u.startswith(("actions/checkout@", "actions/upload-artifact@")) for u in uses), uses)
         self.assertNotIn(self.JOB, re.sub(r"^  " + re.escape(self.JOB) + r":\n", "", self.ci, flags=re.M))  # no needs:
 
     def test_the_job_never_writes_to_the_board(self):

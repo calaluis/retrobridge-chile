@@ -109,7 +109,8 @@ El script de consola reinicia la placa por RTS, captura 8 s de arranque y despu�
 Para repetir la prueba basta con volver a ejecutarlo: se ejecuta en cada arranque.
 
 > **Desde F1 de C8a** el banco no corre al arrancar: la captura debe enviar `c8a run`, y la línea `cassette ready`
-> de §6 ya no aparece. Este procedimiento se actualiza con F2 (variante) y F4 (ejecución).
+> de §6 ya no aparece. Para C8a, la imagen y los pasos están en `banco-c8a-aislado.md` §6 (Estado de F4); la
+> instalación de §4 no cambia.
 
 ## 6. Salida esperada si pasa
 

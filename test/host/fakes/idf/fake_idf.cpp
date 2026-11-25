@@ -579,8 +579,11 @@ esp_err_t uart_flush_input(uart_port_t)
 {
     auto& s = fake_idf::state();
     deliver(s);
-    s.rx.clear();
     ++s.uartFlushes;
+    if (s.failUartFlush) {
+        return ESP_FAIL;
+    }
+    s.rx.clear();
     return ESP_OK;
 }
 

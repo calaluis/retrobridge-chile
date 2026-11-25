@@ -61,6 +61,8 @@ public:
     void idleLine() override;
 
 private:
+    bool flushed() noexcept;  // the one uart_flush_input(): true only if the input was emptied
+
     Pins pins_;
     int txRing_;
     bool ready_ = false;

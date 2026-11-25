@@ -97,7 +97,9 @@ bool EspSioUart::resume() noexcept
         uart_get_stop_bits(kUart, &stop) != ESP_OK || stop != UART_STOP_BITS_1) {
         return false;
     }
-    flushInput();  // what came in at the tape's rate is garbage for the disk
+    if (!flushed()) {  // what came in at the tape's rate is garbage for the disk (review of PR #107)
+        return false;
+    }
     parked_ = false;
     return true;
 }
@@ -156,12 +158,9 @@ rb::core::Result<void> EspSioUart::write(rb::core::Span<const uint8_t> bytes)
     return {};
 }
 
-void EspSioUart::flushInput()
-{
-    if (ready_) {
-        (void)uart_flush_input(kUart);
-    }
-}
+void EspSioUart::flushInput() { (void)flushed(); }
+
+bool EspSioUart::flushed() noexcept { return ready_ && uart_flush_input(kUart) == ESP_OK; }
 
 void EspSioUart::idleLine()
 {

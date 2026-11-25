@@ -523,6 +523,22 @@ Rama `feat/menu-cinta-t9a7b`, sacada de main `6f5be96` (PR #106 fusionado).
   tiene prueba de host (código ESP); el 65XE real (banco T9b, que además debe medir los tiempos del SIO con el
   anillo, riesgo R9).
 
+### Revisión del PR #107 (2026-11-24)
+
+- **CI (UBSan):** el doble de `uart.h` solo tenía un valor por enum y las pruebas de `resume()` cargaban paridad 2
+  y bits de parada 3. El doble ahora tiene los valores de `hal/uart_types.h` (`172ea16`).
+- **Hallazgo:** `resume()` llamaba a `flushInput()` sin comprobar `uart_flush_input()`. Si el vaciado fallaba, D1
+  se declaraba recuperada con bytes leídos a 600 baudios aún en la entrada.
+- **Corrección:** un helper privado, `flushed()`, hace el único `uart_flush_input()` y devuelve si vació la entrada.
+  `resume()` devuelve `false` (disco aparcado) si falla; `flushInput()` lo usa e ignora el resultado, como antes. La
+  lista de llamadas no cambia (54).
+- **Prueba nueva:** `test_a_failed_flush_keeps_the_disk_parked`: con el vaciado fallido, `resume()` es `false`, el
+  disco sigue aparcado y no escribe; un reintento con vaciado correcto vacía la entrada y vuelve a servir.
+- **RED:** falló («Expected FALSE Was TRUE»). **GREEN:** 18 en `test_esp_sio_uart`; host 99/99, también con UBSan;
+  herramientas 307/307; capas OK.
+- **Mutantes:** 22 de 22. Nuevos: `resume` ignora el vaciado fallido, `flushInput` no vacía y `flushed()` ignora
+  el resultado.
+
 ## Siguiente
 
 Revisar este PR de documentos. Los PR de código de T9a empiezan solo después de aprobarlo, uno por tarea.

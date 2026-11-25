@@ -367,6 +367,29 @@ void test_park_and_resume_need_the_line()
     TEST_ASSERT_FALSE(line.resume());
 }
 
+// Review of PR #107: the input flush is a step of resume() too. If uart_flush_input() fails, the bytes read at
+// the tape's rate may still be there: D1 stays parked. A later resume() whose flush works serves again.
+void test_a_failed_flush_keeps_the_disk_parked()
+{
+    EspSioUart& line = sharedLine();
+    auto& s = fake_idf::state();
+    const uint8_t answer[1] = {0x41};
+    TEST_ASSERT_TRUE(line.park());
+    tapeSends(1);
+    fake_idf::tx_advance(100000);
+    s.rx = {0xAA, 0x55};
+    s.failUartFlush = true;
+    TEST_ASSERT_FALSE(line.resume());
+    TEST_ASSERT_TRUE(line.parked());
+    TEST_ASSERT_FALSE(line.write(Span<const uint8_t>{answer, 1}).ok());
+    TEST_ASSERT_EQUAL_UINT(2, s.rx.size());
+    s.failUartFlush = false;
+    TEST_ASSERT_TRUE(line.resume());
+    TEST_ASSERT_FALSE(line.parked());
+    TEST_ASSERT_EQUAL_UINT(0, s.rx.size());
+    TEST_ASSERT_TRUE(line.write(Span<const uint8_t>{answer, 1}).ok());
+}
+
 // end() then begin() (the console's `sio` restart) starts a line that serves: nothing parked is left behind.
 void test_a_new_begin_is_not_parked()
 {
@@ -399,5 +422,6 @@ int main()
     RUN_TEST(test_a_failed_resume_keeps_the_disk_parked);
     RUN_TEST(test_park_and_resume_need_the_line);
     RUN_TEST(test_a_new_begin_is_not_parked);
+    RUN_TEST(test_a_failed_flush_keeps_the_disk_parked);
     return UNITY_END();
 }

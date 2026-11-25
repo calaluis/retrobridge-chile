@@ -283,6 +283,56 @@ static void test_release_with_a_failed_reset_is_not_released(void)
     TEST_ASSERT_TRUE(fake_idf::state().owner == Owner::Gpio);
 }
 
+// PR #113 review H1: after a release() that deleted UART2 but could not reset the pin, nothing may report DATA IN
+// available again without UART2: configure() does not claim it, recover() and giveBack() keep the fault. Only a
+// release() that completes ends the state, without deleting UART2 a second time; then configure() installs it again.
+static void failedReleaseLeavesUartDeleted()
+{
+    configured();
+    fake_idf::state().failGpioReset = true;
+    TEST_ASSERT_FALSE(g_dataIn->release());
+    TEST_ASSERT_FALSE(fake_idf::state().uartInstalled);
+    fake_idf::state().failGpioReset = false;
+}
+
+static void test_configure_after_a_failed_release_does_not_claim_the_line(void)
+{
+    failedReleaseLeavesUartDeleted();
+    TEST_ASSERT_FALSE(g_dataIn->configure(granted()));
+    TEST_ASSERT_FALSE(fake_idf::state().uartInstalled);
+    TEST_ASSERT_TRUE(g_dataIn->faulted());
+    expectRefusesEverything();
+}
+
+static void test_recover_after_a_failed_release_keeps_the_fault(void)
+{
+    failedReleaseLeavesUartDeleted();
+    TEST_ASSERT_FALSE(g_dataIn->recover());
+    TEST_ASSERT_TRUE(g_dataIn->faulted());
+    expectRefusesEverything();
+}
+
+static void test_give_back_after_a_failed_release_is_lost(void)
+{
+    failedReleaseLeavesUartDeleted();
+    TEST_ASSERT_TRUE(g_dataIn->giveBack() == EspDataIn::GiveBack::Lost);
+    TEST_ASSERT_TRUE(g_dataIn->faulted());
+    TEST_ASSERT_FALSE(g_dataIn->hardwareFree());
+}
+
+static void test_a_completed_release_then_configure_installs_uart2_again(void)
+{
+    failedReleaseLeavesUartDeleted();
+    const unsigned deletes = fake_idf::state().uartDeletes;
+    TEST_ASSERT_TRUE(g_dataIn->release());
+    TEST_ASSERT_EQUAL_UINT32(deletes, fake_idf::state().uartDeletes);  // UART2 not deleted a second time
+    TEST_ASSERT_FALSE(g_dataIn->enabled());
+    TEST_ASSERT_TRUE(g_dataIn->configure(granted()));
+    TEST_ASSERT_TRUE(fake_idf::state().uartInstalled);
+    TEST_ASSERT_TRUE(fake_idf::state().owner == Owner::Uart);
+    TEST_ASSERT_FALSE(g_dataIn->faulted());
+}
+
 static void test_release_without_configure_does_nothing(void)
 {
     g_dataIn = new (g_storage) EspDataIn();
@@ -598,6 +648,10 @@ int main()
     RUN_TEST(test_release_mid_run_stops_it_first);
     RUN_TEST(test_release_without_configure_does_nothing);
     RUN_TEST(test_release_with_a_failed_reset_is_not_released);
+    RUN_TEST(test_configure_after_a_failed_release_does_not_claim_the_line);
+    RUN_TEST(test_recover_after_a_failed_release_keeps_the_fault);
+    RUN_TEST(test_give_back_after_a_failed_release_is_lost);
+    RUN_TEST(test_a_completed_release_then_configure_installs_uart2_again);
     RUN_TEST(test_trace_reports_each_hand_over_call_with_its_result);
     RUN_TEST(test_a_run_in_flight_keeps_the_rmt_without_logging);
     RUN_TEST(test_normal_end_comes_from_the_rmt_and_disables_once);

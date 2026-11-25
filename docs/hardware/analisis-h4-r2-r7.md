@@ -30,7 +30,7 @@ bloquea el bus para todos los periféricos (`h4-puerta-sio.md` §3.2).
 | Fin del tramo | El RMT avisa por `on_trans_done`; `pump()` devuelve el pin a UART2 | Verificado: `test_normal_end_comes_from_the_rmt_and_disables_once` |
 | Cancelación (`stop()`, bajada de MOTOR) | `rmt_disable` una sola vez, borrado del canal, pin a UART2 | Verificado: `test_cancel_disables_once_and_gives_the_pin_back` |
 | El RMT no suelta el pin | El canal se conserva, UART2 no se monta encima, `pump()` y `release()` reintentan | Verificado: 4 pruebas `test_a_failed_disable…` y `test_a_failed_delete…` |
-| UART2 no recupera el pin | `gpio_reset_pin(21)`: salida apagada; el driver queda en fallo y rechaza todo hasta `recover()` | Verificado: `test_release_failure_*`, `test_a_failed_safe_state_is_still_a_fault` |
+| UART2 no recupera el pin | Intenta `gpio_reset_pin(21)` (salida apagada). El driver queda en fallo y rechaza todo hasta `recover()`. **Si el reset también falla, el pin puede seguir sin liberar**: el driver lo sabe (fallo), pero la línea no se libera | Verificado en el modelo: `test_release_failure_*`, `test_a_failed_safe_state_is_still_a_fault` |
 | Modo compartido con el disco | El pin vuelve al disco solo si la matriz GPIO lee U2TXD con la salida activa | Verificado: `test_give_back_routes_the_pin_to_uart2_and_checks_the_matrix` y 2 más |
 | Arbitraje disco/casetera | Una toma fallida, un plazo vencido o perder las puertas devuelven la línea al disco o la sueltan | Verificado: 37 pruebas en `test_data_in_arbiter.cpp` y `test_data_in_handover.cpp` |
 | Llamadas que podrían fijar el pin | `gpio_set_level`, `gpio_set_direction`, `uart_set_line_inverse` y `break` no se usan sobre GPIO21. El empaquetador cuenta cada llamada GPIO, UART y RMT por archivo | Verificado: `git grep` y `CASSETTE_SIO_CALLS` / `FORBIDDEN_CALLS` en `tools/ci/firmware_package.py` |
@@ -47,6 +47,16 @@ bloquea el bus para todos los periféricos (`h4-puerta-sio.md` §3.2).
   `release()` posterior lo reintenta.
 - Prueba: `test_release_with_a_failed_reset_is_not_released`. RED observado antes del cambio (línea 274,
   «Expected FALSE Was TRUE»); GREEN después. El número de llamadas `gpio_reset_pin` no cambia (sigue en 2).
+- **Revisión del PR #113, H1.** Tras ese `release()` incompleto, UART2 ya está borrado. Antes de la segunda
+  corrección, tres llamadas daban la línea por disponible sin UART2: `configure()` devolvía `true` sin reinstalarlo,
+  y `recover()` y `giveBack()` limpiaban el fallo porque `uart_set_pin()` funciona sin el driver. Ahora un estado
+  propio (`uartDeleted_`) lo impide: `configure()` devuelve `false`, `recover()` mantiene el fallo, `giveBack()`
+  devuelve `Lost`, y solo un `release()` completo cierra el estado, sin borrar UART2 otra vez. Después,
+  `configure()` lo instala de nuevo. Pruebas: 4 nuevas (`test_configure_after_a_failed_release_…`,
+  `test_recover_after_a_failed_release_…`, `test_give_back_after_a_failed_release_…`,
+  `test_a_completed_release_then_configure_…`), RED antes y GREEN después.
+- **Límite:** esto corrige lo que el **software** cree del pin. Si `gpio_reset_pin()` falla en la placa, la línea
+  puede seguir sin liberar hasta que un `release()` funcione. El nivel eléctrico real no lo prueba el host.
 
 ### 1.3 Lo que las pruebas de host no pueden demostrar
 
@@ -111,11 +121,15 @@ SIO_5V ──D5 (PMEG2010)──┘            ▲
 
 ## 3. Matriz de evidencia
 
+«Verificado» en las filas de software significa el **estado del driver** en el modelo del host. Ninguna fila
+verifica el **nivel eléctrico** de GPIO21 ni del pin 3.
+
 | # | Afirmación | Verificado | Inferido | Pendiente |
 |---|---|---|---|---|
 | 1 | Ninguna ruta de software deja GPIO21 como salida GPIO en bajo | ✔ (código, empaquetador, pruebas) | | |
-| 2 | Toda cancelación o fallo de software devuelve el pin a UART2 o lo resetea | ✔ (host: ownership) | | |
-| 3 | `release()` solo dice «liberado» con el pin reseteado | ✔ (prueba nueva, RED→GREEN) | | |
+| 2 | Toda cancelación o fallo **intenta** devolver el pin a UART2 o resetearlo, y si los dos fallan el driver queda en fallo y rechaza todo | ✔ (modelo del host: estado del driver) | | |
+| 2b | Si fallan a la vez la vuelta a UART2 y el reset, el pin queda liberado | | | **No**: puede seguir sin liberar. Nivel real: C8a/C8b |
+| 3 | `release()` solo dice «liberado» con el pin reseteado, y nada da la línea por disponible sin UART2 | ✔ (5 pruebas nuevas, RED→GREEN) | | |
 | 4 | El RMT deja el pin en alto al terminar y al cancelar | ✔ (configuración) | ✔ (nivel tras la cancelación) | C8a, C8b |
 | 5 | La matriz GPIO en la placa sigue el modelo del host | | | C8a |
 | 6 | El pin 3 del SIO queda en alto tras transmitir | | | C8b |

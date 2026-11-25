@@ -31,8 +31,11 @@ Fuera:
   línea 274 antes del cambio, GREEN después.
 - [x] Host completo en verde — prueba: `ctest` 100/100.
 - [x] `tools/tests`, `check_notices` y `check_layering` en verde — prueba: salida en el PR.
+- [x] Primera revisión (`6063860986`): H1, recuperación sin UART2 tras un `release()` incompleto (estado
+  `uartDeleted_`, 4 pruebas RED→GREEN); H2, la matriz distingue el estado del driver del nivel eléctrico — prueba:
+  `ctest` 100/100 y `analisis-h4-r2-r7.md` §1.2 y §3.
 - [ ] CI del PR en verde.
-- [ ] Revisión independiente.
+- [ ] Revisión independiente final.
 
 ## Evidence
 

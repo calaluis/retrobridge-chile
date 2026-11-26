@@ -468,9 +468,12 @@ PROFILE_HEADER = """constexpr BoardProfile fujinet_atari_v1x_profile() noexcept
 """
 
 
-def gate_record(h4=True, m3a=True):
+def gate_record(h4=True, m3a=True, data_in=False):
+    data = ({"aprobada": True, "fecha": "2026-11-26", "registro": "docs/mediciones/data-in-prueba.md"} if data_in
+            else {"aprobada": False, "fecha": None, "registro": None})
     return {"H4": {"aprobada": h4, "fecha": "2026-11-22", "registro": "docs/mediciones/h4-prueba.md"},
-            "M3a": {"aprobada": m3a, "fecha": "2026-11-22", "registro": "docs/mediciones/m3a-prueba.md"}}
+            "M3a": {"aprobada": m3a, "fecha": "2026-11-22", "registro": "docs/mediciones/m3a-prueba.md"},
+            "DATA-IN": data}
 
 
 class CassettePackageTest(unittest.TestCase):
@@ -486,6 +489,7 @@ class CassettePackageTest(unittest.TestCase):
         self.profile(True, True)
         write(src / "docs" / "mediciones" / "h4-prueba.md", "# H4 (datos de prueba)\n")
         write(src / "docs" / "mediciones" / "m3a-prueba.md", "# M3a (datos de prueba)\n")
+        write(src / "docs" / "mediciones" / "data-in-prueba.md", "# DATA-IN (datos de prueba)\n")
         self.gates(gate_record())
         write(self.f.build / "retrobridge.elf", CASSETTE_ELF)
         write(self.f.build / "retrobridge.bin", app_image(version="7621040", elf=CASSETTE_ELF, extra=CASSETTE_APP_MARKERS))
@@ -499,7 +503,7 @@ class CassettePackageTest(unittest.TestCase):
 
     def profile(self, h4, m3a):
         write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp",
-              PROFILE_HEADER % ("true" if h4 else "false", "true" if m3a else "false"))
+              PROFILE_HEADER % tuple("true" if g else "false" for g in (h4, m3a)))
 
     def gates(self, record):
         write(self.f.src / "docs" / "mediciones" / "puertas.json", json.dumps(record))
@@ -553,41 +557,41 @@ class CassettePackageTest(unittest.TestCase):
 
     def test_h4_not_approved_in_the_record_is_refused(self):
         self.gates(gate_record(h4=False))
-        self.assert_refused("puertas H4 y M3a (registro)")
+        self.assert_refused("puertas H4, M3a y DATA-IN (registro)")
 
     def test_m3a_not_approved_in_the_record_is_refused(self):
         self.gates(gate_record(m3a=False))
-        self.assert_refused("puertas H4 y M3a (registro)")
+        self.assert_refused("puertas H4, M3a y DATA-IN (registro)")
 
     def test_approval_must_be_the_json_true(self):
         record = gate_record()
         record["M3a"]["aprobada"] = "sí"
         self.gates(record)
-        self.assert_refused("puertas H4 y M3a (registro)")
+        self.assert_refused("puertas H4, M3a y DATA-IN (registro)")
 
     def test_a_gate_missing_from_the_record_is_refused(self):
         record = gate_record()
         del record["H4"]
         self.gates(record)
-        self.assert_refused("puertas H4 y M3a (registro)")
+        self.assert_refused("puertas H4, M3a y DATA-IN (registro)")
 
     def test_measurement_record_must_exist(self):
         (self.f.src / "docs" / "mediciones" / "m3a-prueba.md").unlink()
-        self.assert_refused("puertas H4 y M3a (registro)")
+        self.assert_refused("puertas H4, M3a y DATA-IN (registro)")
 
     def test_measurement_record_must_stay_in_docs_mediciones(self):
         record = gate_record()
         record["H4"]["registro"] = "main/app_main.cpp"
         self.gates(record)
-        self.assert_refused("puertas H4 y M3a (registro)")
+        self.assert_refused("puertas H4, M3a y DATA-IN (registro)")
 
     def test_gate_record_missing_is_refused(self):
         (self.f.src / "docs" / "mediciones" / "puertas.json").unlink()
-        self.assert_refused("puertas H4 y M3a (registro)")
+        self.assert_refused("puertas H4, M3a y DATA-IN (registro)")
 
     def test_gate_record_not_json_is_refused(self):
         write(self.f.src / "docs" / "mediciones" / "puertas.json", "{H4: aprobada}")
-        self.assert_refused("puertas H4 y M3a (registro)")
+        self.assert_refused("puertas H4, M3a y DATA-IN (registro)")
 
     # the exception is only the calls C107 needs
 
@@ -630,7 +634,7 @@ class CassettePackageTest(unittest.TestCase):
         fp.write_manifest(self.f.out)  # a consistent manifest does not help
         log = fp.verify_package(self.f.out)
         self.assertFalse(log.ok)
-        self.assertIn("puertas H4 y M3a (registro)", self.failed(log))
+        self.assertIn("puertas H4, M3a y DATA-IN (registro)", self.failed(log))
 
     def test_verify_refuses_a_record_that_differs_from_provenance(self):
         self.assertTrue(self.package().ok)
@@ -638,13 +642,13 @@ class CassettePackageTest(unittest.TestCase):
         record["H4"]["fecha"] = "2030-01-01"
         write(self.f.out / "config" / "puertas.json", json.dumps(record))
         fp.write_manifest(self.f.out)
-        self.assertIn("puertas H4 y M3a (registro)", self.failed(fp.verify_package(self.f.out)))
+        self.assertIn("puertas H4, M3a y DATA-IN (registro)", self.failed(fp.verify_package(self.f.out)))
 
     def test_verify_refuses_a_missing_record(self):
         self.assertTrue(self.package().ok)
         (self.f.out / "config" / "puertas.json").unlink()
         fp.write_manifest(self.f.out)
-        self.assertIn("puertas H4 y M3a (registro)", self.failed(fp.verify_package(self.f.out)))
+        self.assertIn("puertas H4, M3a y DATA-IN (registro)", self.failed(fp.verify_package(self.f.out)))
 
     def test_verify_requires_the_profile_check_recorded(self):
         self.assertTrue(self.package().ok)
@@ -670,7 +674,8 @@ class CassettePackageTest(unittest.TestCase):
     # holes found in review: hidden profiles, other GPIO/UART/RMT uses, wrong pins, record tricks
 
     def test_an_approved_profile_hidden_behind_if_0_is_refused(self):
-        hidden = "#if 0\n" + PROFILE_HEADER % ("true", "true") + "#endif\n" + PROFILE_HEADER % ("false", "false")
+        hidden = ("#if 0\n" + PROFILE_HEADER % ("true", "true") + "#endif\n"
+                  + PROFILE_HEADER % ("false", "false"))
         write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp", hidden)
         self.assert_refused("puertas H4 y M3a (perfil)")
 
@@ -720,19 +725,19 @@ class CassettePackageTest(unittest.TestCase):
     def test_a_repeated_key_in_the_record_is_refused(self):
         text = json.dumps(gate_record(m3a=False))[:-1] + ', "M3a": ' + json.dumps(gate_record()["M3a"]) + "}"
         write(self.f.src / "docs" / "mediciones" / "puertas.json", text)
-        self.assert_refused("puertas H4 y M3a (registro)")
+        self.assert_refused("puertas H4, M3a y DATA-IN (registro)")
 
     def test_an_impossible_date_is_refused(self):
         record = gate_record()
         record["H4"]["fecha"] = "2026-02-30"
         self.gates(record)
-        self.assert_refused("puertas H4 y M3a (registro)")
+        self.assert_refused("puertas H4, M3a y DATA-IN (registro)")
 
     def test_the_measurement_record_must_name_its_gate(self):
         record = gate_record()
         record["M3a"]["registro"] = "docs/mediciones/h4-prueba.md"
         self.gates(record)
-        self.assert_refused("puertas H4 y M3a (registro)")
+        self.assert_refused("puertas H4, M3a y DATA-IN (registro)")
 
     def test_the_calls_before_c8_are_accepted_as_a_whole(self):
         # The retired cassette-lectura job pinned f405106, written before H4-C C8.
@@ -801,7 +806,7 @@ class CassettePackageTest(unittest.TestCase):
         for variant in ("diag", "h3c"):
             names = [c.name for c in self.package(variant).checks]
             self.assertNotIn("puertas H4 y M3a (perfil)", names)
-            self.assertNotIn("puertas H4 y M3a (registro)", names)
+            self.assertNotIn("puertas H4, M3a y DATA-IN (registro)", names)
 
     def test_diag_verify_keeps_its_recorded_checks(self):
         for name in ("esp_data_in.cpp", "cassette_service.cpp"):
@@ -817,10 +822,11 @@ class CassettePackageTest(unittest.TestCase):
         self.assertTrue(log.ok, self.failed(log))
         names = [c.name for c in log.checks]
         self.assertIn("registrado en CI: sin GPIO/UART del SIO (código)", names)
-        self.assertNotIn("puertas H4 y M3a (registro)", names)
+        self.assertNotIn("puertas H4, M3a y DATA-IN (registro)", names)
 
     def test_real_profile_and_record_refuse_the_cassette_package(self):
-        # docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md: M3a approved by risk acceptance, H4 not
+        # docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md: M3a approved by risk acceptance, H4 not;
+        # docs/mediciones/aceptacion-data-in-casete-2026-11-26.md: DATA-IN accepted for the menu-sio cassette
         repo = Path(__file__).resolve().parents[2]
         self.assertEqual(fp.profile_gates(repo), (False, True))
         ok, _detail, _record = fp.read_gate_record(repo)
@@ -828,7 +834,7 @@ class CassettePackageTest(unittest.TestCase):
 
     def test_real_profile_and_record_allow_the_menu_sio_package(self):
         repo = Path(__file__).resolve().parents[2]
-        self.assertEqual(fp.profile_gates(repo), fp.VARIANTS["menu-sio"].gates)
+        self.assertEqual(fp.profile_gates(repo), fp.VARIANTS["menu-sio"].gates[:2])
         ok, detail, _record = fp.read_gate_record(repo, fp.VARIANTS["menu-sio"].gates)
         self.assertTrue(ok, detail)
 
@@ -836,8 +842,8 @@ class CassettePackageTest(unittest.TestCase):
         # spec puertas-aceptacion-riesgo CA4: they needed H4 and M3a unsigned; only menu-sio is installed before T9b
         for name in ("cassette-lectura", "bench-c8"):
             self.assertNotIn(name, fp.VARIANTS)
-        self.assertEqual(fp.VARIANTS["menu-sio"].gates, (False, True))
-        self.assertEqual(fp.VARIANTS["cassette"].gates, (True, True))
+        self.assertEqual(fp.VARIANTS["menu-sio"].gates, (False, True, True))
+        self.assertEqual(fp.VARIANTS["cassette"].gates, (True, True, False))
 
 
 BENCH_APP_MARKERS = CASSETTE_APP_MARKERS + (b"\x1b[0;33mW (%lu) %s: C8 BENCH BEGIN: board '%s', H4 %s, M3a %s; USB "
@@ -972,8 +978,9 @@ MENU_SIO_CHECK = "paquete de prueba menu-sio (sdkconfig, aplicación y ELF)"
 
 
 def menu_record():
-    """The gate record menu-sio requires: M3a approved, H4 not (JSON false, as in docs/mediciones/puertas.json)."""
-    record = gate_record()
+    """The gate record menu-sio requires: M3a approved, H4 not (JSON false), DATA-IN accepted, as in
+    docs/mediciones/puertas.json."""
+    record = gate_record(data_in=True)
     record["H4"] = {"aprobada": False, "fecha": None, "registro": None}
     return record
 
@@ -1042,6 +1049,48 @@ class MenuSioPackageTest(unittest.TestCase):
     def test_menu_sio_package_refuses_h4_approved_in_the_record(self):
         self.gates(gate_record())
         self.assert_refused(fp.RECORD_CHECK)
+
+    def tape_option(self):
+        with open(self.f.build / "sdkconfig", "a", encoding="utf-8") as sdk:
+            sdk.write(fp.TAPE_OUTPUT_KCONFIG + "=y\n")
+
+    def test_menu_sio_package_refuses_the_tape_output_option(self):
+        # review PR #123, H1: the generic menu-sio package never carries the owner's acceptance
+        self.tape_option()
+        self.assert_refused(fp.TAPE_OUTPUT_CHECK, variant="menu-sio")
+
+    def test_menu_sio_cinta_packages_only_with_the_tape_output_option(self):
+        self.assert_refused(fp.TAPE_OUTPUT_CHECK, variant="menu-sio-cinta")
+        self.tape_option()
+        log = self.package("menu-sio-cinta")
+        self.assertTrue(log.ok, self.failed(log))
+        provenance = json.loads((self.f.out / "PROVENANCE.json").read_text(encoding="utf-8"))
+        self.assertIn("FN32ROV-1.3-Q24", json.dumps(provenance, ensure_ascii=False))
+
+    def test_the_other_variants_refuse_the_tape_output_option(self):
+        for name, variant in fp.VARIANTS.items():
+            self.assertEqual(variant.tape_output, name == "menu-sio-cinta", name)
+
+    def test_menu_sio_package_refuses_data_in_not_accepted_in_the_record(self):
+        self.gates(gate_record(h4=False, data_in=False))
+        self.assert_refused(fp.RECORD_CHECK, variant="menu-sio")
+
+    def test_menu_sio_package_refuses_a_data_in_record_that_does_not_name_it(self):
+        write(self.f.src / "docs" / "mediciones" / "data-in-prueba.md", "# otra cosa\n")
+        self.assert_refused(fp.RECORD_CHECK, variant="menu-sio")
+
+    def test_the_menu_grant_is_refused_outside_menu_sio(self):
+        write(self.f.src / "main" / "app_main.cpp",
+              "void f() { (void)rb::board::validate_for_menu_cassette_output(kBoard); }\n")
+        self.assert_refused(fp.MENU_GRANT_CHECK, variant="menu-sio")
+        ok, detail = fp.check_menu_grant(self.f.src)
+        self.assertFalse(ok)
+        self.assertIn("main/app_main.cpp", detail)
+
+    def test_the_menu_grant_is_allowed_in_menu_sio_and_the_real_tree(self):
+        write(self.f.src / "main" / "tape_gates.hpp", "bool g() { return validate_for_menu_cassette_output(b).ok(); }\n")
+        self.assertTrue(fp.check_menu_grant(self.f.src)[0])
+        self.assertEqual(fp.check_menu_grant(Path(__file__).resolve().parents[2])[0], True)
 
     def test_menu_sio_package_refuses_h4_not_json_false_in_the_record(self):
         record = menu_record()
@@ -1319,7 +1368,7 @@ class BenchC8aPackageTest(unittest.TestCase):
     def test_the_variant_is_named_and_gated_as_the_bench(self):
         spec = fp.VARIANTS["bench-c8a"]
         self.assertIn("BENCH-C8A-NO-SIO", spec.package)
-        self.assertEqual(spec.gates, (False, True))
+        self.assertEqual(spec.gates, (False, True, True))
         self.assertTrue(spec.bench)
         self.assertFalse(spec.menu_sio)
         self.assertNotIn("cassette", spec.features)  # the cassette is not started in the bench build
@@ -1507,7 +1556,7 @@ class BenchC8aCiJobTest(unittest.TestCase):
                 ("llamadas SIO", fp.check_sio_calls(self.repo, spec.sio_calls, fp.MENU_SIO_SOURCES, skip_dirs=(fp.FUJINET_FSK_DIR,))),
                 ("NVS", fp.check_nvs(self.repo)), ("concesión", fp.check_bench_grant(self.repo))):
             self.assertTrue(ok, f"{name}: {detail}")
-        self.assertEqual(fp.profile_gates(self.repo), spec.gates)
+        self.assertEqual(fp.profile_gates(self.repo), spec.gates[:2])
         ok, detail, _record = fp.read_gate_record(self.repo, spec.gates)
         self.assertTrue(ok, detail)
 

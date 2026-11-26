@@ -187,14 +187,24 @@ class CassetteOutputAssignment;
 // ReceiveTransmit) (H4 signed) and validate_for_motor(profile) (M3a signed). Errors: as theirs.
 rb::core::Result<CassetteOutputAssignment> validate_for_cassette_output(const BoardProfile& profile) noexcept;
 
+// The menu-sio cassette only (cas-salida-data-in): DATA IN with H4 signed OR the owner's risk acceptance
+// for DATA IN, always with M3a signed. The acceptance is not a property of the board profile: it covers
+// one board, the owner's FN32ROV-1.3-Q24, so only the build made for it passes riskAccepted = true
+// (CONFIG_RB_MENU_SIO_TAPE_OUTPUT, docs/mediciones/aceptacion-data-in-casete-2026-11-26.md). The same pin
+// rules as transmitting on the SIO. Only main/menu_sio.cpp and main/tape_gates.hpp may call it, which
+// the firmware packager checks. Errors: BoardNotConfirmed (hardware not confirmed, neither H4 nor the
+// acceptance, M3a unsigned), InvalidPinAssignment.
+rb::core::Result<CassetteOutputAssignment> validate_for_menu_cassette_output(const BoardProfile& profile,
+                                                                             bool riskAccepted) noexcept;
+
 // Bench test C8 only (H4-C): DATA IN on the board alone, USB only, the Atari disconnected. Grants
 // the SIO TX line with no gate and no MOTOR (motor() == kNoPin). Nothing approves H4 or M3a here:
 // only the bench build (CONFIG_RB_BENCH_C8, main/bench_c8.cpp) may call it, which the firmware
 // packager checks. Errors: BoardNotConfirmed (hardware not confirmed), InvalidPinAssignment.
 rb::core::Result<CassetteOutputAssignment> validate_for_bench_data_in(const BoardProfile& profile) noexcept;
 
-// The pins the cassette output may use. Only validate_for_cassette_output() and
-// validate_for_bench_data_in() create one.
+// The pins the cassette output may use. Only validate_for_cassette_output(),
+// validate_for_menu_cassette_output() and validate_for_bench_data_in() create one.
 class CassetteOutputAssignment {
 public:
     int8_t dataIn() const noexcept { return dataIn_; }
@@ -207,6 +217,8 @@ private:
         const BoardProfile& profile) noexcept;
     friend rb::core::Result<CassetteOutputAssignment> validate_for_bench_data_in(
         const BoardProfile& profile) noexcept;
+    friend rb::core::Result<CassetteOutputAssignment> validate_for_menu_cassette_output(
+        const BoardProfile& profile, bool riskAccepted) noexcept;
 
     int8_t dataIn_;
     int8_t motor_;

@@ -227,11 +227,12 @@ void test_unpublished_value_is_underrun()
     TEST_ASSERT_EQUAL_size_t(0, loader.piece(256).size());
 }
 
-// The gate opens only with 20 s of signal and 1536 values: 2000 values of 0.1 s each =
-// 200 s; the gate opens at the first step that publishes the 1536th value.
+// The gate opens only with 20 s of signal and 1536 values: 9000 values of 0.1 s each =
+// 900 s, first chunk 18000 bytes (progressive, D2); the gate opens at the first step that
+// publishes the 1536th value.
 void test_gate_waits_for_runway_and_prefill()
 {
-    const Bytes file = fuji() + chunk("fsk ", 0, values(2000, 1000));
+    const Bytes file = fuji() + chunk("fsk ", 0, values(9000, 1000));
     LoggingSource source(file);
     const CasSegment run = firstRun(source);
     FskLoader loader;
@@ -260,21 +261,59 @@ void test_gate_opens_when_a_short_run_is_final()
     TEST_ASSERT_EQUAL(static_cast<int>(StartGate::Ready), static_cast<int>(loader.startGate()));
 }
 
-// Enough values but not enough time: 1600 values of 1 ms = 1.6 s < 20 s; waits until final.
+// Enough values but not enough time: 9000 values of 1 ms = 9 s < 20 s (first chunk 18000 bytes,
+// progressive); waits until final.
 void test_gate_needs_the_runway_too()
 {
-    const Bytes file = fuji() + chunk("fsk ", 0, values(1600, 10)) + chunk("fsk ", 0, values(10, 10));
+    const Bytes file = fuji() + chunk("fsk ", 0, values(9000, 10)) + chunk("fsk ", 0, values(10, 10));
     LoggingSource source(file);
     const CasSegment run = firstRun(source);
     FskLoader loader;
     loader.bind(Span<uint8_t>(g_bank, sizeof g_bank));
     TEST_ASSERT_TRUE(loader.start(source, run));
-    while (loader.published() < 1600) {
+    while (loader.published() < 9000) {
         TEST_ASSERT_EQUAL(static_cast<int>(LoaderStep::Progress), static_cast<int>(loader.step()));
     }
     TEST_ASSERT_EQUAL(static_cast<int>(StartGate::Waiting), static_cast<int>(loader.startGate()));
     TEST_ASSERT_EQUAL(static_cast<int>(LoaderStep::Done), static_cast<int>(runToEnd(loader)));
     TEST_ASSERT_EQUAL(static_cast<int>(StartGate::Ready), static_cast<int>(loader.startGate()));
+}
+
+// D2. The owner's beta (FujiNet PR #1773, fsk_progressive_wanted, FSK_PROGRESSIVE_MIN_FIRST_CHUNK_BYTES):
+// only a run whose first chunk holds 16384 bytes or more starts before it is loaded whole. A smaller
+// first chunk is preloaded: the gate opens only when the run is final, whatever is published.
+void test_small_first_chunk_waits_for_the_whole_run()
+{
+    // 16382 bytes in the first chunk, 819 s of signal over two chunks.
+    const Bytes file = fuji() + chunk("fsk ", 0, values(8191, 1000)) + chunk("fsk ", 0, values(8191, 1000));
+    LoggingSource source(file);
+    const CasSegment run = firstRun(source);
+    FskLoader loader;
+    loader.bind(Span<uint8_t>(g_bank, sizeof g_bank));
+    TEST_ASSERT_TRUE(loader.start(source, run));
+    while (loader.state() == LoaderState::Loading) {
+        TEST_ASSERT_EQUAL(static_cast<int>(StartGate::Waiting), static_cast<int>(loader.startGate()));
+        (void)loader.step();
+    }
+    TEST_ASSERT_EQUAL(static_cast<int>(LoaderState::Final), static_cast<int>(loader.state()));
+    TEST_ASSERT_EQUAL(static_cast<int>(StartGate::Ready), static_cast<int>(loader.startGate()));
+}
+
+// D2, the boundary: a first chunk of exactly 16384 bytes starts once 20 s and 1536 values are ready.
+void test_first_chunk_of_16384_bytes_starts_before_final()
+{
+    const Bytes file = fuji() + chunk("fsk ", 0, values(8192, 1000)) + chunk("fsk ", 0, values(8191, 1000));
+    LoggingSource source(file);
+    const CasSegment run = firstRun(source);
+    FskLoader loader;
+    loader.bind(Span<uint8_t>(g_bank, sizeof g_bank));
+    TEST_ASSERT_TRUE(loader.start(source, run));
+    while (loader.startGate() == StartGate::Waiting) {
+        TEST_ASSERT_EQUAL(static_cast<int>(LoaderStep::Progress), static_cast<int>(loader.step()));
+    }
+    TEST_ASSERT_EQUAL(static_cast<int>(StartGate::Ready), static_cast<int>(loader.startGate()));
+    TEST_ASSERT_EQUAL(static_cast<int>(LoaderState::Loading), static_cast<int>(loader.state()));
+    TEST_ASSERT_EQUAL_UINT32(FskLoader::kPrefillValues, loader.published());
 }
 
 // A failed read is retried from the same place; a good read restores the budget.
@@ -512,6 +551,8 @@ int main(void)
     RUN_TEST(test_reads_one_block_at_a_time);
     RUN_TEST(test_joined_chunks_are_packed);
     RUN_TEST(test_unpublished_value_is_underrun);
+    RUN_TEST(test_small_first_chunk_waits_for_the_whole_run);
+    RUN_TEST(test_first_chunk_of_16384_bytes_starts_before_final);
     RUN_TEST(test_gate_waits_for_runway_and_prefill);
     RUN_TEST(test_gate_opens_when_a_short_run_is_final);
     RUN_TEST(test_gate_needs_the_runway_too);

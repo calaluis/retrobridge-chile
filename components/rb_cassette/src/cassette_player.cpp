@@ -15,6 +15,7 @@ void CassettePlayer::load(TapeSource& source, rb::core::Span<const CasSegment> s
     segments_ = segments;
     sentBaud_ = 0;
     fskRestarts_ = 0;
+    fskUnderruns_ = 0;
     segment_ = 0;
     enterSegment();
 }
@@ -47,6 +48,7 @@ void CassettePlayer::enterSegment() noexcept
     valueAt_ = 0;
     pieceOpen_ = false;
     havePortion_ = false;
+    pushedInRun_ = false;
     blocked_ = false;
 }
 
@@ -156,6 +158,11 @@ void CassettePlayer::tick(uint64_t nowUs, const MotorIn& motor, ByteOut& bytes, 
         }
         case PlayerPhase::FskPlay: {
             budgetUs_ = 0;
+            if (pushedInRun_ && wave.realTime() && wave.idle()) {
+                ++fskUnderruns_;  // ran dry mid-run: played again from its gap, never resumed
+                restartRun(wave);
+                return;
+            }
             const FskProgress progress = playFsk(wave);
             if (progress == FskProgress::More) {
                 return;
@@ -279,6 +286,7 @@ CassettePlayer::FskProgress CassettePlayer::playFsk(WaveOut& wave) noexcept
                 return FskProgress::More;  // queue full: the same portion first, next time
             }
             havePortion_ = false;
+            pushedInRun_ = true;
         }
         if (pieceOpen_) {
             if (wave_.next(portion_)) {
@@ -290,8 +298,9 @@ CassettePlayer::FskProgress CassettePlayer::playFsk(WaveOut& wave) noexcept
         const rb::core::Span<const uint8_t> piece = loader_.piece(valueAt_);
         if (piece.size() == 0) {
             const LoaderState state = loader_.state();
-            if (state == LoaderState::Final && valueAt_ >= loader_.published()) {
-                return FskProgress::Done;
+            const uint64_t runValues = segments_[segment_].length / 2u;
+            if ((state == LoaderState::Final && valueAt_ >= loader_.published()) || valueAt_ >= runValues) {
+                return FskProgress::Done;  // every value of the run was pushed
             }
             if (state == LoaderState::Failed || state == LoaderState::Stopped) {
                 return FskProgress::Failed;

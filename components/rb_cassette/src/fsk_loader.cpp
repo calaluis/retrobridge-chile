@@ -38,6 +38,7 @@ bool FskLoader::start(TapeSource& source, const CasSegment& run, uint64_t runway
     reads_ = 0;
     faults_ = 0;
     stopRequested_.store(false, std::memory_order_relaxed);
+    firstChunk_.store(0, std::memory_order_relaxed);
     published_.store(0, std::memory_order_release);
     setState(LoaderState::Loading);
     return true;
@@ -78,6 +79,9 @@ LoaderStep FskLoader::step() noexcept
         if (!isFsk || !joins || (length & 1u) != 0 || length > run_.length - loaded_) {
             setState(LoaderState::Failed);  // the file no longer matches the index
             return LoaderStep::Failed;
+        }
+        if (chunksDone_ == 0) {
+            firstChunk_.store(length, std::memory_order_release);  // before its first value is published
         }
         chunkPos_ += CasIndex::kHeaderSize;
         chunkLeft_ = length;
@@ -171,7 +175,9 @@ StartGate FskLoader::startGate() const noexcept
     for (uint32_t i = 0; i < ready && runway < runwayUs_; ++i) {
         runway += static_cast<uint64_t>(le16(bank_.data() + static_cast<std::size_t>(i) * 2u)) * 100u;
     }
-    if ((runway >= runwayUs_ || final) && (ready >= prefillValues_ || final)) {
+    // A first chunk under 16384 bytes: the whole run first (owner's beta, fsk_progressive_wanted).
+    const bool progressive = firstChunk_.load(std::memory_order_acquire) >= kProgressiveFirstChunkBytes;
+    if (final || (progressive && runway >= runwayUs_ && ready >= prefillValues_)) {
         return StartGate::Ready;
     }
     const bool dead = now == LoaderState::Failed || now == LoaderState::Stopped;

@@ -147,6 +147,7 @@ public:
     std::vector<FskPortion> pushed;
     unsigned stops = 0;
     bool autoDrain = false;  // play everything at once
+    bool live = false;       // plays at the signal's pace, like the RMT: idle() mid-run = ran dry
 
     bool push(const FskPortion& portion) override
     {
@@ -158,6 +159,7 @@ public:
         return true;
     }
     bool idle() const override { return pending == 0; }
+    bool realTime() const override { return live; }
     void stop() override
     {
         ++stops;
@@ -437,7 +439,7 @@ void test_fsk_run_plays_after_its_gap()
 // Nothing is pushed until the loader's start gate opens.
 void test_fsk_waits_for_the_start_gate()
 {
-    Rig rig(fuji() + chunk("fsk ", 0, repeat(2000, 300)));
+    Rig rig(fuji() + chunk("fsk ", 0, repeat(9000, 300)));
     rig.pump = false;
     rig.advance(1000);
     TEST_ASSERT_EQUAL(static_cast<int>(PlayerPhase::FskWait), static_cast<int>(rig.player.phase()));
@@ -455,7 +457,7 @@ void test_fsk_waits_for_the_start_gate()
 // The player never pushes what the loader has not published; the rest follows.
 void test_fsk_follows_the_loader()
 {
-    Rig rig(fuji() + chunk("fsk ", 0, repeat(3000, 300)));
+    Rig rig(fuji() + chunk("fsk ", 0, repeat(9000, 300)));
     rig.pump = false;
     for (int i = 0; i < 7; ++i) {
         (void)rig.loader.step();
@@ -467,7 +469,7 @@ void test_fsk_follows_the_loader()
     TEST_ASSERT_EQUAL_size_t(1792, rig.wave.pushed.size());
     rig.pump = true;
     rig.advance(1);
-    TEST_ASSERT_EQUAL_size_t(3000, rig.wave.pushed.size());
+    TEST_ASSERT_EQUAL_size_t(9000, rig.wave.pushed.size());
 }
 
 // A full queue loses nothing: refused portions are pushed again, in order.
@@ -535,7 +537,7 @@ void test_motor_off_while_waiting_keeps_loading()
 // owner's: the signal stops and the same run plays again from its first value.
 void test_loader_failure_mid_run_replays_the_run()
 {
-    Rig rig(fuji() + chunk("fsk ", 0, repeat(3000, 300)));
+    Rig rig(fuji() + chunk("fsk ", 0, repeat(9000, 300)));
     rig.pump = false;
     for (int i = 0; i < 8; ++i) {
         (void)rig.loader.step();  // header + 7 blocks: 1792 values, gate open
@@ -554,7 +556,7 @@ void test_loader_failure_mid_run_replays_the_run()
     rig.pump = true;
     rig.advance(1);  // the loader starts again
     rig.advance(1);  // loaded: the whole run from its first value
-    TEST_ASSERT_EQUAL_size_t(1792 + 3000, rig.wave.pushed.size());
+    TEST_ASSERT_EQUAL_size_t(1792 + 9000, rig.wave.pushed.size());
     TEST_ASSERT_EQUAL_UINT32(30000, rig.wave.pushed[1792].ticks);
     TEST_ASSERT_FALSE(rig.wave.pushed[1792].level);
 }
@@ -563,7 +565,7 @@ void test_loader_failure_mid_run_replays_the_run()
 // (start() is not thread-safe with step()): the pending stop is still seen by the producer.
 void test_restart_waits_for_the_producer_to_stop()
 {
-    Rig rig(fuji() + chunk("fsk ", 0, repeat(3000, 300)));
+    Rig rig(fuji() + chunk("fsk ", 0, repeat(9000, 300)));
     rig.pump = false;
     for (int i = 0; i < 8; ++i) {
         (void)rig.loader.step();
@@ -579,7 +581,7 @@ void test_restart_waits_for_the_producer_to_stop()
     rig.pump = true;
     rig.advance(1);  // now the player starts it
     rig.advance(1);
-    TEST_ASSERT_EQUAL_size_t(1792 + 3000, rig.wave.pushed.size());
+    TEST_ASSERT_EQUAL_size_t(1792 + 9000, rig.wave.pushed.size());
 }
 
 // MOTOR drops in the same tick the run finished playing: nothing is replayed.
@@ -701,6 +703,191 @@ void test_real_alien_ambush_plays_to_the_end()
                 static_cast<unsigned long long>(rig.now / 1000000ULL));
 }
 
+// ---- parity with the owner's beta (cassette-cas-paridad) ----
+
+// D1. The owner's beta (FujiNet PR #1773, FSKNext::underrun -> CassetteFSKStatus::underrun; PR #1756,
+// cassette.cpp: "replay the same run from the same point next call"): a live signal that runs dry
+// mid-run is never resumed from the middle. It stops, and the run is played again from its gap.
+void test_live_signal_running_dry_mid_run_replays_the_run()
+{
+    Rig rig(fuji() + chunk("fsk ", 10, repeat(9000, 300)) + chunk("data", 0, {7}));
+    rig.wave.live = true;
+    rig.pump = false;
+    rig.advance(10000);  // the gap
+    for (int i = 0; i < 7; ++i) {
+        (void)rig.loader.step();  // header + 6 blocks: 1536 values, the gate opens
+    }
+    rig.advance(1);
+    TEST_ASSERT_EQUAL_size_t(1536, rig.wave.pushed.size());
+    TEST_ASSERT_EQUAL(static_cast<int>(PlayerPhase::FskPlay), static_cast<int>(rig.player.phase()));
+    rig.wave.pending = 0;  // the RMT played all it had: the loader is behind
+    rig.advance(1);
+    TEST_ASSERT_EQUAL_UINT32(1, rig.player.fskUnderruns());
+    TEST_ASSERT_EQUAL_UINT32(1, rig.player.fskRestarts());
+    TEST_ASSERT_EQUAL(static_cast<int>(PlayerPhase::Gap), static_cast<int>(rig.player.phase()));
+    TEST_ASSERT_EQUAL_UINT32(0, rig.player.segment());
+    TEST_ASSERT_TRUE(rig.wave.stops >= 1);
+    TEST_ASSERT_EQUAL_size_t(1536, rig.wave.pushed.size());  // nothing more of the broken run
+    rig.pump = true;
+    rig.advance(9999);  // the gap again, one us short
+    TEST_ASSERT_EQUAL_size_t(1536, rig.wave.pushed.size());
+    rig.advance(1);
+    rig.advance(1);
+    TEST_ASSERT_EQUAL_size_t(1536 + 9000, rig.wave.pushed.size());  // the whole run, from its first value
+    TEST_ASSERT_FALSE(rig.wave.pushed[1536].level);
+    TEST_ASSERT_EQUAL_UINT32(30000, rig.wave.pushed[1536].ticks);
+    TEST_ASSERT_EQUAL(static_cast<int>(PlayerPhase::FskDrain), static_cast<int>(rig.player.phase()));
+}
+
+// D1, the other side: a run whose values were all pushed is complete even if the loader has not said
+// Final yet, so the RMT going idle after it is its end, not an underrun.
+void test_live_run_pushed_whole_before_final_is_not_an_underrun()
+{
+    Rig rig(fuji() + chunk("fsk ", 0, repeat(9000, 300)) + chunk("data", 0, {7}));
+    rig.wave.live = true;
+    rig.pump = false;
+    for (int i = 0; i < 7; ++i) {
+        (void)rig.loader.step();
+    }
+    rig.advance(1);
+    TEST_ASSERT_EQUAL_size_t(1536, rig.wave.pushed.size());
+    while (rig.loader.published() < 9000) {
+        (void)rig.loader.step();
+    }
+    TEST_ASSERT_EQUAL(static_cast<int>(LoaderState::Loading), static_cast<int>(rig.loader.state()));
+    rig.advance(1);
+    TEST_ASSERT_EQUAL_size_t(9000, rig.wave.pushed.size());
+    TEST_ASSERT_EQUAL(static_cast<int>(PlayerPhase::FskDrain), static_cast<int>(rig.player.phase()));
+    rig.wave.pending = 0;
+    rig.advance(1);
+    TEST_ASSERT_EQUAL_UINT32(1, rig.player.segment());
+    TEST_ASSERT_EQUAL_UINT32(0, rig.player.fskUnderruns());
+    TEST_ASSERT_EQUAL_UINT32(0, rig.player.fskRestarts());
+}
+
+// D1 does not apply to outputs that are not real time: discard (kTapeOutput = false) and a queue
+// that plays at once are idle all the time, and a loader that is behind is not an underrun there.
+void test_idle_output_that_is_not_live_is_never_an_underrun()
+{
+    Rig rig(fuji() + chunk("fsk ", 0, repeat(9000, 300)) + chunk("data", 0, {7}));
+    rig.wave.autoDrain = true;
+    rig.pump = false;
+    for (int i = 0; i < 7; ++i) {
+        (void)rig.loader.step();
+    }
+    rig.advance(1);
+    rig.advance(1);
+    rig.pump = true;
+    rig.advance(1);
+    TEST_ASSERT_EQUAL_size_t(9000, rig.wave.pushed.size());
+    TEST_ASSERT_EQUAL_UINT32(0, rig.player.fskUnderruns());
+    TEST_ASSERT_EQUAL_UINT32(0, rig.player.fskRestarts());
+}
+
+// Every portion of every FSK run of a real tape, in tape order, and every record byte.
+void expectedFromFile(const Bytes& file, uint32_t count, std::vector<FskPortion>& portions, Bytes& bytes)
+{
+    for (uint32_t s = 0; s < count; ++s) {
+        const CasSegment& seg = g_table[s];
+        if (seg.kind == SegmentKind::Data) {
+            bytes.insert(bytes.end(), file.begin() + seg.offset, file.begin() + seg.offset + seg.length);
+            continue;
+        }
+        FskWave wave;  // one cursor per run: the level parity counts over the whole run
+        uint32_t at = seg.offset;
+        for (uint8_t c = 0; c < seg.chunks; ++c) {
+            const uint16_t length = static_cast<uint16_t>(file[at + 4] | (file[at + 5] << 8));
+            wave.setValues(Span<const uint8_t>(file.data() + at + 8, length));
+            FskPortion p;
+            while (wave.next(p)) {
+                portions.push_back(p);
+            }
+            at += 8u + length;
+        }
+    }
+}
+
+bool samePortions(const std::vector<FskPortion>& a, std::size_t from, const std::vector<FskPortion>& b)
+{
+    if (a.size() - from != b.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < b.size(); ++i) {
+        if (a[from + i].level != b[i].level || a[from + i].ticks != b[i].ticks) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Real tape, live output that keeps up: International Karate (106 records at 600 and 750 baud, 107 FSK
+// runs) plays to its end with every record byte and every FSK portion (level and duration) of the file,
+// in order, and no underrun.
+void test_real_international_karate_live_plays_every_portion()
+{
+    const char* samples = std::getenv("RB_CAS_SAMPLES");
+    if (samples == nullptr) {
+        TEST_IGNORE_MESSAGE("RB_CAS_SAMPLES not set");
+    }
+    Bytes file;
+    if (!readFile(std::string(samples) + "/international_karate.cas", file)) {
+        TEST_IGNORE_MESSAGE("international_karate.cas not found");
+    }
+    Rig rig(file);
+    rig.wave.live = true;
+    std::vector<FskPortion> expected;
+    Bytes expectedBytes;
+    expectedFromFile(file, rig.count, expected, expectedBytes);
+    for (int i = 0; i < 1000000 && !rig.player.atEnd(); ++i) {
+        rig.advance(1000);
+        rig.wave.pending = 0;  // the RMT keeps up
+    }
+    TEST_ASSERT_TRUE(rig.player.atEnd());
+    TEST_ASSERT_TRUE(expectedBytes == rig.bytes.sent);
+    TEST_ASSERT_TRUE(samePortions(rig.wave.pushed, 0, expected));
+    TEST_ASSERT_EQUAL_UINT32(0, rig.player.fskUnderruns());
+    TEST_ASSERT_EQUAL_UINT32(0, rig.player.fskRestarts());
+}
+
+// D1 on a real tape: turbo Missile Command (one FSK run of 2 chunks, 111 452 bytes). The RMT runs dry
+// once the gate has opened: the run is played again from its first value, and what follows the
+// replay is the whole run of the file, portion by portion.
+void test_real_missile_command_underrun_replays_the_whole_run()
+{
+    const char* samples = std::getenv("RB_CAS_SAMPLES");
+    if (samples == nullptr) {
+        TEST_IGNORE_MESSAGE("RB_CAS_SAMPLES not set");
+    }
+    Bytes file;
+    if (!readFile(std::string(samples) + "/turbo_software_missile_command.cas", file)) {
+        TEST_IGNORE_MESSAGE("turbo_software_missile_command.cas not found");
+    }
+    Rig rig(file);
+    rig.wave.live = true;
+    std::vector<FskPortion> expected;
+    Bytes expectedBytes;
+    expectedFromFile(file, rig.count, expected, expectedBytes);
+    rig.pump = false;
+    rig.advance(static_cast<uint64_t>(g_table[0].gapMs) * 1000u);
+    while (rig.player.phase() != PlayerPhase::FskPlay) {
+        (void)rig.loader.step();
+        rig.advance(1);
+    }
+    const std::size_t before = rig.wave.pushed.size();
+    TEST_ASSERT_TRUE(before > 0 && before < expected.size());
+    rig.wave.pending = 0;  // ran dry
+    rig.advance(1);
+    TEST_ASSERT_EQUAL_UINT32(1, rig.player.fskUnderruns());
+    rig.pump = true;
+    for (int i = 0; i < 100000 && !rig.player.atEnd(); ++i) {
+        rig.advance(1000);
+        rig.wave.pending = 0;
+    }
+    TEST_ASSERT_TRUE(rig.player.atEnd());
+    TEST_ASSERT_TRUE(samePortions(rig.wave.pushed, before, expected));
+    TEST_ASSERT_EQUAL_UINT32(1, rig.player.fskUnderruns());
+}
+
 // ---- output switch while the tape runs (menu-cinta T9a.3) ----
 
 Bytes counting(uint8_t n)
@@ -819,7 +1006,7 @@ void test_switch_after_a_run_played_does_not_replay_it()
 // the whole run goes to the new output once the gate opens.
 void test_switch_while_waiting_for_the_gate_cuts_nothing()
 {
-    Rig rig(fuji() + chunk("fsk ", 0, repeat(2000, 300)));
+    Rig rig(fuji() + chunk("fsk ", 0, repeat(9000, 300)));
     rig.pump = false;
     rig.advance(1000);
     TEST_ASSERT_EQUAL(static_cast<int>(PlayerPhase::FskWait), static_cast<int>(rig.player.phase()));
@@ -1085,6 +1272,11 @@ int main()
     RUN_TEST(test_rewind_during_a_run_stops_the_signal);
     RUN_TEST(test_no_allocation_while_playing);
     RUN_TEST(test_real_alien_ambush_plays_to_the_end);
+    RUN_TEST(test_live_signal_running_dry_mid_run_replays_the_run);
+    RUN_TEST(test_live_run_pushed_whole_before_final_is_not_an_underrun);
+    RUN_TEST(test_idle_output_that_is_not_live_is_never_an_underrun);
+    RUN_TEST(test_real_international_karate_live_plays_every_portion);
+    RUN_TEST(test_real_missile_command_underrun_replays_the_whole_run);
     RUN_TEST(test_switch_mid_record_splits_no_byte);
     RUN_TEST(test_switch_after_a_refused_send_loses_nothing);
     RUN_TEST(test_switch_while_a_run_drains_cuts_it_and_replays_it_whole);

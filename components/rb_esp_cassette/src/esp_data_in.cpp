@@ -251,13 +251,16 @@ void EspDataIn::pump() noexcept
         if (size == 0) {
             releasePin();  // the run has played: the pin goes back to the UART, at mark
             started_ = false;
-        } else {
-            const bool restart = started_;
-            if (!startTransmission()) {
-                dropRun();
-            } else if (restart) {
-                ++underruns_;  // the signal stopped mid-run and starts again: the Atari may not load
-            }
+        } else if (started_) {
+            // The RMT ran dry mid-run and more of the run came late. The owner's beta never resumes a
+            // run from the middle (FujiNet PR #1773, CassetteFSKStatus::underrun): cut it here; the
+            // player replays it from its gap once idle() (cassette-cas-paridad D1).
+            ++underruns_;
+            discardFeed_ = true;
+            (void)releasePin();
+            started_ = false;
+        } else if (!startTransmission()) {
+            dropRun();
         }
     } else if (channel_ == nullptr && size > 0 && (size >= kStartPortions || size == lastSize_) &&
                uart_wait_tx_done(kUart, 0) == ESP_OK) {  // last record bytes out first

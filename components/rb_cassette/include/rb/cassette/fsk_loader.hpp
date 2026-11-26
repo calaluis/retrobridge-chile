@@ -16,7 +16,10 @@
 //   - a read that fails is retried from the same place, 3 times; the 4th failure in a row
 //     fails the run and what was published stays valid; a good read restores the 3 retries;
 //   - start gate: 20 s of published signal and 1536 values (the encoder's first fill), or
-//     the run is final.
+//     the run is final;
+//   - only a run whose first chunk holds 16384 bytes or more may start before it is final
+//     (fsk_progressive_wanted); a smaller first chunk is played once loaded whole, as the beta's
+//     preload (cassette-cas-paridad D2).
 // Changed: one contiguous bank instead of a table of allocated blocks; the run's shape comes
 // from CasIndex. Pure: no RMT, no tasks, no ESP-IDF.
 
@@ -57,6 +60,7 @@ public:
     static constexpr uint32_t kFaultBudget = 3;
     static constexpr uint64_t kRunwayUs = 20ULL * 1000000ULL;
     static constexpr uint32_t kPrefillValues = 1024 + 512;
+    static constexpr uint32_t kProgressiveFirstChunkBytes = 16384;
 
     // The bank holds a whole run's payload. Set once; reused for every run.
     void bind(rb::core::Span<uint8_t> bank) noexcept;
@@ -110,6 +114,8 @@ private:
     std::atomic<uint32_t> published_{0};
     std::atomic<uint8_t> state_{static_cast<uint8_t>(LoaderState::Idle)};
     std::atomic<bool> stopRequested_{false};
+    // Length of the run's first chunk, once its header is read (before any value is published).
+    std::atomic<uint32_t> firstChunk_{0};
 };
 
 }  // namespace rb::cassette

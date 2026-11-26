@@ -17,6 +17,11 @@
 //   MOTOR comes back, the same run is played again from its gap. Adapted from the owner's own code (FujiNet PR #1804, commit
 //   7d84b91, cassette_fsk_stop_tx; PR #1756, cassette.cpp: "replay the same run from the
 //   same point next call"), under ADR-012 amendment 1.
+// - Underrun (cassette-cas-paridad D1): a real-time WaveOut that goes idle before the run has
+//   been pushed whole ran dry mid-run. The signal is not resumed from the middle: the run is
+//   played again from its gap, as the owner's beta does on CassetteFSKStatus::underrun (FujiNet
+//   PR #1773, FSKNext::underrun). A run is whole once every value of its length was pushed, even
+//   before the loader says Final.
 //
 // tick() runs on the cassette loop and never allocates (ADR-011). The loader's producer
 // (FskLoader::step) runs elsewhere: another task on the ESP32, the test in the host.
@@ -59,6 +64,9 @@ public:
     virtual bool push(const FskPortion& portion) = 0;  // false: queue full, nothing taken
     virtual bool idle() const = 0;                      // everything pushed has played
     virtual void stop() = 0;                            // drop the queue, DATA IN to idle mark
+    // Plays at the signal's own pace (the RMT): idle() before the player has pushed the whole run
+    // means the signal ran dry mid-run. False for outputs that play at once or drive nothing.
+    virtual bool realTime() const { return false; }
 
 protected:
     ~WaveOut() = default;
@@ -103,6 +111,7 @@ public:
     uint32_t segment() const noexcept { return segment_; }
     PlayerPhase phase() const noexcept { return atEnd() ? PlayerPhase::End : phase_; }
     uint32_t fskRestarts() const noexcept { return fskRestarts_; }
+    uint32_t fskUnderruns() const noexcept { return fskUnderruns_; }  // runs replayed: the signal ran dry
     // A run that does not fit the loader's bank: the tape cannot go past it.
     bool blocked() const noexcept { return blocked_; }
 
@@ -135,8 +144,10 @@ private:
     uint32_t valueAt_ = 0;     // next run value not handed to wave_ yet
     bool pieceOpen_ = false;   // wave_ holds a piece not fully played
     bool havePortion_ = false; // portion_ was refused by WaveOut: push it first
+    bool pushedInRun_ = false; // WaveOut took a portion of this run since it (re)started
     FskPortion portion_{};
     uint32_t fskRestarts_ = 0;
+    uint32_t fskUnderruns_ = 0;
     bool blocked_ = false;
     uint8_t buffer_[kMaxSend] = {};
 };

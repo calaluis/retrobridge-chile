@@ -84,6 +84,7 @@ public:
     bool holdsLine() const noexcept { return live_; }
     bool stalled() const noexcept { return stalled_; }
     uint32_t offset() const noexcept { return loop_.offset(); }
+    uint32_t baud() const noexcept { return loop_.baud(); }  // the tape's rate, restored on a take
 
     // TapePosition (`cas status`)
     bool atEnd() const noexcept override { return atEnd_; }

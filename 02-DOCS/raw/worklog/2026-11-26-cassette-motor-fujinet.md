@@ -27,7 +27,14 @@ Rama `feat/cas-motor-fujinet` desde `main` `8bb25d0`. Documento FTD: `02-DOCS/wi
   y sus esperas tienen límite (`kStallMs`). Pruebas RED → GREEN; 13 mutaciones caen.
 - Límite anotado: durante la precarga del responsable no se consulta MOTOR (diseño D14).
 
+## Revisión, ronda 2
+
+- H1, H2 y H3 cerrados contra código y fakes. Veredicto: NO FUSIONAR por un hallazgo nuevo (R2-H4).
+- R2-H4: activar el casete ponía la UART a 600 sin cambiar la velocidad guardada. Un Take tras una cinta nueva, o
+  tras MOTOR apagado y encendido, restauraba la velocidad anterior (750).
+- Arreglo: `FujiTapeLoop::enable()` guarda 600 solo si la UART lo aceptó. Pruebas RED → GREEN; 2 mutaciones caen.
+
 ## Pendiente
 
 - CI de la PR tras el arreglo.
-- Segunda revisión independiente. Ninguna prueba en el Atari.
+- Tercera revisión independiente. Ninguna prueba en el Atari.

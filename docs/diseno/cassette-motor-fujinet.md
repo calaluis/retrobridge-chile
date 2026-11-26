@@ -22,7 +22,7 @@ Etiquetas: **[V]** verificado (prueba del host o lectura citada), **[I]** inferi
 | Compatibilidad con ESP-IDF v6.1 | Adaptador | `adapt/rb_fujinet_idf6.h`, `adapt/soc/uart_periph.h` | Ver §3, D9 |
 | `global_types.h`, `fnio.h`, `bus.h`, `debug.h`, `pinmap.h` | Adaptador | `adapt/`, `lib/include/`, `src/fujinet_adapt.cpp` | Escritos para RetroBridge |
 | `send_FUJI_tape_block` (un registro por paso) | Adaptador | `src/fuji_tape_loop.cpp` | `test_fuji_tape_loop` (12) con Karate y Alien Ambush **[V]** |
-| Cuándo se activa el casete (bus SIO) | Adaptador con reglas propias | `src/fuji_tape_runner.cpp` | `test_fuji_tape_runner` (16); reglas en §3 **[I]** |
+| Cuándo se activa el casete (bus SIO) | Adaptador con reglas propias | `src/fuji_tape_runner.cpp` | `test_fuji_tape_runner` (19); reglas en §3 **[I]** |
 | Traspaso de DATA IN con el disco (menu-sio) | Adaptador: el mismo protocolo que `CassetteTick` (plan menu-cinta §2.4) | `src/fuji_tape_runner.cpp`, `cassette_service.cpp` | `test_fuji_tape_runner`, `test_fuji_shared` (2) con la cadena real **[V]** en el host |
 | Llamada a `cassette_fsk_play_run` | Adaptador | `src/esp_fsk_engine.cpp` | `test_esp_fsk_engine` (7) **[V]** |
 | `cas status` y fin de cinta | Adaptador | `TapePosition` (`cassette_commands.hpp`), `FujiTapeRunner` | `test_cassette_commands`, `test_fuji_tape_runner`, `test_fuji_shared` **[V]** |
@@ -91,6 +91,7 @@ conduce: `kTapeOutput = false`.
 | D14 | Tiempo hasta devolver la línea | — | Un registro: lo que tardan en salir los bytes en vuelo (≤ 32 a 600 baudios, 0,53 s). Una tirada FSK: ≤ 100 ms, la consulta del motor del responsable. El árbitro espera 600 ms. **Excepción:** al precargar una tirada corta en PSRAM, el código del responsable no consulta MOTOR. Si la tarea SIO pide la línea entonces, puede vencer el plazo; el árbitro pasa a `Fault` y el disco queda aparcado (falla segura) | **[V]** FSK en `test_fuji_shared`; **[P]** precarga en placa |
 | D15 | Comandos durante un paso | El bus no los recibe mientras suena | `cas status` se responde al momento. Cualquier otro comando detiene el paso y se ejecuta entre pasos; el registro vuelve a sonar entero | **[V]** `test_fuji_tape_runner` (reglas); **[P]** colas de FreeRTOS sin prueba en el host |
 | D16 | El primer registro detenido por RetroBridge | La regla del offset 0 desactiva el casete | No se aplica a una parada de RetroBridge (línea o comando): el registro vuelve a sonar sin esperar MOTOR apagado y encendido | **[V]** `test_fuji_tape_runner` |
+| D17 | Velocidad que restaura un *Take* | No existe (no hay traspaso) | Activar el casete pone la UART a 600 y la velocidad de la cinta pasa a 600, solo si la UART lo aceptó. Así un *Take* tras una cinta nueva, o tras MOTOR apagado y encendido, restaura 600 y no la velocidad anterior. Corregido tras la revisión de la PR #122, ronda 2 (R2-H4) | **[V]** `test_fuji_tape_runner` (3), 2 mutaciones caen |
 
 ## 4. Puertas que no cambian
 
@@ -106,7 +107,7 @@ conduce: `kTapeOutput = false`.
 | Prueba | Qué demuestra |
 |---|---|
 | `test_fuji_tape_loop` (12) | Karate y Alien Ambush registro a registro contra `CasIndex`: tipo, baudios, pausas, bytes; una petición de parada en el último segundo de la pausa. 5 mutaciones caen, más 2 de la revisión |
-| `test_fuji_tape_runner` (16) | Reglas de D1 y D2; UART ocupada; traspaso (Take, Release a mitad de registro, fin solo con la línea devuelta); porciones de 16 bytes; línea que no acepta nada y velocidad rechazada (falla cerrado); comando en espera; `stopNow`. 3 mutaciones caen, más 11 de la revisión |
+| `test_fuji_tape_runner` (19) | Reglas de D1 y D2; UART ocupada; traspaso (Take, Release a mitad de registro, fin solo con la línea devuelta); porciones de 16 bytes; línea que no acepta nada y velocidad rechazada (falla cerrado); comando en espera; `stopNow`; velocidad que restaura un Take (D17). 3 mutaciones caen, más 11 de la ronda 1 y 2 de la ronda 2 |
 | `test_fuji_shared` (2) | H1 y H2 con la cadena real: `EspDataIn` compartido, `DataInHandover`, `TapeProgress` y el código del responsable. Toda la cinta y el fin publicado; un Release durante una tirada FSK se confirma `Disk` en menos de 600 ms y la tirada vuelve a sonar entera |
 | `test_cassette_commands` | `cas status` sigue al motor que suena (`TapePosition`). 1 mutación cae |
 | `test_esp_fsk_engine` (7) | Código del responsable sobre fakes de ESP-IDF: cada byte de UART y cada porción RMT de Karate, Alien Ambush y Missile Command (progresiva); MOTOR cae (pin a la UART con el canal activo, `RMTMEM[0] = 0`, un reinicio de puntero); sin memoria; tirada corta. 5 mutaciones caen |

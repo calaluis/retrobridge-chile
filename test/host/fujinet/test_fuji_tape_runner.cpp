@@ -477,6 +477,133 @@ void test_shared_the_tape_moves_only_with_the_line()
 }
 
 namespace {
+
+// Two data records, no baud chunk: the whole tape plays at 600. Each has a gap, so a release stops it there.
+Bytes noBaudTape()
+{
+    Bytes f;
+    chunk(f, "FUJI", 0, {});
+    chunk(f, "data", 5, {7, 8});
+    chunk(f, "data", 5, {9});
+    return f;
+}
+
+// A data record, a baud chunk, then three more data records, each with a gap.
+Bytes fourRecords()
+{
+    Bytes f;
+    chunk(f, "FUJI", 0, {});
+    chunk(f, "data", 5, {1});
+    chunk(f, "baud", 750, {});
+    chunk(f, "data", 5, {2});
+    chunk(f, "data", 5, {3});
+    chunk(f, "data", 5, {4});
+    return f;
+}
+
+// The disk gives the line to the cassette: Take, answered on this tick.
+void takeLine(Rig& r, Lender& lender)
+{
+    lender.request(DataInLender::Kind::Take);
+    (void)r.runner.tick();
+    TEST_ASSERT_TRUE(lender.answered());
+    TEST_ASSERT_EQUAL(DataInLender::Ack::Tape, lender.ack);
+}
+
+// The disk asks the line back: the next record stops in its gap, then the line goes back.
+void releaseLine(Rig& r, Lender& lender)
+{
+    lender.request(DataInLender::Kind::Release);
+    (void)r.runner.tick();
+    TEST_ASSERT_TRUE(lender.answered());
+    TEST_ASSERT_EQUAL(DataInLender::Ack::Disk, lender.ack);
+}
+
+}  // namespace
+
+// Review round 2, H4: tape A ends at 750; tape B has no baud chunk, so it plays at 600. A release and a take
+// between B's records restore 600, not A's 750.
+void test_shared_a_new_tape_does_not_restore_the_old_tape_rate()
+{
+    Bytes fileB = noBaudTape();
+    MemoryTapeSource tapeB({fileB.data(), fileB.size()});
+    Rig r(twoRecords());
+    Lender lender;
+    Line line;
+    r.runner.lend(lender, line);
+    r.runner.follow(&r.src, 1);
+    r.motor.level = true;
+    takeLine(r, lender);
+    TEST_ASSERT_TRUE(r.runner.tick());
+    TEST_ASSERT_TRUE(r.runner.tick());
+    TEST_ASSERT_EQUAL_UINT32(750, r.out.bauds.back());  // tape A ends at 750
+
+    TEST_ASSERT_TRUE(r.runner.follow(&tapeB, 2));
+    TEST_ASSERT_TRUE(r.runner.tick());
+    TEST_ASSERT_EQUAL(FujiStepKind::Data, r.runner.last().kind);
+    TEST_ASSERT_EQUAL_UINT32(600, r.out.bauds.back());  // enabled at 600
+    TEST_ASSERT_EQUAL_UINT32(600, r.runner.baud());
+
+    releaseLine(r, lender);
+    takeLine(r, lender);
+    const std::size_t before = r.out.sent.size();
+    TEST_ASSERT_TRUE(r.runner.tick());
+    TEST_ASSERT_EQUAL(FujiStepKind::Data, r.runner.last().kind);
+    TEST_ASSERT_EQUAL_UINT32(600, r.out.bauds.back());  // B's rate, not A's 750
+    TEST_ASSERT_EQUAL(before + 1, r.out.sent.size());
+    TEST_ASSERT_EQUAL_UINT8(9, r.out.sent.back());
+}
+
+// H4, same tape: after the baud 750 chunk, MOTOR off and on enables the cassette at 600 again. A release and a
+// take then restore 600, the rate the UART had.
+void test_shared_motor_off_and_on_then_a_take_restores_600()
+{
+    Rig r(fourRecords());
+    Lender lender;
+    Line line;
+    r.runner.lend(lender, line);
+    r.runner.follow(&r.src, 1);
+    r.motor.level = true;
+    takeLine(r, lender);
+    TEST_ASSERT_TRUE(r.runner.tick());
+    TEST_ASSERT_TRUE(r.runner.tick());
+    TEST_ASSERT_EQUAL_UINT32(750, r.out.bauds.back());
+
+    r.motor.level = false;
+    TEST_ASSERT_FALSE(r.runner.tick());
+    r.motor.level = true;
+    TEST_ASSERT_TRUE(r.runner.tick());  // enabled at 600 again; the third record plays at 600
+    TEST_ASSERT_EQUAL_UINT32(600, r.out.bauds.back());
+    TEST_ASSERT_EQUAL_UINT8(3, r.out.sent.back());
+
+    releaseLine(r, lender);
+    takeLine(r, lender);
+    r.out.bauds.clear();
+    TEST_ASSERT_TRUE(r.runner.tick());  // the rate is restored first, then the fourth record
+    TEST_ASSERT_EQUAL(1, r.out.bauds.size());
+    TEST_ASSERT_EQUAL_UINT32(600, r.out.bauds[0]);
+    TEST_ASSERT_EQUAL_UINT8(4, r.out.sent.back());
+}
+
+// H4: a refused enable does not change the rate the runner believes the line has.
+void test_a_refused_enable_keeps_the_rate()
+{
+    Rig r(twoRecords());
+    r.runner.follow(&r.src, 1);
+    r.motor.level = true;
+    TEST_ASSERT_TRUE(r.runner.tick());
+    TEST_ASSERT_TRUE(r.runner.tick());
+    TEST_ASSERT_EQUAL_UINT32(750, r.runner.baud());
+    r.motor.level = false;
+    TEST_ASSERT_FALSE(r.runner.tick());
+    r.out.refuseBaud = true;
+    r.motor.level = true;
+    (void)r.runner.tick();  // the enable is refused: the runner stalls
+    TEST_ASSERT_TRUE(r.runner.stalled());
+    TEST_ASSERT_EQUAL_UINT32(750, r.runner.baud());
+}
+
+namespace {
 Lender* g_lender = nullptr;
 void releaseAtSend3(unsigned sends)
 {
@@ -651,5 +778,8 @@ int main()
     RUN_TEST(test_shared_the_end_is_published_once_the_line_is_back);
     RUN_TEST(test_shared_a_release_in_the_last_second_of_a_gap_stops_at_once);
     RUN_TEST(test_stop_now_answers_motor_release_and_commands);
+    RUN_TEST(test_shared_a_new_tape_does_not_restore_the_old_tape_rate);
+    RUN_TEST(test_shared_motor_off_and_on_then_a_take_restores_600);
+    RUN_TEST(test_a_refused_enable_keeps_the_rate);
     return UNITY_END();
 }

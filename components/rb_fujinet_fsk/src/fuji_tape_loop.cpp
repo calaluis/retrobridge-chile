@@ -26,7 +26,11 @@ uint16_t le16(const uint8_t* p) noexcept
 
 bool FujiTapeLoop::enable() noexcept
 {
-    return bus_.setBaud(kCassetteBaud);
+    if (!bus_.setBaud(kCassetteBaud)) {
+        return false;  // the rate stays what the line has
+    }
+    baud_ = kCassetteBaud;  // the rate a take restores (review round 2, H4)
+    return true;
 }
 
 FujiStep FujiTapeLoop::ended() noexcept

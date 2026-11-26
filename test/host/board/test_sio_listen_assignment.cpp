@@ -59,7 +59,7 @@ namespace {
 BoardProfile sio_board(SioPins sio)
 {
     return BoardProfile{"test-fixture", true, false, SdInterface::Spi, SdSpiPins{18, 23, 19, 4}, SpiHost::Spi3,
-                        kNoPin, false, sio, kNoPin, false, false};
+                        kNoPin, false, sio, kNoPin, false};
 }
 
 // A test-only copy with the gate signed: the real profiles stay unapproved.

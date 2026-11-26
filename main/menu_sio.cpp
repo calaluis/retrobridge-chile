@@ -183,8 +183,13 @@ ProgressSink g_progressSink{g_progress};
 // Who owns DATA IN (menu-cinta T7, plan §2.3): one arbiter, stepped by the SIO task between two frames.
 // kTapeOutput keeps the arbiter's gates closed until T9b (the 65XE bench): the disk never lets go (AC8,
 // rule 4), UART2 is installed without the cassette's TX ring, and the cassette never shares DATA IN.
-// T9b (cas-salida-data-in): on, by the owner's risk acceptance for DATA IN (R2, R6, R7; H4 unsigned).
+// T9b (cas-salida-data-in): on only in the build for the owner's FN32ROV-1.3-Q24, by the owner's risk
+// acceptance for DATA IN (R2, R6, R7; H4 unsigned): CONFIG_RB_MENU_SIO_TAPE_OUTPUT, off by default.
+#if defined(CONFIG_RB_MENU_SIO_TAPE_OUTPUT) && CONFIG_RB_MENU_SIO_TAPE_OUTPUT
 constexpr bool kTapeOutput = true;
+#else
+constexpr bool kTapeOutput = false;
+#endif
 // Decision 3: with the cassette sharing UART2, the disk installs it once at boot with the TX ring.
 constexpr int kDiskTxRing = kTapeOutput ? rb::esp::EspSioUart::kSharedTxRing : rb::esp::EspSioUart::kUartTxBuffer;
 
@@ -675,9 +680,10 @@ bool registerCommand(const char* name, const char* help, esp_console_cmd_func_t 
 
 bool start(const rb::board::BoardProfile& board)
 {
-    ESP_LOGW(kTag, "menu-sio TEST PACKAGE: transmits on SIO DATA IN. H4 NOT approved; DATA IN for the tape by "
-                   "risk acceptance of R2, R6, R7 (no measurement). "
-                   "M3a approved by risk acceptance of R1 only: MOTOR read on GPIO36. Tape output on.");
+    ESP_LOGW(kTag, "menu-sio TEST PACKAGE: transmits on SIO DATA IN. H4 NOT approved (R2, R7 not accepted; "
+                   "R6 accepted on USB power only). "
+                   "M3a approved by risk acceptance of R1 only: MOTOR read on GPIO36. Tape output %s.",
+             kTapeOutput ? "ON: owner's FN32ROV-1.3-Q24 only, DATA IN by risk acceptance of R2, R6, R7" : "off");
     if (board.sio.command < 0 || board.sio.rx < 0 || board.sio.tx < 0) {
         ESP_LOGE(kTag, "board profile has no SIO pins: menu not served");
         return false;
@@ -784,7 +790,7 @@ static void startCassette(bool sdMounted, rb::esp::CassetteService& cassette, rb
     cassette.reportEnd(g_progressSink);  // before start(): the loop publishes from its first tick
     if (kTapeOutput) {
         // T9a.7b: DATA IN shared with the disk, lent through g_handover (before start(): it picks the mode).
-        const auto pins = rb::board::validate_for_menu_cassette_output(*g_board);
+        const auto pins = rb::board::validate_for_menu_cassette_output(*g_board, kTapeOutput);
         if (!pins.ok() || !cassette.shareDataIn(pins.value(), rb::esp::EspSioUart::kSharedTxRing, g_lender)) {
             ESP_LOGW(kTag, "cas: DATA IN no compartido; la cinta no sale por SIO");
         }
@@ -794,7 +800,14 @@ static void startCassette(bool sdMounted, rb::esp::CassetteService& cassette, rb
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
              static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)),
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)));
-    g_tape = createOnce<EspTapeDeck>(cassette, rb::menusio::tapeGatesOpen(kTapeOutput, *g_board));  // T3b: gates and output
+    // T3b and review H2: the grant, the output, and what start-up really configured (fail closed).
+    const bool gatesOpen = rb::menusio::tapeGatesOpen(kTapeOutput, *g_board, cassette.motorEnabled(),
+                                                      cassette.outputEnabled());
+    if (kTapeOutput && !gatesOpen) {
+        ESP_LOGW(kTag, "cas: MOTOR %s, DATA IN %s: la cinta no se ofrece", cassette.motorEnabled() ? "listo" : "sin configurar",
+                 cassette.outputEnabled() ? "listo" : "sin configurar");
+    }
+    g_tape = createOnce<EspTapeDeck>(cassette, gatesOpen);
     if (g_tape == nullptr) {
         ESP_LOGE(kTag, "cas: sin memoria para el deck; C: dice CASETERA NO DISPONIBLE");
         return;

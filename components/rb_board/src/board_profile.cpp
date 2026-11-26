@@ -185,12 +185,12 @@ Result<CassetteOutputAssignment> validate_for_cassette_output(const BoardProfile
     return CassetteOutputAssignment{sio.value().pins.tx, motor.value().pin()};
 }
 
-Result<CassetteOutputAssignment> validate_for_menu_cassette_output(const BoardProfile& profile) noexcept
+Result<CassetteOutputAssignment> validate_for_menu_cassette_output(const BoardProfile& profile, bool riskAccepted) noexcept
 {
     if (profile.sioGateApproved) {
         return validate_for_cassette_output(profile);  // H4 signed: the same grant as the cassette
     }
-    if (!profile.hardwareConfirmed || !profile.dataInRiskAccepted) {
+    if (!profile.hardwareConfirmed || !riskAccepted) {
         return Failure{ErrorCode::BoardNotConfirmed};
     }
     const auto checked = check_sio_pins(profile, SioMode::ReceiveTransmit);

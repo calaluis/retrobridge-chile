@@ -449,7 +449,6 @@ BOARD_PROFILE = """struct BoardProfile {
     SioPins sio;
     int8_t motor;
     bool motorGateApproved;
-    bool dataInRiskAccepted;
 };
 """
 PROFILE_HEADER = """constexpr BoardProfile fujinet_atari_v1x_profile() noexcept
@@ -464,8 +463,7 @@ PROFILE_HEADER = """constexpr BoardProfile fujinet_atari_v1x_profile() noexcept
                         %s,  // H4
                         SioPins{39, 33, 21},
                         36,      // MOTOR: GPIO36 (SENSOR_VP), straight from SIO pin 8
-                        %s,  // M3a
-                        %s};  // DATA-IN
+                        %s};  // M3a
 }
 """
 
@@ -503,9 +501,9 @@ class CassettePackageTest(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def profile(self, h4, m3a, data_in=False):
+    def profile(self, h4, m3a):
         write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp",
-              PROFILE_HEADER % tuple("true" if g else "false" for g in (h4, m3a, data_in)))
+              PROFILE_HEADER % tuple("true" if g else "false" for g in (h4, m3a)))
 
     def gates(self, record):
         write(self.f.src / "docs" / "mediciones" / "puertas.json", json.dumps(record))
@@ -542,20 +540,20 @@ class CassettePackageTest(unittest.TestCase):
 
     def test_h4_not_signed_in_the_profile_is_refused(self):
         self.profile(False, True)
-        self.assert_refused("puertas H4, M3a y DATA-IN (perfil)")
+        self.assert_refused("puertas H4 y M3a (perfil)")
 
     def test_m3a_not_signed_in_the_profile_is_refused(self):
         self.profile(True, False)
-        self.assert_refused("puertas H4, M3a y DATA-IN (perfil)")
+        self.assert_refused("puertas H4 y M3a (perfil)")
 
     def test_profile_that_cannot_be_read_is_refused(self):
         write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp",
               "constexpr BoardProfile fujinet_atari_v1x_profile() noexcept { return kApproved; }\n")
-        self.assert_refused("puertas H4, M3a y DATA-IN (perfil)")
+        self.assert_refused("puertas H4 y M3a (perfil)")
 
     def test_profile_missing_is_refused(self):
         (self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp").unlink()
-        self.assert_refused("puertas H4, M3a y DATA-IN (perfil)")
+        self.assert_refused("puertas H4 y M3a (perfil)")
 
     def test_h4_not_approved_in_the_record_is_refused(self):
         self.gates(gate_record(h4=False))
@@ -656,10 +654,10 @@ class CassettePackageTest(unittest.TestCase):
         self.assertTrue(self.package().ok)
         path = self.f.out / "PROVENANCE.json"
         provenance = json.loads(path.read_text(encoding="utf-8"))
-        provenance["checks"] = [c for c in provenance["checks"] if c["name"] != "puertas H4, M3a y DATA-IN (perfil)"]
+        provenance["checks"] = [c for c in provenance["checks"] if c["name"] != "puertas H4 y M3a (perfil)"]
         path.write_text(json.dumps(provenance), encoding="utf-8")
         fp.write_manifest(self.f.out)
-        self.assertIn("registrado en CI: puertas H4, M3a y DATA-IN (perfil)", self.failed(fp.verify_package(self.f.out)))
+        self.assertIn("registrado en CI: puertas H4 y M3a (perfil)", self.failed(fp.verify_package(self.f.out)))
 
     def test_verify_requires_the_restricted_code_check_recorded(self):
         self.assertTrue(self.package().ok)
@@ -676,26 +674,26 @@ class CassettePackageTest(unittest.TestCase):
     # holes found in review: hidden profiles, other GPIO/UART/RMT uses, wrong pins, record tricks
 
     def test_an_approved_profile_hidden_behind_if_0_is_refused(self):
-        hidden = ("#if 0\n" + PROFILE_HEADER % ("true", "true", "false") + "#endif\n"
-                  + PROFILE_HEADER % ("false", "false", "false"))
+        hidden = ("#if 0\n" + PROFILE_HEADER % ("true", "true") + "#endif\n"
+                  + PROFILE_HEADER % ("false", "false"))
         write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp", hidden)
-        self.assert_refused("puertas H4, M3a y DATA-IN (perfil)")
+        self.assert_refused("puertas H4 y M3a (perfil)")
 
     def test_a_define_in_the_profile_header_is_refused(self):
         write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp",
-              "#define true false\n" + PROFILE_HEADER % ("true", "true", "false"))  # reads approved, compiles unapproved
-        self.assert_refused("puertas H4, M3a y DATA-IN (perfil)")
+              "#define true false\n" + PROFILE_HEADER % ("true", "true"))  # reads approved, compiles unapproved
+        self.assert_refused("puertas H4 y M3a (perfil)")
 
     def test_a_second_profile_definition_is_refused(self):
         write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "fujinet_atari_v1x.hpp",
-              PROFILE_HEADER % ("true", "true", "false") + PROFILE_HEADER % ("false", "false", "false"))
-        self.assert_refused("puertas H4, M3a y DATA-IN (perfil)")
+              PROFILE_HEADER % ("true", "true") + PROFILE_HEADER % ("false", "false"))
+        self.assert_refused("puertas H4 y M3a (perfil)")
 
     def test_profile_fields_must_keep_their_order(self):
         write(self.f.src / "components" / "rb_board" / "include" / "rb" / "board" / "board_profile.hpp",
               BOARD_PROFILE.replace("    bool sioGateApproved;\n    SioPins sio;\n",
                                     "    SioPins sio;\n    bool sioGateApproved;\n"))
-        self.assert_refused("puertas H4, M3a y DATA-IN (perfil)")
+        self.assert_refused("puertas H4 y M3a (perfil)")
 
     def test_an_rmt_use_in_another_component_is_refused(self):
         write(self.f.src / "components" / "rb_sio" / "tx.cpp", "void f() { rmt_transmit(ch, enc, d, 1, &c); }\n")
@@ -807,7 +805,7 @@ class CassettePackageTest(unittest.TestCase):
     def test_diag_and_h3c_do_not_read_the_gates(self):
         for variant in ("diag", "h3c"):
             names = [c.name for c in self.package(variant).checks]
-            self.assertNotIn("puertas H4, M3a y DATA-IN (perfil)", names)
+            self.assertNotIn("puertas H4 y M3a (perfil)", names)
             self.assertNotIn("puertas H4, M3a y DATA-IN (registro)", names)
 
     def test_diag_verify_keeps_its_recorded_checks(self):
@@ -830,13 +828,13 @@ class CassettePackageTest(unittest.TestCase):
         # docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md: M3a approved by risk acceptance, H4 not;
         # docs/mediciones/aceptacion-data-in-casete-2026-11-26.md: DATA-IN accepted for the menu-sio cassette
         repo = Path(__file__).resolve().parents[2]
-        self.assertEqual(fp.profile_gates(repo), (False, True, True))
+        self.assertEqual(fp.profile_gates(repo), (False, True))
         ok, _detail, _record = fp.read_gate_record(repo)
         self.assertFalse(ok)
 
     def test_real_profile_and_record_allow_the_menu_sio_package(self):
         repo = Path(__file__).resolve().parents[2]
-        self.assertEqual(fp.profile_gates(repo), fp.VARIANTS["menu-sio"].gates)
+        self.assertEqual(fp.profile_gates(repo), fp.VARIANTS["menu-sio"].gates[:2])
         ok, detail, _record = fp.read_gate_record(repo, fp.VARIANTS["menu-sio"].gates)
         self.assertTrue(ok, detail)
 
@@ -994,7 +992,7 @@ class MenuSioPackageTest(unittest.TestCase):
 
     def setUp(self):
         CassettePackageTest.setUp(self)
-        self.profile(False, True, True)
+        self.profile(False, True)
         self.gates(menu_record())
         write(self.f.src / "components" / "rb_esp_sio" / "src" / "esp_sio_uart.cpp", SIO_UART_SOURCE)
         write(self.f.src / "main" / "menu_sio.cpp", MENU_MAIN_SOURCE)
@@ -1052,9 +1050,26 @@ class MenuSioPackageTest(unittest.TestCase):
         self.gates(gate_record())
         self.assert_refused(fp.RECORD_CHECK)
 
-    def test_menu_sio_package_refuses_data_in_not_accepted_in_the_profile(self):
-        self.profile(False, True, False)
-        self.assert_refused(fp.PROFILE_CHECK, variant="menu-sio")
+    def tape_option(self):
+        with open(self.f.build / "sdkconfig", "a", encoding="utf-8") as sdk:
+            sdk.write(fp.TAPE_OUTPUT_KCONFIG + "=y\n")
+
+    def test_menu_sio_package_refuses_the_tape_output_option(self):
+        # review PR #123, H1: the generic menu-sio package never carries the owner's acceptance
+        self.tape_option()
+        self.assert_refused(fp.TAPE_OUTPUT_CHECK, variant="menu-sio")
+
+    def test_menu_sio_cinta_packages_only_with_the_tape_output_option(self):
+        self.assert_refused(fp.TAPE_OUTPUT_CHECK, variant="menu-sio-cinta")
+        self.tape_option()
+        log = self.package("menu-sio-cinta")
+        self.assertTrue(log.ok, self.failed(log))
+        provenance = json.loads((self.f.out / "PROVENANCE.json").read_text(encoding="utf-8"))
+        self.assertIn("FN32ROV-1.3-Q24", json.dumps(provenance, ensure_ascii=False))
+
+    def test_the_other_variants_refuse_the_tape_output_option(self):
+        for name, variant in fp.VARIANTS.items():
+            self.assertEqual(variant.tape_output, name == "menu-sio-cinta", name)
 
     def test_menu_sio_package_refuses_data_in_not_accepted_in_the_record(self):
         self.gates(gate_record(h4=False, data_in=False))
@@ -1329,7 +1344,7 @@ class BenchC8aPackageTest(unittest.TestCase):
     def setUp(self):
         CassettePackageTest.setUp(self)
         write(self.f.src / "main" / "bench_c8.cpp", BENCH_SOURCE)
-        self.profile(False, True, True)
+        self.profile(False, True)
         self.gates(menu_record())
         self.build()
 
@@ -1541,7 +1556,7 @@ class BenchC8aCiJobTest(unittest.TestCase):
                 ("llamadas SIO", fp.check_sio_calls(self.repo, spec.sio_calls, fp.MENU_SIO_SOURCES, skip_dirs=(fp.FUJINET_FSK_DIR,))),
                 ("NVS", fp.check_nvs(self.repo)), ("concesión", fp.check_bench_grant(self.repo))):
             self.assertTrue(ok, f"{name}: {detail}")
-        self.assertEqual(fp.profile_gates(self.repo), spec.gates)
+        self.assertEqual(fp.profile_gates(self.repo), spec.gates[:2])
         ok, detail, _record = fp.read_gate_record(self.repo, spec.gates)
         self.assertTrue(ok, detail)
 

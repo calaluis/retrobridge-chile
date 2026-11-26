@@ -23,13 +23,13 @@ constexpr rb::board::SioPins kNoSio{kNoPin, kNoPin, kNoPin};
 
 BoardProfile spi_board(SdSpiPins pins, bool psram = false, int8_t card_detect = kNoPin, SpiHost host = SpiHost::Spi2)
 {
-    return BoardProfile{"test-fixture", true, psram, SdInterface::Spi, pins, host, card_detect, false, kNoSio, kNoPin, false, false};
+    return BoardProfile{"test-fixture", true, psram, SdInterface::Spi, pins, host, card_detect, false, kNoSio, kNoPin, false};
 }
 
 BoardProfile sdmmc_board(SdInterface width)
 {
     return BoardProfile{"test-fixture", true, false, width, SdSpiPins{kNoPin, kNoPin, kNoPin, kNoPin}, SpiHost::None,
-                        kNoPin, false, kNoSio, kNoPin, false, false};
+                        kNoPin, false, kNoSio, kNoPin, false};
 }
 
 ErrorCode rejection(const BoardProfile& profile)

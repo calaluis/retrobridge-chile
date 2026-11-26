@@ -17,9 +17,7 @@ namespace rb::board {
 // U4), Atari DATA IN GPIO21 (to U4, open collector; output forbidden until H6).
 // Its H4 gate is not signed, so validate_for_sio() never authorizes them. M3a is signed by the
 // owner's risk acceptance of R1, not by a measurement (docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md):
-// validate_for_motor() grants GPIO36 as an input. DATA IN for the menu-sio cassette is granted by the
-// owner's risk acceptance of R2, R6 and R7 (docs/mediciones/aceptacion-data-in-casete-2026-11-26.md):
-// only validate_for_menu_cassette_output() reads it, and H4 stays unsigned;
+// validate_for_motor() grants GPIO36 as an input;
 // check_sio_pins() only checks the assignment. Configures nothing by itself. Selecting it
 // (RB_BOARD_FUJINET_ATARI_V1X) asserts that the board's silkscreen revision and
 // pinout were checked against this data; until then RB_BOARD_UNCONFIRMED stays
@@ -36,8 +34,7 @@ constexpr BoardProfile fujinet_atari_v1x_profile() noexcept
                         false,  // H4 not approved (docs/hardware/h4-puerta-sio.md); R2, R7 not accepted; R6 USB only (docs/mediciones/riesgos-h4-2026-11-25.md)
                         SioPins{39, 33, 21},
                         36,      // MOTOR: GPIO36 (SENSOR_VP), straight from SIO pin 8
-                        true,    // M3a signed by risk acceptance of R1 (docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md)
-                        true};   // DATA IN for the menu-sio cassette by risk acceptance of R2, R6, R7 (docs/mediciones/aceptacion-data-in-casete-2026-11-26.md)
+                        true};   // M3a signed by risk acceptance of R1 (docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md)
 }
 
 }  // namespace rb::board

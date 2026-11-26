@@ -9,9 +9,14 @@
 
 namespace rb::menusio {
 
-inline bool tapeGatesOpen(bool tapeOutput, const rb::board::BoardProfile& board) noexcept
+// tapeOutput: the build carries the owner's acceptance for DATA IN (CONFIG_RB_MENU_SIO_TAPE_OUTPUT). The grant
+// is a permission, not a capability: motorReady and dataInDriven say what start-up really configured
+// (EspMotorIn::configure, CassetteService::shareDataIn). Without either the menu says «AUN NO PUEDE CARGARSE».
+inline bool tapeGatesOpen(bool tapeOutput, const rb::board::BoardProfile& board, bool motorReady,
+                          bool dataInDriven) noexcept
 {
-    return tapeOutput && rb::board::validate_for_menu_cassette_output(board).ok();
+    return tapeOutput && motorReady && dataInDriven &&
+           rb::board::validate_for_menu_cassette_output(board, tapeOutput).ok();
 }
 
 }  // namespace rb::menusio

@@ -117,6 +117,17 @@ struct State {
     bool routeForced = false;            // readOutputRoute() returns the forced values instead
     uint32_t forcedSel = 0;
     bool forcedEnabled = false;
+
+    // --- The owner's FujiNet FSK engine (cassette-motor-fujinet) -------------------------------
+    void (*onRmtWait)() = nullptr;                                  // rmt_tx_wait_all_done() calls it first
+    void (*onSymbols)(const void* symbols, std::size_t count) = nullptr;  // each batch play_symbols() made
+    uint32_t rmtMemBlocks = 8;           // rmt_ll_tx_get_mem_blocks(&RMT, 0)
+    unsigned rmtPointerResets = 0;       // rmt_ll_tx_reset_pointer(&RMT, 0)
+    int gpioLevel = -1;                  // gpio_set_level() of the DATA IN pin
+    unsigned outSignalConnects = 0;      // esp_rom_gpio_connect_out_signal()
+    unsigned heapAllocs = 0;
+    unsigned heapFrees = 0;
+    bool failHeap = false;               // heap_caps_malloc/calloc return nullptr
 };
 
 constexpr int kTxFifo = 128;

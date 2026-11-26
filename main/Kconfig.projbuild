@@ -51,6 +51,20 @@ menu "RetroBridge Chile"
             power only): connecting it to the 65XE is not authorized. M3a is signed by risk
             acceptance of R1 only: MOTOR (GPIO36) is read as an input.
 
+    config RB_CAS_ENGINE_FUJINET
+        bool "Experimental: play .cas with the owner's FujiNet FSK engine"
+        depends on RB_MENU_SIO
+        default n
+        help
+            Experimental variant (cassette-motor-fujinet). The cassette plays with the
+            owner's FSK code from the FujiNet beta v1.6.2-atari-fsk-beta.1 (commit
+            cf3382f, component rb_fujinet_fsk) and RetroBridge's FujiTapeLoop, instead
+            of RetroBridge's CassettePlayer. It changes no gate: it plays only when
+            DATA IN is driven exclusively by the cassette, which needs H4 and M3a and
+            kTapeOutput (main/menu_sio.cpp), and H4 is not approved. In shared mode
+            (UART2 is the disk's) it does not run: RetroBridge's player stays.
+            Not for the 65XE: no physical test is authorized.
+
     config RB_DRIVE_SAVE_STACK
         int "menu-sio: stack of the rb_drive_save task (bytes)"
         depends on RB_MENU_SIO

@@ -34,6 +34,8 @@ jobs:
         run: python3 -I tools/check_layering.py
       - name: Check third-party notices (ADR-013)
         run: python3 -I tools/check_notices.py
+      - name: Check the owner's FujiNet files (ADR-012 amendment 2)
+        run: python3 -I tools/check_fujinet_fsk.py
 
   esp-idf-build:
     name: ESP-IDF build (esp32)
@@ -71,6 +73,26 @@ jobs:
           grep -q '^CONFIG_RB_MENU_SIO=y' build-menu-sio/sdkconfig
           if grep -q '^CONFIG_RB_BENCH_C8=y' build-menu-sio/sdkconfig; then echo "bench-c8 in menu-sio"; exit 1; fi
           idf.py -B build-menu-sio -D SDKCONFIG=build-menu-sio/sdkconfig size
+      - name: Build firmware (experimental variant cas-fujinet, compile only; H4 not approved)
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          # cassette-motor-fujinet: the owner's FujiNet FSK engine (rb_fujinet_fsk) plays the tape. No gate
+          # changes: kTapeOutput stays false, H4 unsigned. Not packaged.
+          idf.py -B build-cas-fujinet -D SDKCONFIG=build-cas-fujinet/sdkconfig \
+                 -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board.fujinet-atari-v1x;sdkconfig.menu-sio;sdkconfig.cas-fujinet" build
+          grep -q '^CONFIG_RB_CAS_ENGINE_FUJINET=y' build-cas-fujinet/sdkconfig
+          grep -q '^CONFIG_RB_MENU_SIO=y' build-cas-fujinet/sdkconfig
+          # Only this variant links the engine; the normal and menu-sio builds never do. (nm into a file:
+          # with pipefail, `nm | grep -q` can fail on SIGPIPE even when grep matched.)
+          xtensa-esp32-elf-nm -C build-cas-fujinet/retrobridge.elf > nm-cas-fujinet.txt
+          grep -q 'cassette_fsk_play_run' nm-cas-fujinet.txt
+          for b in build build-fujinet build-menu-sio; do
+            if grep -q '^CONFIG_RB_CAS_ENGINE_FUJINET=y' "$b/sdkconfig"; then echo "cas-fujinet in $b"; exit 1; fi
+            xtensa-esp32-elf-nm -C "$b/retrobridge.elf" > "nm-$b.txt"
+            if grep -q 'cassette_fsk_play_run' "nm-$b.txt"; then echo "engine linked in $b"; exit 1; fi
+          done
+          idf.py -B build-cas-fujinet -D SDKCONFIG=build-cas-fujinet/sdkconfig size
       - name: DataInHandover and TapeProgress atomics without locks on Xtensa (menu-cinta T9a.1, T9a.7)
         shell: bash
         run: |

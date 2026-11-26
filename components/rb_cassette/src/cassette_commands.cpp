@@ -166,6 +166,7 @@ void CassetteCommands::mount(const char* args, WaveOut& wave, rb::core::Span<cha
     TapeSource* old = source_;
     source_ = fresh;
     count_ = index.count;
+    ++generation_;
     std::memcpy(name_, name, sizeof(name_));
     if (old != nullptr) {
         retired_ = old;
@@ -179,6 +180,15 @@ void CassetteCommands::status(const MotorIn& motor, rb::core::Span<char> out) co
     const char* motorText = motor.on() ? "on" : "off";
     if (source_ == nullptr) {
         reply(out, "no tape, motor %s", motorText);  // MOTOR is worth seeing before a tape (AC9)
+        return;
+    }
+    if (position_ != nullptr) {
+        if (position_->atEnd()) {
+            reply(out, "%s: end, motor %s", name_, motorText);
+        } else {
+            reply(out, "%s: segment %u/%u, %s, motor %s", name_, static_cast<unsigned>(position_->segment() + 1),
+                  static_cast<unsigned>(count_), position_->phase(), motorText);
+        }
         return;
     }
     if (player_.atEnd()) {
@@ -204,6 +214,7 @@ void CassetteCommands::eject(WaveOut& wave, rb::core::Span<char> out) noexcept
     retired_ = source_;
     source_ = nullptr;
     count_ = 0;
+    ++generation_;
     reply(out, "ejected %s", name_);
     name_[0] = '\0';
     (void)closeRetired();
@@ -216,6 +227,7 @@ void CassetteCommands::rewind(WaveOut& wave, rb::core::Span<char> out) noexcept
         return;
     }
     player_.rewind(wave);
+    ++generation_;
     reply(out, "rewound %s", name_);
 }
 

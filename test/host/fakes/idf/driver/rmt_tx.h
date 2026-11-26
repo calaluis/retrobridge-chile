@@ -13,14 +13,19 @@ struct rmt_tx_channel_config_t {
     uint32_t resolution_hz;
     size_t mem_block_symbols;
     size_t trans_queue_depth;
+    int intr_priority;  // IDF 6.1 fields set by the owner's cassetteFSK.cpp (cassette-motor-fujinet)
     struct {
         uint32_t init_level : 1;
+        uint32_t invert_out : 1;
+        uint32_t with_dma : 1;
+        uint32_t allow_pd : 1;
     } flags;
 };
 struct rmt_transmit_config_t {
     int loop_count;
     struct {
         uint32_t eot_level : 1;
+        uint32_t queue_nonblocking : 1;
     } flags;
 };
 esp_err_t rmt_new_tx_channel(const rmt_tx_channel_config_t* config, rmt_channel_handle_t* ret);

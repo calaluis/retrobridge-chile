@@ -21,7 +21,8 @@
 //   been pushed whole ran dry mid-run. The signal is not resumed from the middle: the run is
 //   played again from its gap, as the owner's beta does on CassetteFSKStatus::underrun (FujiNet
 //   PR #1773, FSKNext::underrun). A run is whole once every value of its length was pushed, even
-//   before the loader says Final.
+//   before the loader says Final. A cut after the last push (in FskDrain) is seen through
+//   WaveOut::cuts(), read when the signal starts: idle() alone would take it as the run's end.
 //
 // tick() runs on the cassette loop and never allocates (ADR-011). The loader's producer
 // (FskLoader::step) runs elsewhere: another task on the ESP32, the test in the host.
@@ -67,6 +68,9 @@ public:
     // Plays at the signal's own pace (the RMT): idle() before the player has pushed the whole run
     // means the signal ran dry mid-run. False for outputs that play at once or drive nothing.
     virtual bool realTime() const { return false; }
+    // Runs this output ended before their end (ran dry, or could not play), counted since it was
+    // built and never reset. idle() cannot tell a cut from an end; this can (review H1, PR #121).
+    virtual uint32_t cuts() const { return 0; }
 
 protected:
     ~WaveOut() = default;
@@ -124,6 +128,7 @@ private:
     void restartRun(WaveOut& wave) noexcept;
     bool startLoader(const CasSegment& segment) noexcept;
     bool playBytes(const CasSegment& segment, ByteOut& bytes) noexcept;  // true: segment done
+    bool wasCut(const WaveOut& wave) const noexcept;  // the output cut this run since its signal started
     FskProgress playFsk(WaveOut& wave) noexcept;
 
     FskLoader& loader_;
@@ -145,6 +150,7 @@ private:
     bool pieceOpen_ = false;   // wave_ holds a piece not fully played
     bool havePortion_ = false; // portion_ was refused by WaveOut: push it first
     bool pushedInRun_ = false; // WaveOut took a portion of this run since it (re)started
+    uint32_t cutsAtStart_ = 0; // WaveOut::cuts() when this run's signal started
     FskPortion portion_{};
     uint32_t fskRestarts_ = 0;
     uint32_t fskUnderruns_ = 0;

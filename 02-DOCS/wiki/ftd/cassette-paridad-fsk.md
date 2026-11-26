@@ -34,9 +34,11 @@ Fuera:
 - [x] D2 en rojo y luego en verde — prueba: `test_small_first_chunk_waits_for_the_whole_run`, borde de 16 384 bytes.
 - [x] Cintas reales: International Karate (bytes, niveles y duraciones), Alien Ambush y Missile Command — prueba:
   0 pruebas ignoradas con `RB_CAS_SAMPLES`.
-- [x] Regresión: 102 de 102 en `ctest` — prueba: ejecución local, matriz §3.
+- [x] Regresión: 103 de 103 en `ctest` — prueba: ejecución local, matriz §3.
 - [x] Procedencia — prueba: tres filas nuevas en `docs/fuentes.md` (D1, D2, D7).
-- [ ] Revisión independiente (ChatGPT) — en la PR.
+- [x] Revisión 1, H1 (corte tras la última porción, en `FskDrain`) — prueba: `test_esp_data_in_player`, 3 casos
+  en rojo y luego en verde, 4 controles (fin normal, MOTOR, rebobinado, cambio de salida); `ctest` 103 de 103.
+- [ ] Revisión independiente de la corrección de H1 — en la PR.
 - [ ] Prueba física autorizada — no forma parte de esta rama.
 
 ## Evidence

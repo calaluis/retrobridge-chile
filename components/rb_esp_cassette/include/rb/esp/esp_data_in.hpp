@@ -97,6 +97,7 @@ public:
     bool idle() const override;
     void stop() override;
     bool realTime() const override { return true; }  // the RMT plays at the signal's pace
+    uint32_t cuts() const override { return underruns_ + failures_; }  // runs cut or dropped
 
     // Cassette loop, every tick: starts a queued run, gives the pin back to the UART once a run has
     // played. After an underrun the run is cut, never resumed from the middle (cassette-cas-paridad

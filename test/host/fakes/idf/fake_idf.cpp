@@ -51,6 +51,35 @@ std::size_t play_all()
     return total;
 }
 
+std::size_t play_symbols(std::size_t symbols)
+{
+    State& s = g_state;
+    std::size_t total = 0;
+    if (s.encoderCallback == nullptr) {
+        return 0;
+    }
+    auto cb = reinterpret_cast<rmt_encode_simple_cb_t>(s.encoderCallback);
+    rmt_symbol_word_t buffer[64];
+    bool done = false;
+    while (total < symbols && !done) {
+        const std::size_t room = std::min<std::size_t>(64, symbols - total);
+        const std::size_t n = cb(nullptr, 0, total, room, buffer, &done, s.encoderArg);
+        total += n;
+        if (n == 0 && !done) {
+            break;
+        }
+    }
+    if (done && s.rmtBusy) {
+        s.rmtBusy = false;
+        if (s.doneCallback != nullptr) {
+            const rmt_tx_done_event_data_t event{total};
+            reinterpret_cast<rmt_tx_done_callback_t>(s.doneCallback)(
+                reinterpret_cast<rmt_channel_handle_t>(&g_channel), &event, s.doneContext);
+        }
+    }
+    return total;
+}
+
 bool line_released()
 {
     return !(g_state.owner == Owner::Rmt && g_state.rmtBusy);

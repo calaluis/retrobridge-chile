@@ -87,12 +87,16 @@ void CassettePlayer::tick(uint64_t nowUs, const MotorIn& motor, ByteOut& bytes, 
     if (!loaded() || atEnd()) {
         return;
     }
-    if (dropped && phase_ == PlayerPhase::FskDrain && wave.idle()) {
+    if (dropped && phase_ == PlayerPhase::FskDrain && wave.idle() && !wasCut(wave)) {
         // The run had already played to its end: nothing to cut or replay.
         loaderStarted_ = false;
         nextSegment();
     } else if (dropped && (phase_ == PlayerPhase::FskPlay || phase_ == PlayerPhase::FskDrain)) {
-        // The signal had started: stop it now and play the run again from its gap (PR #1804).
+        // The signal had started, or the output cut it: stop it now and play the run again from its
+        // gap (PR #1804; review H1 of PR #121).
+        if (wasCut(wave)) {
+            ++fskUnderruns_;
+        }
         restartRun(wave);
         return;
     }
@@ -153,12 +157,13 @@ void CassettePlayer::tick(uint64_t nowUs, const MotorIn& motor, ByteOut& bytes, 
                 return;
             }
             wave_.reset();
+            cutsAtStart_ = wave.cuts();
             phase_ = PlayerPhase::FskPlay;
             continue;
         }
         case PlayerPhase::FskPlay: {
             budgetUs_ = 0;
-            if (pushedInRun_ && wave.realTime() && wave.idle()) {
+            if ((pushedInRun_ && wave.realTime() && wave.idle()) || wasCut(wave)) {
                 ++fskUnderruns_;  // ran dry mid-run: played again from its gap, never resumed
                 restartRun(wave);
                 return;
@@ -178,6 +183,11 @@ void CassettePlayer::tick(uint64_t nowUs, const MotorIn& motor, ByteOut& bytes, 
         }
         case PlayerPhase::FskDrain:
             budgetUs_ = 0;
+            if (wasCut(wave)) {
+                ++fskUnderruns_;  // cut after the last push: its end never reached DATA IN (H1)
+                restartRun(wave);
+                return;
+            }
             if (!wave.idle()) {
                 return;
             }
@@ -211,12 +221,16 @@ void CassettePlayer::changeOutputs(WaveOut& previous, bool previousDrove) noexce
         }
         return;
     }
-    if (phase_ == PlayerPhase::FskDrain && previous.idle()) {
+    if (phase_ == PlayerPhase::FskDrain && previous.idle() && !wasCut(previous)) {
         // The run already played to its end on the old output: nothing to cut or replay.
         loaderStarted_ = false;
         nextSegment();
     } else if (phase_ == PlayerPhase::FskPlay || phase_ == PlayerPhase::FskDrain) {
-        // The signal had started on the old output: stop it there, the whole run again on the new one.
+        // The signal had started on the old output, or the old output cut it: stop it there, the
+        // whole run again on the new one.
+        if (wasCut(previous)) {
+            ++fskUnderruns_;
+        }
         restartRun(previous);
     }
 }
@@ -257,6 +271,11 @@ bool CassettePlayer::playBytes(const CasSegment& segment, ByteOut& bytes) noexce
 // Starts the loader for `segment` once the previous producer is no longer inside step()
 // (FskLoader::start is not thread-safe with step): while a stop is pending the state stays
 // Loading, and only the producer moves it on. False while waiting, or if blocked.
+bool CassettePlayer::wasCut(const WaveOut& wave) const noexcept
+{
+    return wave.realTime() && wave.cuts() != cutsAtStart_;
+}
+
 bool CassettePlayer::startLoader(const CasSegment& segment) noexcept
 {
     if (blocked_) {

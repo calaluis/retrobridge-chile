@@ -49,6 +49,11 @@ Etiquetas: **[V]** verificado (prueba del host o lectura de código citada), **[
   - Una tirada cuyos valores ya se enviaron todos está completa aunque el cargador aún no diga `Final`. Así un fin
     normal no se confunde con un corte.
   - La salida de descarte (`kTapeOutput = false`) no es en tiempo real: allí no hay cortes.
+  - Revisión 1, H1: el RMT puede quedarse sin datos justo cuando el reproductor ya entregó las últimas porciones y
+    pasó a `FskDrain`. `pump()` corta y descarta, y `idle()` ya no distingue ese corte de un fin normal. Por eso
+    la salida cuenta sus cortes (`WaveOut::cuts()`; en `EspDataIn`, cortes más tiradas que el RMT no pudo
+    reproducir). El reproductor guarda el valor al empezar la señal y, si cambia, repite la tirada: en
+    `FskPlay`, en `FskDrain`, al caer MOTOR y al cambiar de salida.
 - Diferencia de arquitectura que queda: RetroBridge tiene una cola entre el bucle y la interrupción (16 KB, ≥ 0,4 s).
   Un bucle de la casetera que se atrase también puede vaciarla. Ahora ese caso se trata igual que en la beta.
 
@@ -77,7 +82,21 @@ RED → GREEN, compilación del host con MSYS2 UCRT64 (GCC), `RB_CAS_SAMPLES=D:\
 | `test_idle_output_that_is_not_live_is_never_an_underrun` (control) | PASS | PASS |
 | `test_real_international_karate_live_plays_every_portion` (cinta real) | PASS | PASS |
 
-Regresión: 102 de 102 binarios de `ctest` en verde, con las cintas reales presentes (0 pruebas ignoradas en
+Revisión 1, H1: prueba de integración `test_esp_data_in_player` (`CassettePlayer` con el `EspDataIn` real sobre
+`fake_idf`, en el orden de `CassetteTick`: primero el reproductor, luego `pump()`). El doble de ESP-IDF gana
+`play_symbols(n)`: el RMT consume sin terminar la transmisión.
+
+| Prueba | Antes (rojo) | Después |
+|---|---|---|
+| `test_cut_after_the_last_push_replays_the_run` | `Expected 0 Was 1` (pasaba al segmento siguiente) | PASS |
+| `test_motor_off_after_a_cut_replays_the_run` | `Expected 0 Was 1` | PASS |
+| `test_output_change_after_a_cut_replays_the_run` | `Expected 0 Was 1` | PASS |
+| `test_normal_end_is_not_replayed` (control) | PASS | PASS |
+| `test_motor_off_after_a_normal_end_does_not_replay` (control) | PASS | PASS |
+| `test_rewind_after_a_cut_then_a_normal_run` (control) | PASS | PASS |
+| `test_output_change_after_a_normal_end_does_not_replay` (control) | PASS | PASS |
+
+Regresión: 103 de 103 binarios de `ctest` en verde, con las cintas reales presentes (0 pruebas ignoradas en
 `test_rb_cassette_player`, `test_fsk_loader`, `test_cas_index`, `test_fsk_wave` y `test_esp_data_in`).
 
 Pruebas antiguas ajustadas por D2 (el primer bloque pasa a 18 000 bytes para seguir probando la puerta progresiva; lo

@@ -302,6 +302,14 @@ rb_add_host_test(test_esp_data_in esp_cassette/test_esp_data_in.cpp
 target_include_directories(test_esp_data_in PRIVATE ${rb_root}/components/rb_esp_cassette/include)
 target_link_libraries(test_esp_data_in PRIVATE fake_idf rb_cassette rb_board)
 
+# Review H1 of PR #121 (cassette-cas-paridad D1): CassettePlayer driving the real EspDataIn against
+# fake_idf, in CassetteTick's order (player, then pump): a run cut by the RMT is never taken as played.
+rb_add_host_test(test_esp_data_in_player esp_cassette/test_esp_data_in_player.cpp
+                 ${rb_root}/components/rb_esp_cassette/src/esp_data_in.cpp
+                 fakes/idf/fake_gpio_route.cpp)
+target_include_directories(test_esp_data_in_player PRIVATE ${rb_root}/components/rb_esp_cassette/include)
+target_link_libraries(test_esp_data_in_player PRIVATE fake_idf rb_cassette rb_board)
+
 # Bench C8a, phase F1 (docs/hardware/banco-c8a-aislado.md): the SIO +5 V interlock and the one-shot console order
 # (main/bench_c8_gate.hpp), and the C8 sequence of main/bench_c8.cpp against fake_idf's GPIO matrix.
 rb_add_host_test(test_bench_c8_gate bench/test_bench_c8_gate.cpp)

@@ -50,8 +50,8 @@ Fuera:
 - [x] Mutaciones de H1-H3 — prueba: 13 de 13 caen (runner, bucle y comandos).
 - [x] Revisión independiente, ronda 2 — H1, H2 y H3 cerrados; hallazgo nuevo R2-H4 (velocidad antigua
   restaurada tras un Take) registrado en la PR.
-- [x] R2-H4 — prueba: `test_fuji_tape_runner` (19): cinta nueva sin `baud`, MOTOR apagado y encendido, activación
-  rechazada; 2 mutaciones caen; diseño D17.
+- [x] R2-H4 — prueba: `test_fuji_tape_runner` (20): cinta nueva sin `baud`, rebobinado, MOTOR apagado y encendido,
+  activación rechazada; 2 mutaciones caen; diseño D17.
 - [ ] Revisión independiente, ronda 3 — en la PR.
 - [ ] Prueba física autorizada — no forma parte de esta rama.
 

@@ -585,6 +585,35 @@ void test_shared_motor_off_and_on_then_a_take_restores_600()
     TEST_ASSERT_EQUAL_UINT8(4, r.out.sent.back());
 }
 
+// H4, rewind (a new generation of the same tape): the tape left 750; after the rewind the first record plays
+// at 600, and a release and a take restore 600.
+void test_shared_a_rewind_does_not_restore_the_old_rate()
+{
+    Rig r(fourRecords());
+    Lender lender;
+    Line line;
+    r.runner.lend(lender, line);
+    r.runner.follow(&r.src, 1);
+    r.motor.level = true;
+    takeLine(r, lender);
+    TEST_ASSERT_TRUE(r.runner.tick());
+    TEST_ASSERT_TRUE(r.runner.tick());
+    TEST_ASSERT_EQUAL_UINT32(750, r.out.bauds.back());
+
+    TEST_ASSERT_TRUE(r.runner.follow(&r.src, 2));  // cas rewind
+    const std::size_t before = r.out.sent.size();
+    releaseLine(r, lender);  // the first record after the rewind is enabled at 600, then stops in its gap
+    TEST_ASSERT_EQUAL_UINT32(600, r.out.bauds.back());
+    TEST_ASSERT_EQUAL(before, r.out.sent.size());
+
+    takeLine(r, lender);
+    r.out.bauds.clear();
+    TEST_ASSERT_TRUE(r.runner.tick());  // restored at 600, not the 750 from before the rewind
+    TEST_ASSERT_EQUAL(1, r.out.bauds.size());
+    TEST_ASSERT_EQUAL_UINT32(600, r.out.bauds[0]);
+    TEST_ASSERT_EQUAL_UINT8(1, r.out.sent.back());  // the first record, whole
+}
+
 // H4: a refused enable does not change the rate the runner believes the line has.
 void test_a_refused_enable_keeps_the_rate()
 {
@@ -780,6 +809,7 @@ int main()
     RUN_TEST(test_stop_now_answers_motor_release_and_commands);
     RUN_TEST(test_shared_a_new_tape_does_not_restore_the_old_tape_rate);
     RUN_TEST(test_shared_motor_off_and_on_then_a_take_restores_600);
+    RUN_TEST(test_shared_a_rewind_does_not_restore_the_old_rate);
     RUN_TEST(test_a_refused_enable_keeps_the_rate);
     return UNITY_END();
 }

@@ -24,9 +24,9 @@ uint16_t le16(const uint8_t* p) noexcept
 
 }  // namespace
 
-void FujiTapeLoop::enable() noexcept
+bool FujiTapeLoop::enable() noexcept
 {
-    bus_.setBaud(kCassetteBaud);
+    return bus_.setBaud(kCassetteBaud);
 }
 
 FujiStep FujiTapeLoop::ended() noexcept
@@ -35,6 +35,15 @@ FujiStep FujiTapeLoop::ended() noexcept
     FujiStep step;
     step.kind = FujiStepKind::End;
     step.offset = 0;
+    return step;
+}
+
+FujiStep FujiTapeLoop::replay(uint32_t start) noexcept
+{
+    offset_ = start;
+    FujiStep step;
+    step.kind = FujiStepKind::Replay;
+    step.offset = start;
     return step;
 }
 
@@ -63,7 +72,9 @@ FujiStep FujiTapeLoop::step() noexcept
         }
         if (isType(header, "baud")) {
             baud_ = le16(header + 6);
-            bus_.setBaud(baud_);
+            if (!bus_.setBaud(baud_)) {
+                return replay(start);
+            }
         }
         at += kHeader + length;
     }
@@ -76,12 +87,8 @@ FujiStep FujiTapeLoop::step() noexcept
     for (uint32_t left = gapMs; left > 0;) {
         --left;
         bus_.waitOneMs();
-        if (left > kMotorGraceMs && bus_.motorDropped()) {
-            offset_ = start;
-            FujiStep step;
-            step.kind = FujiStepKind::Replay;
-            step.offset = start;
-            return step;
+        if (bus_.stopWanted() || (left > kMotorGraceMs && bus_.motorDropped())) {
+            return replay(start);
         }
     }
 
@@ -89,10 +96,7 @@ FujiStep FujiTapeLoop::step() noexcept
     if (fsk) {
         const FskRunOutcome played = player_.play(at, length);
         if (!played.ok) {
-            offset_ = start;
-            step.kind = FujiStepKind::Replay;
-            step.offset = start;
-            return step;
+            return replay(start);
         }
         offset_ = played.nextOffset;
         step.kind = FujiStepKind::Fsk;
@@ -111,8 +115,9 @@ FujiStep FujiTapeLoop::step() noexcept
         if (!source_.read(from, rb::core::Span<uint8_t>(piece, n))) {
             return ended();
         }
-        bus_.write(piece, n);
-        bus_.flushOutput();
+        if (!bus_.write(piece, n) || !bus_.flushOutput()) {
+            return replay(start);  // the record plays again from its start: nothing of it is skipped
+        }
         from += n;
         left -= n;
     }

@@ -38,6 +38,18 @@ protected:
     ~TapeFiles() = default;
 };
 
+// Where the tape is when an engine other than CassettePlayer plays it (cassette-motor-fujinet, the FujiNet
+// engine's FujiTapeRunner). `cas status` reads it instead of the player.
+class TapePosition {
+public:
+    virtual bool atEnd() const noexcept = 0;
+    virtual uint32_t segment() const noexcept = 0;  // from 0: the record that plays, or the next one
+    virtual const char* phase() const noexcept = 0;
+
+protected:
+    ~TapePosition() = default;
+};
+
 class CassetteCommands {
 public:
     static constexpr std::size_t kNameMax = 64;  // with the NUL; longer names are cut
@@ -55,6 +67,8 @@ public:
     // experimental FujiNet engine (cassette-motor-fujinet) follows the tape through them.
     TapeSource* source() const noexcept { return source_; }
     uint32_t generation() const noexcept { return generation_; }
+    // `cas status` follows `position` (nullptr: the player again). Read on the task that calls run().
+    void showPosition(const TapePosition* position) noexcept { position_ = position; }
 
 private:
     void mount(const char* path, WaveOut& wave, rb::core::Span<char> out) noexcept;
@@ -70,6 +84,7 @@ private:
     rb::core::Span<CasSegment> spare_;
     TapeSource* source_ = nullptr;
     TapeSource* retired_ = nullptr;  // left, but the producer may still be reading it
+    const TapePosition* position_ = nullptr;
     uint32_t count_ = 0;
     uint32_t generation_ = 0;
     char name_[kNameMax] = {};

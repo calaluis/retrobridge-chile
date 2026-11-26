@@ -338,6 +338,36 @@ void test_status_shows_segment_phase_and_motor()
     TEST_ASSERT_EQUAL_STRING("a.cas: segment 1/2, gap, motor off", rig.run("status"));
 }
 
+// cassette-motor-fujinet (review of PR #122, H2): when another engine plays the tape, `cas status` says
+// where that engine is, not where the idle CassettePlayer was left.
+namespace {
+struct FakePosition final : rb::cassette::TapePosition {
+    bool end = false;
+    uint32_t at = 0;
+    const char* name = "gap";
+    bool atEnd() const noexcept override { return end; }
+    uint32_t segment() const noexcept override { return at; }
+    const char* phase() const noexcept override { return name; }
+};
+}  // namespace
+
+void test_status_follows_the_engine_that_plays()
+{
+    Rig rig;
+    FakePosition position;
+    rig.cas->showPosition(&position);
+    TEST_ASSERT_EQUAL_STRING("no tape, motor on", rig.run("status"));
+    rig.run("mount a.cas");
+    position.at = 1;
+    position.name = "data";
+    TEST_ASSERT_EQUAL_STRING("a.cas: segment 2/2, data, motor on", rig.run("status"));
+    position.end = true;
+    TEST_ASSERT_EQUAL_STRING("a.cas: end, motor on", rig.run("status"));
+    TEST_ASSERT_FALSE(rig.player.atEnd());  // the player was never moved
+    rig.cas->showPosition(nullptr);
+    TEST_ASSERT_EQUAL_STRING("a.cas: segment 1/2, gap, motor on", rig.run("status"));
+}
+
 void test_status_at_the_end()
 {
     Rig rig;
@@ -590,6 +620,7 @@ int main()
     RUN_TEST(test_tape_closes_once_the_loader_moved_to_the_new_one);
     RUN_TEST(test_failed_mount_while_closing_keeps_everything);
     RUN_TEST(test_commands_do_not_allocate);
+    RUN_TEST(test_status_follows_the_engine_that_plays);
     RUN_TEST(test_mount_real_alien_ambush);
     return UNITY_END();
 }

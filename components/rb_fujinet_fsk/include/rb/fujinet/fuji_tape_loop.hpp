@@ -14,6 +14,9 @@
 //      offset where this step started (the next step replays it).
 //   3. "fsk ": the owner's player plays the run. Not ok: back to the start offset.
 //      "data": its bytes go out in pieces of at most 256, each one sent before the next.
+// RetroBridge (review of PR #122, H3): the beta's bus calls cannot fail; here setBaud, write and flushOutput
+// may answer false (the line is wanted back, or it stopped taking bytes). The step then stops at once and
+// returns Replay: the record plays again from its start, as after a MOTOR drop. Nothing of it is skipped.
 
 #include <cstdint>
 
@@ -23,11 +26,14 @@ namespace rb::fujinet {
 
 class FujiTapeBus {
 public:
-    virtual void setBaud(uint32_t baud) = 0;
-    virtual void write(const uint8_t* bytes, uint32_t count) = 0;
-    virtual void flushOutput() = 0;          // returns once the bytes written so far are on the line
+    virtual bool setBaud(uint32_t baud) = 0;  // false: stop the step
+    virtual bool write(const uint8_t* bytes, uint32_t count) = 0;  // false: stop the step
+    virtual bool flushOutput() = 0;  // true once the bytes written so far are on the line; false: stop the step
     virtual void waitOneMs() = 0;
-    virtual bool motorDropped() const = 0;   // pulldown on and MOTOR low
+    virtual bool motorDropped() const = 0;   // MOTOR low (the beta: pulldown on and MOTOR low)
+    // RetroBridge: the step must stop now (the line is wanted back, or a command waits). Checked every gap
+    // millisecond, without the beta's 1000 ms grace, which is for MOTOR only.
+    virtual bool stopWanted() = 0;
 
 protected:
     ~FujiTapeBus() = default;
@@ -50,7 +56,7 @@ protected:
 enum class FujiStepKind : uint8_t {
     Data,    // a data record went out
     Fsk,     // an FSK run played
-    Replay,  // MOTOR dropped in the gap, or the run did not play: offset back to the start of the step
+    Replay,  // MOTOR dropped in the gap, the run did not play, or the bus said stop: offset back to the start
     End,     // no record before the end of the file, or the file failed: offset 0
 };
 
@@ -71,8 +77,9 @@ public:
     {
     }
 
-    // The cassette is enabled (MOTOR on): the rate goes back to 600 baud. The offset stays.
-    void enable() noexcept;
+    // The cassette is enabled (MOTOR on): the rate goes back to 600 baud. The offset stays. False: the bus
+    // refused the rate (stop).
+    bool enable() noexcept;
     // A tape is mounted: back to its start.
     void rewind() noexcept { offset_ = 0; }
 
@@ -83,6 +90,7 @@ public:
 
 private:
     FujiStep ended() noexcept;
+    FujiStep replay(uint32_t start) noexcept;
 
     rb::cassette::TapeSource& source_;
     FujiTapeBus& bus_;

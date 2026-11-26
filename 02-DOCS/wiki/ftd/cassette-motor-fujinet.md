@@ -23,7 +23,9 @@ Dentro:
 Fuera:
 - Fusionar, flashear, COM3, el 65XE, GPIO, H4, C8a, R2, R7, `puertas.json` y `kTapeOutput` (sigue en `false`).
 - Código de terceros: `cassette.cpp` solo se leyó; `sio.cpp` no se leyó.
-- Modo compartido de la UART2 y rebobinar por segundos.
+- Rebobinar por segundos.
+- El modo compartido de la UART2 quedaba fuera. La revisión de la PR (H1) mostró que así el motor no se alcanza en
+  menu-sio. El responsable eligió «Integrar compartido»: entra, con el mismo protocolo de traspaso.
 
 ## Checklist
 
@@ -38,14 +40,23 @@ Fuera:
   verde) y 4 mutaciones de la puerta nueva que caen; diseño §3 D11.
 - [x] Capas y avisos — prueba: `check_layering: OK`, `check_notices: OK`.
 - [ ] Compilación ESP-IDF v6.1 de las cuatro variantes y sanitizers — en la CI de la PR.
-- [ ] Revisión independiente (ChatGPT) — en la PR.
+- [x] Revisión independiente, ronda 1 (ChatGPT) — NO FUSIONAR, hallazgos H1, H2 y H3 registrados en la PR.
+- [x] H1, motor inalcanzable en menu-sio — prueba: `test_fuji_shared` (2) con `EspDataIn` compartido,
+  `DataInHandover`, `TapeProgress` y el código del responsable; diseño §2.1 y D7.
+- [x] H2, fin de cinta y `cas status` — prueba: `test_fuji_shared`, `test_fuji_tape_runner`,
+  `test_cassette_commands` (`test_status_follows_the_engine_that_plays`).
+- [x] H3, esperas sin límite — prueba: `test_fuji_tape_runner` (16): línea que no acepta nada, velocidad
+  rechazada, comando en espera; diseño D12 a D16.
+- [x] Mutaciones de H1-H3 — prueba: 13 de 13 caen (runner, bucle y comandos).
+- [ ] Revisión independiente, ronda 2 — en la PR.
 - [ ] Prueba física autorizada — no forma parte de esta rama.
 
 ## Evidence
 
 - Matriz idéntico / adaptador / diferente: `docs/diseno/cassette-motor-fujinet.md` §1.
-- Diferencias y supuestos: §3 (D1 a D11).
+- Diferencias y supuestos: §3 (D1 a D16).
+- Límite: `check_fujinet_fsk` compara con el manifiesto de la propia PR, no con el repositorio del responsable.
 
 ## Next
 
-Revisión independiente de la PR. No se afirma que `international_karate.cas` cargue en el Atari.
+Segunda revisión independiente de la PR. No se afirma que `international_karate.cas` cargue en el Atari.

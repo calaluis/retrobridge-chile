@@ -16,7 +16,18 @@ Rama `feat/cas-motor-fujinet` desde `main` `8bb25d0`. Documento FTD: `02-DOCS/wi
 - «Solo mis archivos»: entran los archivos propios; `cassette.cpp` no se copia. La licencia no cambia.
 - «Sí, solo leer»: `cassette.cpp` en `cf3382f`, solo para describir su comportamiento.
 
+## Revisión, ronda 1
+
+- Veredicto de la revisión independiente: NO FUSIONAR. Tres hallazgos.
+- H1: en menu-sio DATA IN es compartido y el motor exigía exclusivo. Nunca se usaba.
+- H2: el fin de cinta no llegaba a `TapeProgress` y `cas status` leía `CassettePlayer`.
+- H3: esperas sin límite bloqueaban la tarea de comandos.
+- Decisión del responsable: «Integrar compartido». El protocolo de traspaso no cambia; las puertas tampoco.
+- Arreglo: `FujiTapeRunner` atiende Take y Release como `CassetteTick`, publica el fin, expone `TapePosition`,
+  y sus esperas tienen límite (`kStallMs`). Pruebas RED → GREEN; 13 mutaciones caen.
+- Límite anotado: durante la precarga del responsable no se consulta MOTOR (diseño D14).
+
 ## Pendiente
 
-- CI de la PR: compilación ESP-IDF, sanitizers y comprobaciones del repositorio.
-- Revisión independiente. Ninguna prueba en el Atari.
+- CI de la PR tras el arreglo.
+- Segunda revisión independiente. Ninguna prueba en el Atari.

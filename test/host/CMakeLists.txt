@@ -309,6 +309,17 @@ rb_add_host_test(test_esp_fsk_engine fujinet/test_esp_fsk_engine.cpp ${rb_fujine
 set_source_files_properties(${rb_fujinet_esp_srcs} TARGET_DIRECTORY test_esp_fsk_engine
                             PROPERTIES COMPILE_DEFINITIONS "ESP_PLATFORM;BUILD_ATARI")
 target_link_libraries(test_esp_fsk_engine PRIVATE fake_idf rb_fujinet_fsk rb_cassette)
+# Review of PR #122, H1: the engine on menu-sio's topology — EspDataIn shared with the disk, the real
+# DataInHandover and TapeProgress through the firmware's ports, the owner's engine over fake_idf.
+rb_add_host_test(test_fuji_shared fujinet/test_fuji_shared.cpp ${rb_fujinet_esp_srcs} fakes/idf/fake_idf_fsk.cpp
+                 ${rb_root}/main/cassette_ports.cpp ${rb_root}/components/rb_esp_cassette/src/esp_data_in.cpp
+                 fakes/idf/fake_gpio_route.cpp ${rb_root}/components/rb_menu/src/data_in_arbiter.cpp
+                 ${rb_root}/components/rb_menu/src/data_in_handover.cpp)
+set_source_files_properties(${rb_fujinet_esp_srcs} TARGET_DIRECTORY test_fuji_shared
+                            PROPERTIES COMPILE_DEFINITIONS "ESP_PLATFORM;BUILD_ATARI")
+target_include_directories(test_fuji_shared PRIVATE ${rb_root}/components/rb_esp_cassette/include
+                           ${rb_root}/components/rb_esp_sio/include ${rb_root}/components/rb_menu/include ${rb_root}/main)
+target_link_libraries(test_fuji_shared PRIVATE fake_idf rb_fujinet_fsk rb_cassette rb_board)
 
 # rb_esp_cassette's DATA IN driver against a scripted model of the ESP-IDF calls (H4-C C8):
 # who owns GPIO21 after each step, and the fault when the UART cannot take it back.

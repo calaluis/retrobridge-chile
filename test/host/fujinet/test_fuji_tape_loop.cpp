@@ -42,12 +42,27 @@ public:
     uint32_t dropAfterMs = UINT32_MAX;  // MOTOR reads as dropped once this many ms have been waited
     uint32_t waited = 0;
 
-    void setBaud(uint32_t baud) override { events.push_back({Ev::Baud, baud, {}}); }
-    void write(const uint8_t* bytes, uint32_t count) override
+    unsigned refuseWriteAt = UINT32_MAX;  // the n-th write (from 1) answers false: stop the step
+    unsigned refuseFlushAt = UINT32_MAX;  // the n-th flush (from 1) answers false
+    bool refuseBaud = false;
+    unsigned writes = 0;
+    unsigned flushes = 0;
+
+    bool setBaud(uint32_t baud) override
+    {
+        events.push_back({Ev::Baud, baud, {}});
+        return !refuseBaud;
+    }
+    bool write(const uint8_t* bytes, uint32_t count) override
     {
         events.push_back({Ev::Write, count, Bytes(bytes, bytes + count)});
+        return ++writes != refuseWriteAt;
     }
-    void flushOutput() override { events.push_back({Ev::Flush, 0, {}}); }
+    bool flushOutput() override
+    {
+        events.push_back({Ev::Flush, 0, {}});
+        return ++flushes != refuseFlushAt;
+    }
     void waitOneMs() override
     {
         ++waited;
@@ -58,6 +73,8 @@ public:
         }
     }
     bool motorDropped() const override { return waited >= dropAfterMs; }
+    uint32_t stopAfterMs = UINT32_MAX;  // stopWanted() once this many ms have been waited
+    bool stopWanted() override { return waited >= stopAfterMs; }
 };
 
 // Plays nothing; answers with the owner's fsk_scan_run (casFSK.h): the next offset the beta would use.
@@ -324,6 +341,69 @@ void test_cut_record_sends_nothing_and_ends()
     }
 }
 
+// Review of PR #122, H3: the bus says stop (line wanted back, or it stopped taking bytes) in a write, a
+// flush or a rate change. The step stops there and the record plays again from its start: nothing of it
+// is skipped, nothing after it is sent.
+void test_a_bus_that_says_stop_replays_the_record()
+{
+    Bytes f;
+    chunk(f, "FUJI", 0, {});
+    chunk(f, "data", 0, {1, 2});
+    chunk(f, "baud", 600, {});  // a rate change before the second record
+    chunk(f, "data", 0, fill(600, 0));
+    MemoryTapeSource src({f.data(), f.size()});
+    Bus bus;
+    Player player(f, bus);
+    FujiTapeLoop loop(src, bus, player);
+
+    TEST_ASSERT_EQUAL(FujiStepKind::Data, loop.step().kind);
+    const uint32_t second = loop.offset();
+    bus.refuseWriteAt = 3;  // the second piece (256 + 256 + 88) of the second record
+    FujiStep step = loop.step();
+    TEST_ASSERT_EQUAL(FujiStepKind::Replay, step.kind);
+    TEST_ASSERT_EQUAL_UINT32(second, step.offset);
+    TEST_ASSERT_EQUAL_UINT32(second, loop.offset());
+    TEST_ASSERT_EQUAL(3, bus.writes);  // 1 of the first record, 2 of this one: nothing after the refused one
+    TEST_ASSERT_EQUAL(Ev::Write, bus.events.back().kind);
+
+    bus.refuseFlushAt = bus.flushes + 1;
+    TEST_ASSERT_EQUAL(FujiStepKind::Replay, loop.step().kind);
+    TEST_ASSERT_EQUAL_UINT32(second, loop.offset());
+    TEST_ASSERT_EQUAL(Ev::Flush, bus.events.back().kind);
+
+    bus.refuseBaud = true;
+    TEST_ASSERT_EQUAL(FujiStepKind::Replay, loop.step().kind);
+    TEST_ASSERT_EQUAL_UINT32(second, loop.offset());
+    TEST_ASSERT_EQUAL(Ev::Baud, bus.events.back().kind);
+    TEST_ASSERT_FALSE(loop.enable());
+
+    bus.refuseBaud = false;
+    bus.events.clear();
+    step = loop.step();
+    TEST_ASSERT_EQUAL(FujiStepKind::Data, step.kind);  // the whole record, from its first byte
+    TEST_ASSERT_EQUAL_UINT8(0, bus.events[1].bytes[0]);
+}
+
+// The line wanted back in the last second of a gap: MOTOR's 1000 ms grace does not apply, the step stops
+// at the next millisecond and nothing is sent.
+void test_stop_wanted_in_the_last_second_of_the_gap_stops_at_once()
+{
+    Bytes f;
+    chunk(f, "FUJI", 0, {});
+    chunk(f, "data", 1500, {7});
+    MemoryTapeSource src({f.data(), f.size()});
+    Bus bus;
+    bus.stopAfterMs = 1200;  // 300 ms of gap left
+    Player player(f, bus);
+    FujiTapeLoop loop(src, bus, player);
+    const FujiStep step = loop.step();
+    TEST_ASSERT_EQUAL(FujiStepKind::Replay, step.kind);
+    TEST_ASSERT_EQUAL_UINT32(1200, bus.waited);
+    for (const Event& e : bus.events) {
+        TEST_ASSERT_TRUE(e.kind != Ev::Write);
+    }
+}
+
 namespace {
 
 // Plays a whole real tape and checks each step against CasIndex's segment of the same file.
@@ -411,6 +491,8 @@ int main()
     RUN_TEST(test_fsk_run_goes_to_the_player_after_its_gap);
     RUN_TEST(test_end_of_tape_goes_back_to_offset_zero);
     RUN_TEST(test_cut_record_sends_nothing_and_ends);
+    RUN_TEST(test_a_bus_that_says_stop_replays_the_record);
+    RUN_TEST(test_stop_wanted_in_the_last_second_of_the_gap_stops_at_once);
     RUN_TEST(test_real_international_karate_step_by_step);
     RUN_TEST(test_real_pal_alien_ambush_step_by_step);
     return UNITY_END();

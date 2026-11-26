@@ -18,9 +18,12 @@
 //   end" every tick.
 //
 // - cassette-motor-fujinet (variant RB_CAS_ENGINE_FUJINET, experimental): when DATA IN is driven
-//   exclusively, the loop plays the tape with the owner's FujiNet FSK engine (EspFskEngine) through
-//   FujiTapeRunner instead of CassetteTick. The gates are the same: nothing plays unless driving_ is
-//   true in exclusive mode. Shared mode keeps CassetteTick.
+//   (exclusive, or shared and lent: driving_), the loop plays the tape with the owner's FujiNet FSK engine
+//   (EspFskEngine) through FujiTapeRunner instead of CassetteTick (rb::fujinet::fujiEngineChosen). The
+//   runner keeps the same handover with the SIO task (Take/Release), publishes the end to the same sink and
+//   is what `cas status` reads. A step of the runner may last a whole record: during it, `cas status` is
+//   answered on the spot and any other request stops the step, so it is run between two steps. The gates
+//   are the same: nothing plays unless driving_ is true.
 //
 // Memory (ADR-011): the loader bank and the two segment tables are reserved once in PSRAM by
 // start(); nothing is allocated afterwards.
@@ -41,6 +44,7 @@
 #include "rb/cassette/stdio_tape_files.hpp"
 #include "rb/esp/esp_data_in.hpp"
 #include "rb/fujinet/esp_fsk_engine.hpp"
+#include "rb/fujinet/fuji_service_rules.hpp"
 #include "rb/fujinet/fuji_tape_runner.hpp"
 
 namespace rb::esp {
@@ -82,7 +86,13 @@ public:
         return true;
     }
     // Before start(): where "the tape played to its end" goes every tick (TapeProgress).
-    void reportEnd(rb::cassette::EndSink& sink) noexcept { tick_.report(sink); }
+    void reportEnd(rb::cassette::EndSink& sink) noexcept
+    {
+        tick_.report(sink);
+#if CONFIG_RB_CAS_ENGINE_FUJINET
+        fuji_.report(sink);
+#endif
+    }
 
     // Reserves the memory and starts both tasks. False if PSRAM or the tasks are missing.
     bool start() noexcept;
@@ -125,13 +135,24 @@ private:
     class TaskPause final : public rb::fujinet::Pause {
     public:
         void waitOneMs() override { vTaskDelay(pdMS_TO_TICKS(1)); }
-        void yield() override { vTaskDelay(1); }
     };
-    static bool fujiMotorDropped(void* motor);
+    // Inside a step: `cas status` is answered here, any other request stops the step.
+    class RequestWatch final : public rb::fujinet::StepWatch {
+    public:
+        explicit RequestWatch(CassetteService& service) noexcept : service_(service) {}
+        bool stopWanted() noexcept override { return service_.requestWaits(); }
+
+    private:
+        CassetteService& service_;
+    };
+    static bool fujiMotorDropped(void* service);
+    bool requestWaits() noexcept;
+    void answer(const Request& request) noexcept;
     TaskPause pause_;
+    RequestWatch watch_{*this};
     rb::fujinet::EspFskEngine fskEngine_;
     rb::fujinet::FujiTapeRunner fuji_{dataIn_, motor_, fskEngine_, pause_};
-    bool fujiEngine_ = false;  // start(): DATA IN exclusive and the engine has its memory
+    bool fujiEngine_ = false;  // start(): DATA IN driven and the engine has its memory
 #endif
     alignas(rb::cassette::CassetteCommands) unsigned char commandsStorage_[sizeof(rb::cassette::CassetteCommands)];
     rb::cassette::CassetteCommands* commands_ = nullptr;

@@ -101,16 +101,22 @@ void flushUart() {}
 class Bus final : public rb::fujinet::FujiTapeBus {
 public:
     uint32_t baud = 0;
-    void setBaud(uint32_t b) override { baud = b; }
-    void write(const uint8_t* bytes, uint32_t count) override
+    bool setBaud(uint32_t b) override
+    {
+        baud = b;
+        return true;
+    }
+    bool write(const uint8_t* bytes, uint32_t count) override
     {
         for (uint32_t i = 0; i < count; ++i) {
             g_line.push_back({true, bytes[i], {}});
         }
+        return true;
     }
-    void flushOutput() override {}
+    bool flushOutput() override { return true; }
     void waitOneMs() override {}
     bool motorDropped() const override { return false; }
+    bool stopWanted() override { return false; }
 };
 
 bool readFile(const std::string& path, Bytes& out)

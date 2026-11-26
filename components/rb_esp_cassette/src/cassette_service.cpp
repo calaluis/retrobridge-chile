@@ -20,10 +20,16 @@ constexpr uint32_t kLoopStackBytes = 8192;      // mount: paths, stdio, VFS and 
 constexpr uint32_t kProducerStackBytes = 6144;  // stdio, VFS and FATFS
 #if CONFIG_RB_CAS_ENGINE_FUJINET
 EspDataIn* g_fujiFlush = nullptr;  // the UART the owner's engine waits for before it takes DATA IN
+// Bounded (review of PR #122, H3): FujiTapeLoop already flushed every record before a run, so this
+// returns at once as a rule; a line that never drains is given up after the runner's stall time.
 void fujiFlushOutput()
 {
-    while (g_fujiFlush != nullptr && !g_fujiFlush->drained()) {
-        vTaskDelay(1);
+    for (uint32_t ms = 0; g_fujiFlush != nullptr && !g_fujiFlush->drained(); ++ms) {
+        if (ms >= rb::fujinet::FujiTapeRunner::kStallMs) {
+            ESP_LOGE(kTag, "FujiNet engine: DATA IN did not drain before the run");
+            return;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
 #endif
@@ -127,18 +133,28 @@ bool CassetteService::start() noexcept
         ESP_LOGE(kTag, "DATA IN shared with the disk but nobody lends it: not driven");
     }
 #if CONFIG_RB_CAS_ENGINE_FUJINET
-    if (driving_ && !dataIn_.shared() && fskEngine_.ready()) {
+    if (rb::fujinet::fujiEngineChosen(true, driving_, fskEngine_.ready())) {
         rb::fujinet::setDataInPin(dataIn_.pin());
         g_fujiFlush = &dataIn_;
         rb::fujinet::setFlushOutput(&fujiFlushOutput);
+        if (dataIn_.shared()) {
+            fuji_.lend(*lender_, dataIn_);  // the same handover as CassetteTick (plan §2.4)
+        }
+        fuji_.watch(watch_);
         fujiEngine_ = true;
     }
     ESP_LOGW(kTag, "experimental FujiNet FSK engine: %s",
-             fujiEngine_ ? "plays the tape" : "not used (DATA IN not driven exclusively)");
+             fujiEngine_ ? (dataIn_.shared() ? "plays the tape (DATA IN shared with the disk)" : "plays the tape")
+                         : "not used (DATA IN not driven)");
 #endif
     commands_ = new (commandsStorage_) rb::cassette::CassetteCommands(
         player_, loader_, files_, rb::core::Span<rb::cassette::CasSegment>(tableA_, kSegments),
         rb::core::Span<rb::cassette::CasSegment>(tableB_, kSegments));
+#if CONFIG_RB_CAS_ENGINE_FUJINET
+    if (fujiEngine_) {
+        commands_->showPosition(&fuji_);  // `cas status` says where the engine that plays is
+    }
+#endif
     if (xTaskCreate(&CassetteService::producerTask, "cas_load", kProducerStackBytes, this, 4, &producer_) != pdPASS) {
         producer_ = nullptr;
         commands_ = nullptr;
@@ -211,11 +227,11 @@ void CassetteService::loop() noexcept
         }
 #if CONFIG_RB_CAS_ENGINE_FUJINET
         if (fujiEngine_) {
-            // Between records only: a command never runs while a record or a run plays.
+            // Between records only: a command that changes the tape never runs while a record or a run plays.
             if (fuji_.follow(commands_->source(), commands_->generation())) {
-                fskEngine_.attach(commands_->source(), &CassetteService::fujiMotorDropped, &motor_);
+                fskEngine_.attach(commands_->source(), &CassetteService::fujiMotorDropped, this);
             }
-            if (!fuji_.tick()) {
+            if (!fuji_.tick()) {  // one step at most, the end published, the lender answered
                 vTaskDelay(kLoopPeriod);
             }
             continue;
@@ -227,10 +243,37 @@ void CassetteService::loop() noexcept
 }
 
 #if CONFIG_RB_CAS_ENGINE_FUJINET
-// The beta's motor_dropped(): pulldown on and MOTOR low. RetroBridge reads MOTOR on GPIO36 only.
-bool CassetteService::fujiMotorDropped(void* motor)
+// The beta's motor_dropped(): pulldown on and MOTOR low. RetroBridge reads MOTOR on GPIO36 only, and also
+// stops the run when the SIO task wants DATA IN back or a request waits (FujiTapeRunner::stopNow). The
+// owner's engine calls it on this task, every 100 ms while a run plays.
+bool CassetteService::fujiMotorDropped(void* service)
 {
-    return !static_cast<const EspMotorIn*>(motor)->on();
+    return static_cast<CassetteService*>(service)->fuji_.stopNow();
+}
+
+// Inside a step, on this task (StepWatch): `cas status` is answered at once and the step goes on; any
+// other request stops the step and waits in the queue for the loop.
+bool CassetteService::requestWaits() noexcept
+{
+    Request request{};
+    if (xQueuePeek(requests_, &request, 0) != pdTRUE) {
+        return false;
+    }
+    if (!rb::fujinet::answeredInsideAStep(request.line)) {
+        return true;
+    }
+    if (xQueueReceive(requests_, &request, 0) == pdTRUE) {
+        answer(request);
+    }
+    return false;
+}
+
+void CassetteService::answer(const Request& request) noexcept
+{
+    Reply reply{};
+    commands_->run(request.line, motor_, outputs_.wave(), rb::core::Span<char>(reply.text, sizeof reply.text));
+    reply.sequence = request.sequence;
+    (void)xQueueOverwrite(replies_, &reply);
 }
 #endif
 

@@ -50,7 +50,8 @@ el código del responsable incluye.
 | `adapt/soc/uart_periph.h` | `soc/uart_periph.h` | Redirige a `hal/uart_periph.h` (v6.1) |
 | `adapt/rb_fujinet_idf6.h` | — | Define lo que v6.1 ya no da: `SOC_RMT_SUPPORT_TX_ASYNC_STOP` (0), `SOC_RMT_CHANNELS_PER_GROUP` y `rmt_ll_tx_get_mem_blocks` |
 | `src/fuji_tape_loop.cpp` | `sioCassette::send_FUJI_tape_block` | Un registro por paso (ver el documento de diseño) |
-| `src/fuji_tape_runner.cpp` | El bus SIO que activa el casete | Reglas propias de RetroBridge |
+| `src/fuji_tape_runner.cpp` | El bus SIO que activa el casete | Reglas propias de RetroBridge; traspaso de DATA IN con el disco y esperas con límite |
+| `include/rb/fujinet/fuji_service_rules.hpp` | — | Cuándo `CassetteService` elige este motor y qué comando se responde durante un paso |
 | `src/esp_fsk_engine.cpp` | La llamada de `cassette.cpp` a `cassette_fsk_play_run` | Prepara el cargador y el archivo, y llama al motor |
 
 ## Código de terceros

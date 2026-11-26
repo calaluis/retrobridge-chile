@@ -1,8 +1,12 @@
 # SIO +5V con solo USB en la FujiNet 1.3: series de lectura y diagnóstico (2026-11-25)
 
 > Estado: **diagnóstico abierto.** Con solo USB, sin cable SIO y sin Atari, GPIO35 ha leído entre **453 y 688 mV**.
-> La lectura cambia en minutos, con reinicio y sin él. El enclavamiento C-1 (menos de 500 mV en el pin) pasa o falla
-> según el momento: **en esta placa no sirve como criterio, y su resultado no se usa en ningún sentido.**
+> La lectura cambia en minutos. Las lecturas son de **menu-sio**, no de ejecuciones de `bench-c8a`.
+> Aplicando aritméticamente el criterio de C-1 (menos de 500 mV en el pin), unas lecturas darían «ausente» y otras
+> «presente» en esta misma condición segura: **C-1 no clasifica de forma estable el estado «solo USB, cable SIO
+> desconectado», y una lectura por debajo de 500 mV no constituye una prueba suficiente de que el cable esté
+> físicamente desconectado.** C-1 se mantiene como bloqueo conservador cuando la tensión es alta. **C8a sigue NO
+> SUPERADA y no se repite.**
 >
 > - El mecanismo **no está identificado**.
 > - No cambia el umbral de C-1, no autoriza repetir C8a y no aprueba H4, R2 ni R7. `puertas.json` no cambia.
@@ -45,7 +49,9 @@ Del esquema `FN32ROV-1.3-Q24_schematic.jpg` y la lista de componentes `FN32ROV-1
 
 ### 4.1 Con reinicio por COM3 (`sio status` cada 5 min) **[H]**
 
-| Tiempo desde el reinicio | GPIO35 (ADC) | SIO +5V informado | C-1 (< 500 mV) |
+La columna C-1 es una **predicción aritmética** con el criterio de `classifySio5v()`, no una ejecución del banco.
+
+| Tiempo desde el reinicio | GPIO35 (ADC) | SIO +5V informado | C-1 (< 500 mV), predicción |
 |---|---|---|---|
 | 0,6 s (arranque) | 453 mV | 0 mV | pasaría |
 | 10 s | 461 mV | 0 mV | pasaría |
@@ -58,9 +64,11 @@ Del esquema `FN32ROV-1.3-Q24_schematic.jpg` y la lista de componentes `FN32ROV-1
 
 Sin panics ni reinicios inesperados. El Wi-Fi se conectó a los 3,7 s y siguió conectado.
 
-### 4.2 Sin reinicio (COM3 abierto con DTR y RTS desactivados), unos minutos después **[H]**
+### 4.2 Sin reinicio provocado (COM3 abierto con DTR y RTS desactivados), unos minutos después **[H]**
 
-Ninguna línea `rst:` en la captura: la placa no se reinició.
+No se observó ningún reinicio en la captura disponible (ninguna línea `rst:`). Sin un contador de reinicios o un
+tiempo de funcionamiento independiente, un reinicio no capturado no queda excluido. No se atribuye ningún efecto a la
+apertura del puerto.
 
 | Tiempo desde que se abrió COM3 | GPIO35 (ADC) | SIO +5V informado |
 |---|---|---|
@@ -88,7 +96,10 @@ Ninguna línea `rst:` en la captura: la placa no se reinició.
 - Relación del divisor: 3,9 / 5,9 = 0,661. El umbral de C-1 (500 mV en el pin) equivale a 0,756 V en el pin 10.
 - Con un ADC perfecto, 0,86–0,88 V en el pin 10 darían 569–582 mV en GPIO35: **por encima de 500 mV**.
 - Corriente que el divisor toma de la línea a 0,87 V: ≈147 µA. Un multímetro de 10 MΩ toma ≈0,09 µA.
-- Rango sin Atari visto hoy: 453–688 mV. Atari encendido: 3160 mV o más (saturado). Relación de más de 4,5 veces.
+- Rango sin Atari visto hoy: 453–688 mV.
+- Antecedente histórico, montaje no confirmado: con el Atari encendido el ADC dio 3160 mV (saturado). Ese dato **no
+  es una banda de seguridad validada**: no da una cota inferior reproducible, la subida al encender no se ha medido y
+  no se extrapola a otros Atari ni a otros estados eléctricos. **No permite elegir ni validar un nuevo umbral de C-1.**
 
 ## 7. Hipótesis (sin comprobar) **[I]**
 
@@ -104,10 +115,12 @@ Ninguna línea `rst:` en la captura: la placa no se reinició.
 
 ## 8. Consecuencias
 
-- El resultado de C-1 en esta placa depende del momento de la lectura. **Pasar C-1 justo tras un arranque no es una
-  validación** y no se usa para ejecutar C8a.
-- El criterio actual de C-1 no sirve en este montaje. No está demostrado que no exista una alternativa por software:
-  tendría que conservar el aislamiento y demostrar que nunca confunde un Atari encendido con su ausencia.
+- Con el criterio de C-1, la clasificación de esta condición segura dependería del momento de la lectura. **Una
+  lectura por debajo de 500 mV no verifica que el cable esté desconectado**, y no se usa para ejecutar C8a.
+- C-1 no se deshabilita: sigue bloqueando cuando la tensión es alta. Lo demostrado es que no clasifica de forma estable
+  el montaje «solo USB». No está demostrado que no exista una alternativa por software: tendría que conservar el
+  aislamiento y demostrar que nunca confunde un Atari encendido con su ausencia.
+- C8a sigue NO SUPERADA y no se repite.
 - `SioPowerWatch` (menu-sio) usa 1000 mV en SIO como umbral de «apagado». Sin Atari se han visto de 0 a 1040 mV: el
   margen cambia de una sesión a otra. No se ha observado un fallo funcional por ello.
 

@@ -29,6 +29,12 @@ Fuera:
 - [x] Enlace desde el registro de F4 — prueba: `banco-c8a-2026-11-25.md` §8.
 - [x] Sin SSID, IP ni MAC en el repositorio — prueba: búsqueda en el diff.
 - [x] `tools/tests` y `check_notices` OK.
+- [x] Revisión 1, H1 — prueba: cabecera, §4.1 y §8 dicen que C-1 no clasifica de forma estable el montaje y que
+  menos de 500 mV no prueba la desconexión; la tabla es una predicción; C-1 sigue como bloqueo; C8a no superada.
+- [x] Revisión 1, H2 — prueba: §4.2 «no se observó ningún reinicio en la captura»; un reinicio no capturado no queda
+  excluido; sin atribuir efecto a la apertura del puerto.
+- [x] Revisión 1, H3 — prueba: §6, el dato del Atari encendido es antecedente histórico, no banda validada; no
+  permite elegir ni validar un umbral.
 
 ## Next step
 

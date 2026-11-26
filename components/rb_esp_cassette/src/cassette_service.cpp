@@ -18,6 +18,15 @@ constexpr TickType_t kIdlePeriod = pdMS_TO_TICKS(10);
 constexpr TickType_t kReplyTimeout = pdMS_TO_TICKS(2000);
 constexpr uint32_t kLoopStackBytes = 8192;      // mount: paths, stdio, VFS and FATFS
 constexpr uint32_t kProducerStackBytes = 6144;  // stdio, VFS and FATFS
+#if CONFIG_RB_CAS_ENGINE_FUJINET
+EspDataIn* g_fujiFlush = nullptr;  // the UART the owner's engine waits for before it takes DATA IN
+void fujiFlushOutput()
+{
+    while (g_fujiFlush != nullptr && !g_fujiFlush->drained()) {
+        vTaskDelay(1);
+    }
+}
+#endif
 
 }  // namespace
 
@@ -117,6 +126,16 @@ bool CassetteService::start() noexcept
     } else if (dataIn_.enabled()) {
         ESP_LOGE(kTag, "DATA IN shared with the disk but nobody lends it: not driven");
     }
+#if CONFIG_RB_CAS_ENGINE_FUJINET
+    if (driving_ && !dataIn_.shared() && fskEngine_.ready()) {
+        rb::fujinet::setDataInPin(dataIn_.pin());
+        g_fujiFlush = &dataIn_;
+        rb::fujinet::setFlushOutput(&fujiFlushOutput);
+        fujiEngine_ = true;
+    }
+    ESP_LOGW(kTag, "experimental FujiNet FSK engine: %s",
+             fujiEngine_ ? "plays the tape" : "not used (DATA IN not driven exclusively)");
+#endif
     commands_ = new (commandsStorage_) rb::cassette::CassetteCommands(
         player_, loader_, files_, rb::core::Span<rb::cassette::CasSegment>(tableA_, kSegments),
         rb::core::Span<rb::cassette::CasSegment>(tableB_, kSegments));
@@ -190,10 +209,30 @@ void CassetteService::loop() noexcept
             reply.sequence = request.sequence;
             (void)xQueueOverwrite(replies_, &reply);  // a reply nobody waits for is replaced
         }
+#if CONFIG_RB_CAS_ENGINE_FUJINET
+        if (fujiEngine_) {
+            // Between records only: a command never runs while a record or a run plays.
+            if (fuji_.follow(commands_->source(), commands_->generation())) {
+                fskEngine_.attach(commands_->source(), &CassetteService::fujiMotorDropped, &motor_);
+            }
+            if (!fuji_.tick()) {
+                vTaskDelay(kLoopPeriod);
+            }
+            continue;
+        }
+#endif
         tick_.tick(static_cast<uint64_t>(esp_timer_get_time()));  // play, pump, publish, answer the lender
         vTaskDelay(kLoopPeriod);
     }
 }
+
+#if CONFIG_RB_CAS_ENGINE_FUJINET
+// The beta's motor_dropped(): pulldown on and MOTOR low. RetroBridge reads MOTOR on GPIO36 only.
+bool CassetteService::fujiMotorDropped(void* motor)
+{
+    return !static_cast<const EspMotorIn*>(motor)->on();
+}
+#endif
 
 void CassetteService::produce() noexcept
 {

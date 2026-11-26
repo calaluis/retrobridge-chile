@@ -51,6 +51,10 @@ public:
 
     bool mounted() const noexcept { return source_ != nullptr; }
     const char* name() const noexcept { return name_; }
+    // The mounted tape (nullptr: none), and a count that moves on each mount, eject and rewind. The
+    // experimental FujiNet engine (cassette-motor-fujinet) follows the tape through them.
+    TapeSource* source() const noexcept { return source_; }
+    uint32_t generation() const noexcept { return generation_; }
 
 private:
     void mount(const char* path, WaveOut& wave, rb::core::Span<char> out) noexcept;
@@ -67,6 +71,7 @@ private:
     TapeSource* source_ = nullptr;
     TapeSource* retired_ = nullptr;  // left, but the producer may still be reading it
     uint32_t count_ = 0;
+    uint32_t generation_ = 0;
     char name_[kNameMax] = {};
 };
 

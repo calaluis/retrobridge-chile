@@ -26,6 +26,7 @@ add_subdirectory(${rb_root}/components/rb_hw_diag rb_hw_diag)
 add_subdirectory(${rb_root}/components/rb_netsio rb_netsio)
 add_subdirectory(${rb_root}/components/rb_net_tnfs rb_net_tnfs)
 add_subdirectory(${rb_root}/components/rb_cassette rb_cassette)
+add_subdirectory(${rb_root}/components/rb_fujinet_fsk rb_fujinet_fsk)
 add_subdirectory(${rb_root}/components/rb_menu rb_menu)
 
 # Unity v2.7.0, vendored (D-9). Third-party code: built with its own defaults.
@@ -291,10 +292,29 @@ target_link_libraries(test_stdio_tape_files PRIVATE rb_cassette Threads::Threads
 rb_add_host_test(test_fsk_symbol_feed cassette/test_fsk_symbol_feed.cpp)
 target_link_libraries(test_fsk_symbol_feed PRIVATE rb_cassette Threads::Threads)
 
+# cassette-motor-fujinet: FujiTapeLoop, the adapter that plays one record per step like the beta FSK
+# (v1.6.2-atari-fsk-beta.1); real tapes from RB_CAS_SAMPLES checked against CasIndex.
+rb_add_host_test(test_fuji_tape_loop fujinet/test_fuji_tape_loop.cpp)
+target_link_libraries(test_fuji_tape_loop PRIVATE rb_fujinet_fsk)
+# FujiTapeRunner: the loop from the cassette task, MOTOR and generation rules (RetroBridge assumptions).
+rb_add_host_test(test_fuji_tape_runner fujinet/test_fuji_tape_runner.cpp)
+target_link_libraries(test_fuji_tape_runner PRIVATE rb_fujinet_fsk)
+# The owner's FujiNet FSK engine as it is (cassetteFSK.cpp, cassetteFSKLoader.cpp) behind EspFskEngine and
+# FujiTapeLoop, over fake_idf: whole real tapes byte by byte and portion by portion, progressive loading,
+# MOTOR drop. Those sources are built as the FujiNet Atari build builds them (ESP_PLATFORM, BUILD_ATARI).
+set(rb_fujinet_dir ${rb_root}/components/rb_fujinet_fsk)
+set(rb_fujinet_esp_srcs ${rb_fujinet_dir}/lib/device/sio/cassetteFSK.cpp ${rb_fujinet_dir}/lib/device/sio/cassetteFSKLoader.cpp
+    ${rb_fujinet_dir}/src/esp_fsk_engine.cpp)
+rb_add_host_test(test_esp_fsk_engine fujinet/test_esp_fsk_engine.cpp ${rb_fujinet_esp_srcs} fakes/idf/fake_idf_fsk.cpp)
+set_source_files_properties(${rb_fujinet_esp_srcs} TARGET_DIRECTORY test_esp_fsk_engine
+                            PROPERTIES COMPILE_DEFINITIONS "ESP_PLATFORM;BUILD_ATARI")
+target_link_libraries(test_esp_fsk_engine PRIVATE fake_idf rb_fujinet_fsk rb_cassette)
+
 # rb_esp_cassette's DATA IN driver against a scripted model of the ESP-IDF calls (H4-C C8):
 # who owns GPIO21 after each step, and the fault when the UART cannot take it back.
 add_library(fake_idf STATIC fakes/idf/fake_idf.cpp)
 target_include_directories(fake_idf PUBLIC fakes/idf ${CMAKE_CURRENT_LIST_DIR})
+target_link_libraries(fake_idf PUBLIC Threads::Threads)  # tasks are host threads (cassette-motor-fujinet)
 rb_apply_build_flags(fake_idf)
 rb_add_host_test(test_esp_data_in esp_cassette/test_esp_data_in.cpp
                  ${rb_root}/components/rb_esp_cassette/src/esp_data_in.cpp

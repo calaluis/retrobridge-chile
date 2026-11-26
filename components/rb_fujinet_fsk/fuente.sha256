@@ -1,0 +1,14 @@
+# rb_fujinet_fsk — the owner's files and their SHA-256 (LF line ends), checked by tools/check_fujinet_fsk.py.
+# Source: calaluis/fujinet-firmware, tag v1.6.2-atari-fsk-beta.1, commit cf3382fafeed9b57e307b8618d7ba7173e7e6ec9.
+# Columns: path here | path at the commit | SHA-256 at the commit | SHA-256 here | change (- = none; else FUENTE.md)
+lib/media/atari/casFSK.h lib/media/atari/casFSK.h 031f84e5e09b56634680d78b24232c3bfde97284a29df28e57ca3d6ee6867397 031f84e5e09b56634680d78b24232c3bfde97284a29df28e57ca3d6ee6867397 -
+lib/media/atari/casFSK.cpp lib/media/atari/casFSK.cpp 66f9363a97c901115ae5232263545218f2b9244e3a8457dc7d925cf5870b59f6 66f9363a97c901115ae5232263545218f2b9244e3a8457dc7d925cf5870b59f6 -
+lib/media/atari/casFSKLoader.h lib/media/atari/casFSKLoader.h 6edbb53fe5a5b543f3e9e9ff5d82de38d26c45c26bcbbe99d92d926d7846842f 6edbb53fe5a5b543f3e9e9ff5d82de38d26c45c26bcbbe99d92d926d7846842f -
+lib/media/atari/casFSKLoader.cpp lib/media/atari/casFSKLoader.cpp a99299c7d3a1b4ca1637d8c1079d717bdc617e5a377b12a8623a838a89fa5e3b a99299c7d3a1b4ca1637d8c1079d717bdc617e5a377b12a8623a838a89fa5e3b -
+lib/media/atari/casTape.h lib/media/atari/casTape.h fabd49a1e7b8e6376940b0c7ed9559baa3ca7b68047292a6ed52a7a75da32bff fabd49a1e7b8e6376940b0c7ed9559baa3ca7b68047292a6ed52a7a75da32bff -
+lib/device/sio/cassetteFSK.h lib/device/sio/cassetteFSK.h f8a1ae1f8f10dca92b491605b217eef3392c2d931e924bad6291d2066793b601 f8a1ae1f8f10dca92b491605b217eef3392c2d931e924bad6291d2066793b601 -
+lib/device/sio/cassetteFSK.cpp lib/device/sio/cassetteFSK.cpp 6a9f3b9498b91fc4a1b2d964e8bd0b20f938b274b9046abba3d75bba2a6b8e36 19f519851ab969bea4fb085284ebf3b24aa17f194f3ab0a54af1c4e893ebd817 idf61-rmt-flags
+lib/device/sio/cassetteFSKLoader.h lib/device/sio/cassetteFSKLoader.h 0ed0ec6a2b7ad063be98f03ff1900d45026a4eb42810e98e2e19d3170ecaa84c 0ed0ec6a2b7ad063be98f03ff1900d45026a4eb42810e98e2e19d3170ecaa84c -
+lib/device/sio/cassetteFSKLoader.cpp lib/device/sio/cassetteFSKLoader.cpp 9717b9474ea895dc5895546a0488734965390ebe8d1b6067e830a72eda5fd426 9717b9474ea895dc5895546a0488734965390ebe8d1b6067e830a72eda5fd426 -
+lib/device/sio/cassetteFSKRead.h lib/device/sio/cassetteFSKRead.h 163cf4952d607499d768d38cacd10c25c9f4da1f8ebd58febec9fd1f1aac1d18 163cf4952d607499d768d38cacd10c25c9f4da1f8ebd58febec9fd1f1aac1d18 -
+lib/device/sio/cassetteFSKRead.cpp lib/device/sio/cassetteFSKRead.cpp 03ced38e24b0cfcfced5f2341c1cc8e9e8cda725fa7fb89ac36202ceb6f529aa 03ced38e24b0cfcfced5f2341c1cc8e9e8cda725fa7fb89ac36202ceb6f529aa -

@@ -198,6 +198,17 @@ MENU_UART_COMMAND_INPUT = re.compile(r"gpio_set_direction\s*\(\s*static_cast\s*<
                                      r"pins_\.command\s*\)\s*,\s*GPIO_MODE_INPUT\s*\)")
 MENU_BUTTON_GPIO = re.compile(r"\bgpio_\w+\s*\(\s*kButtonA\b")
 MENU_BUTTON_PIN = "constexpr gpio_num_t kButtonA = GPIO_NUM_0;"
+
+# cassette-motor-fujinet (ADR-012 amendment 2): the owner's FujiNet FSK engine, component rb_fujinet_fsk, takes DATA IN
+# with its own calls (RMT, GPIO matrix). Only the experimental variant cas-fujinet (CONFIG_RB_CAS_ENGINE_FUJINET,
+# compile only in CI, never packaged) links it. So no package variant counts its calls: its sources are left out of
+# the call scan, and every package proves instead that the engine is not in it: CONFIG_RB_CAS_ENGINE_FUJINET is not
+# set and no function of the engine is defined in the ELF's .symtab (the debug information may keep the names of
+# functions that were not linked, so the bytes of the ELF do not prove anything).
+FUJINET_FSK_DIR = "components/rb_fujinet_fsk/"
+FUJINET_FSK_KCONFIG = "CONFIG_RB_CAS_ENGINE_FUJINET"
+FUJINET_FSK_SYMBOLS = ("cassette_fsk_play_run", "_ZN2rb7fujinet")  # the owner's entry point; RetroBridge's adapters
+FUJINET_FSK_CHECK = "motor FSK de FujiNet sin enlazar (sdkconfig y .symtab del ELF)"
 MENU_BUTTON_INPUT = "gpio_set_direction(kButtonA, GPIO_MODE_INPUT)"
 MENU_SIO_KCONFIG = "CONFIG_RB_MENU_SIO"
 MENU_SIO_CHECK = "paquete de prueba menu-sio (sdkconfig, aplicación y ELF)"
@@ -553,6 +564,17 @@ def check_cassette_not_started(elf: bytes):
                         "no enlazada" + ("; el nombre solo aparece fuera de .symtab (depuración)" if named else "")))
 
 
+def check_fujinet_fsk_absent(elf: bytes, sdk: dict):
+    """Returns (ok, detail) for FUJINET_FSK_CHECK: the variant is off and no engine function is in .symtab."""
+    flag = sdk.get(FUJINET_FSK_KCONFIG) == "y"
+    try:
+        linked = sorted(n for n in elf_defined_functions(elf) if any(m in n for m in FUJINET_FSK_SYMBOLS))
+    except (ValueError, struct.error) as error:
+        return False, f"ELF ilegible: {error}"
+    detail = f"{FUJINET_FSK_KCONFIG}={'y' if flag else 'no'}, funciones en .symtab: {', '.join(linked[:3]) or 'ninguna'}"
+    return not flag and not linked, detail
+
+
 def check_stack(elf: bytes, sdk: dict):
     """Returns (ok, detail) for STACK_CHECK."""
     try:
@@ -598,11 +620,12 @@ def strip_code(text: str) -> str:
     return token.sub(lambda m: " " if m.group(0).startswith("/") else '""', text)
 
 
-def check_sio_calls(src: Path, allowed: tuple, skip: tuple = ()):
+def check_sio_calls(src: Path, allowed: tuple, skip: tuple = (), skip_dirs: tuple = ()):
     """Returns (ok, detail). Without `allowed` (h3c, diag): the original per-line scan, no SIO call at all.
     With it (cassette): every watched identifier in main/ and components/ must be one of `allowed`, in its
     exact count, and every uart_set_pin() must target the granted pin on UART2. Files in `skip` (the menu-sio
-    sources, for every other variant) are left out; check_variant then proves they are not built in."""
+    sources, for every other variant) and under `skip_dirs` (rb_fujinet_fsk, for every variant) are left out;
+    check_variant then proves they are not built in."""
     if not allowed:
         hits = scan_calls(src, skip)
         return not hits, ", ".join(f"{p}:{n}" for p, n, _c in hits) or "ninguna llamada"
@@ -613,7 +636,8 @@ def check_sio_calls(src: Path, allowed: tuple, skip: tuple = ()):
             continue
         for path in sorted(root.rglob("*")):
             rel = path.relative_to(src).as_posix()
-            if path.suffix not in SOURCE_SUFFIXES or "test" in path.relative_to(src).parts or rel in skip:
+            if (path.suffix not in SOURCE_SUFFIXES or "test" in path.relative_to(src).parts or rel in skip
+                    or rel.startswith(skip_dirs)):
                 continue
             text = strip_code(path.read_text(encoding="utf-8", errors="replace"))
             texts[rel] = text
@@ -909,6 +933,7 @@ def check_variant(files: Files, variant: Variant, commit: str, log: CheckLog) ->
     log.require(MENU_SIO_CHECK, menu_on == menu_in_app == menu_in_elf == variant.menu_sio,
                 f"{MENU_SIO_KCONFIG}={'y' if menu_on else 'no'}, en la aplicación: {'sí' if menu_in_app else 'no'}, "
                 f"en el ELF: {'sí' if menu_in_elf else 'no'} (esperado: {'sí' if variant.menu_sio else 'no'})")
+    log.require(FUJINET_FSK_CHECK, *check_fujinet_fsk_absent(elf, sdk))
     if "bench_c8a" in variant.features:
         log.require(CASSETTE_START_CHECK, *check_cassette_not_started(elf))
     if variant.menu_sio:
@@ -945,9 +970,9 @@ def check_build(src: Path, build: Path, source: SourceState, baseline: str, vari
     log.require("commit del firmware", source.head == baseline, f"checkout={source.head}, fijado={baseline}")
     log.require("checkout limpio", not source.dirty, "sin cambios locales" if not source.dirty else "hay cambios")
     skip = () if variant.menu_sio else MENU_SIO_SOURCES
-    calls_ok, calls_detail = check_sio_calls(src, variant.sio_calls, skip)
+    calls_ok, calls_detail = check_sio_calls(src, variant.sio_calls, skip, (FUJINET_FSK_DIR,))
     if not calls_ok and variant.earlier_sio_calls:
-        earlier_ok, earlier_detail = check_sio_calls(src, variant.earlier_sio_calls, skip)
+        earlier_ok, earlier_detail = check_sio_calls(src, variant.earlier_sio_calls, skip, (FUJINET_FSK_DIR,))
         if earlier_ok:
             calls_ok, calls_detail = True, earlier_detail + " (anterior a H4-C C8)"
     log.require(variant.code_check, calls_ok, calls_detail)

@@ -166,6 +166,7 @@ void CassetteCommands::mount(const char* args, WaveOut& wave, rb::core::Span<cha
     TapeSource* old = source_;
     source_ = fresh;
     count_ = index.count;
+    ++generation_;
     std::memcpy(name_, name, sizeof(name_));
     if (old != nullptr) {
         retired_ = old;
@@ -204,6 +205,7 @@ void CassetteCommands::eject(WaveOut& wave, rb::core::Span<char> out) noexcept
     retired_ = source_;
     source_ = nullptr;
     count_ = 0;
+    ++generation_;
     reply(out, "ejected %s", name_);
     name_[0] = '\0';
     (void)closeRetired();
@@ -216,6 +218,7 @@ void CassetteCommands::rewind(WaveOut& wave, rb::core::Span<char> out) noexcept
         return;
     }
     player_.rewind(wave);
+    ++generation_;
     reply(out, "rewound %s", name_);
 }
 

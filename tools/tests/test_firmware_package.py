@@ -17,7 +17,42 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ci"))
 import firmware_package as fp  # noqa: E402
 
 BASELINE = "1b1527d2dfd29a5f66471cbb2a14a3d49585dd8e"
-ELF_BYTES = b"\x7fELF synthetic retrobridge elf" * 100
+def xtensa_elf(frames: dict) -> bytes:
+    """A minimal 32-bit little-endian ELF: one .text section and one function symbol per entry of `frames`
+    ({name: frame in bytes, or None for a function that does not start with `entry a1, N`})."""
+    base = 0x400D0000
+    text = b""
+    symbols = []  # (name offset, address)
+    names = b"\0"
+    for name, frame in frames.items():
+        symbols.append((len(names), base + len(text)))
+        names += name.encode() + b"\0"
+        word = (frame // 8) << 12 | 0x136 if frame is not None else 0x0020F0  # entry a1, N / a NOP
+        text += bytes([word & 0xFF, word >> 8 & 0xFF, word >> 16 & 0xFF, 0])
+    symtab = b"\0" * 16 + b"".join(struct.pack("<IIIBBH", at, addr, 4, 0x12, 0, 1) for at, addr in symbols)
+    shstr = b"\0.text\0.symtab\0.strtab\0"
+    text_off = 52
+    sym_off = text_off + len(text)
+    str_off = sym_off + len(symtab)
+    shstr_off = str_off + len(names)
+    sh_off = shstr_off + len(shstr)
+    header = (b"\x7fELF" + bytes([1, 1, 1]) + b"\0" * 9 +
+              struct.pack("<HHIIIIIHHHHHH", 2, 94, 1, base, 0, sh_off, 0, 52, 0, 0, 40, 5, 4))
+    sections = [
+        (0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+        (1, 1, 6, base, text_off, len(text), 0, 0, 4, 0),          # .text PROGBITS
+        (7, 2, 0, 0, sym_off, len(symtab), 3, 1, 4, 16),            # .symtab -> .strtab
+        (15, 3, 0, 0, str_off, len(names), 0, 0, 1, 0),             # .strtab
+        (0, 3, 0, 0, shstr_off, len(shstr), 0, 0, 1, 0),            # .shstrtab
+    ]
+    return (header + text + symtab + names + shstr +
+            b"".join(struct.pack("<IIIIIIIIII", *s) for s in sections))
+
+
+# A readable ELF (a .symtab with one function) padded with filler: the checks that read .symtab need one.
+# RAW_ELF_BYTES has no section table at all: a build output the packager cannot read.
+RAW_ELF_BYTES = b"\x7fELF synthetic retrobridge elf" * 100
+ELF_BYTES = xtensa_elf({"app_main": 32}) + RAW_ELF_BYTES[4:]
 
 PARTITIONS_CSV = """# Name,   Type, SubType, Offset,   Size
 nvs,      data, nvs,     0x9000,   0x6000
@@ -716,8 +751,43 @@ class CassettePackageTest(unittest.TestCase):
 
     def test_main_code_has_exactly_the_cassette_calls(self):
         repo = Path(__file__).resolve().parents[2]
-        ok, detail = fp.check_sio_calls(repo, fp.CASSETTE_SIO_CALLS, fp.MENU_SIO_SOURCES)
+        ok, detail = fp.check_sio_calls(repo, fp.CASSETTE_SIO_CALLS, fp.MENU_SIO_SOURCES, skip_dirs=(fp.FUJINET_FSK_DIR,))
         self.assertTrue(ok, detail)
+
+    # The experimental FujiNet FSK engine (docs/diseno/cassette-motor-fujinet.md): its component calls RMT and the
+    # UART2 routing itself, so the per-file count skips components/rb_fujinet_fsk/; in exchange every package must
+    # prove the engine is off (sdkconfig) and not linked (.symtab).
+
+    def test_the_fujinet_fsk_component_is_skipped_only_by_its_directory(self):
+        write(self.f.src / "components" / "rb_fujinet_fsk" / "lib" / "x.cpp", GPIO_RESET)
+        self.assertFalse(fp.check_sio_calls(self.f.src, fp.CASSETTE_SIO_CALLS)[0])
+        self.assertTrue(fp.check_sio_calls(self.f.src, fp.CASSETTE_SIO_CALLS, skip_dirs=(fp.FUJINET_FSK_DIR,))[0])
+        write(self.f.src / "components" / "rb_fujinet_fsk_other" / "x.cpp", GPIO_RESET)
+        self.assertFalse(fp.check_sio_calls(self.f.src, fp.CASSETTE_SIO_CALLS, skip_dirs=(fp.FUJINET_FSK_DIR,))[0])
+
+    def test_the_package_refuses_the_fujinet_fsk_variant(self):
+        sdk = (self.f.build / "sdkconfig").read_text()
+        write(self.f.build / "sdkconfig", sdk + fp.FUJINET_FSK_KCONFIG + "=y\n")
+        self.assert_refused(fp.FUJINET_FSK_CHECK)
+
+    def test_the_package_reports_the_fujinet_fsk_check(self):
+        log = self.package()
+        self.assertTrue(log.ok, self.failed(log))
+        self.assertIn(fp.FUJINET_FSK_CHECK, [c.name for c in log.checks if c.ok])
+
+    def test_fujinet_fsk_absence_check(self):
+        clean = xtensa_elf({"app_main": 32})
+        self.assertTrue(fp.check_fujinet_fsk_absent(clean, {})[0])
+        # a name outside .symtab (strings, debug information) is no linked code
+        self.assertTrue(fp.check_fujinet_fsk_absent(clean + b"cassette_fsk_play_run\0", {})[0])
+        self.assertFalse(fp.check_fujinet_fsk_absent(clean, {fp.FUJINET_FSK_KCONFIG: "y"})[0])
+        for name in ("cassette_fsk_play_run", "_ZN2rb7fujinet12EspFskEngine4playEjt"):
+            ok, detail = fp.check_fujinet_fsk_absent(xtensa_elf({"app_main": 32, name: 32}), {})
+            self.assertFalse(ok, name)
+            self.assertIn(name, detail)
+        ok, detail = fp.check_fujinet_fsk_absent(RAW_ELF_BYTES, {})  # cannot prove absence: refused
+        self.assertFalse(ok)
+        self.assertIn("ilegible", detail)
 
     # the diagnostic packages keep their controls
 
@@ -841,38 +911,6 @@ MENU_APP_MARKERS = CASSETTE_APP_MARKERS + (b"\x1b[0;33mW (%lu) %s: menu-sio TEST
                                            b"NOT approved (R2, R7 not accepted; R6 accepted on USB power only).\x1b[0m\n\0\x1b[0;32mI (%lu) %s: D1: menu. "
                                            b"Switch the "
                                            b"65XE on.\x1b[0m\n\0")
-
-
-def xtensa_elf(frames: dict) -> bytes:
-    """A minimal 32-bit little-endian ELF: one .text section and one function symbol per entry of `frames`
-    ({name: frame in bytes, or None for a function that does not start with `entry a1, N`})."""
-    base = 0x400D0000
-    text = b""
-    symbols = []  # (name offset, address)
-    names = b"\0"
-    for name, frame in frames.items():
-        symbols.append((len(names), base + len(text)))
-        names += name.encode() + b"\0"
-        word = (frame // 8) << 12 | 0x136 if frame is not None else 0x0020F0  # entry a1, N / a NOP
-        text += bytes([word & 0xFF, word >> 8 & 0xFF, word >> 16 & 0xFF, 0])
-    symtab = b"\0" * 16 + b"".join(struct.pack("<IIIBBH", at, addr, 4, 0x12, 0, 1) for at, addr in symbols)
-    shstr = b"\0.text\0.symtab\0.strtab\0"
-    text_off = 52
-    sym_off = text_off + len(text)
-    str_off = sym_off + len(symtab)
-    shstr_off = str_off + len(names)
-    sh_off = shstr_off + len(shstr)
-    header = (b"\x7fELF" + bytes([1, 1, 1]) + b"\0" * 9 +
-              struct.pack("<HHIIIIIHHHHHH", 2, 94, 1, base, 0, sh_off, 0, 52, 0, 0, 40, 5, 4))
-    sections = [
-        (0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
-        (1, 1, 6, base, text_off, len(text), 0, 0, 4, 0),          # .text PROGBITS
-        (7, 2, 0, 0, sym_off, len(symtab), 3, 1, 4, 16),            # .symtab -> .strtab
-        (15, 3, 0, 0, str_off, len(names), 0, 0, 1, 0),             # .strtab
-        (0, 3, 0, 0, shstr_off, len(shstr), 0, 0, 1, 0),            # .shstrtab
-    ]
-    return (header + text + symtab + names + shstr +
-            b"".join(struct.pack("<IIIIIIIIII", *s) for s in sections))
 
 
 # Frames of the menu-sio stack chains (check_stack). The FatFs/SD ones are those of the 7a1ebf0 build.
@@ -1229,7 +1267,7 @@ class MenuSioPackageTest(unittest.TestCase):
 
     def test_real_tree_has_exactly_the_cassette_and_menu_sio_calls(self):
         repo = Path(__file__).resolve().parents[2]
-        ok, detail = fp.check_sio_calls(repo, fp.VARIANTS["menu-sio"].sio_calls)
+        ok, detail = fp.check_sio_calls(repo, fp.VARIANTS["menu-sio"].sio_calls, skip_dirs=(fp.FUJINET_FSK_DIR,))
         self.assertTrue(ok, detail)
 
 
@@ -1328,7 +1366,7 @@ class BenchC8aPackageTest(unittest.TestCase):
         self.assertTrue(log.ok, self.failed(log))
 
     def test_bench_c8a_refuses_an_elf_it_cannot_read(self):
-        self.build(elf=ELF_BYTES + C8A_MARKERS)  # no symbol table: cannot prove the start is not linked
+        self.build(elf=RAW_ELF_BYTES + C8A_MARKERS)  # no symbol table: cannot prove the start is not linked
         self.assert_refused(fp.CASSETTE_START_CHECK)
 
     def test_bench_c8a_refuses_the_menu(self):
@@ -1466,7 +1504,7 @@ class BenchC8aCiJobTest(unittest.TestCase):
     def test_the_real_tree_passes_the_source_checks_of_bench_c8a(self):
         spec = fp.VARIANTS["bench-c8a"]
         for name, (ok, detail) in (
-                ("llamadas SIO", fp.check_sio_calls(self.repo, spec.sio_calls, fp.MENU_SIO_SOURCES)),
+                ("llamadas SIO", fp.check_sio_calls(self.repo, spec.sio_calls, fp.MENU_SIO_SOURCES, skip_dirs=(fp.FUJINET_FSK_DIR,))),
                 ("NVS", fp.check_nvs(self.repo)), ("concesión", fp.check_bench_grant(self.repo))):
             self.assertTrue(ok, f"{name}: {detail}")
         self.assertEqual(fp.profile_gates(self.repo), spec.gates)

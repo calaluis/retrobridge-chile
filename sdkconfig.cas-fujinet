@@ -1,0 +1,7 @@
+# Experimental variant cas-fujinet (cassette-motor-fujinet): the cassette plays with the owner's FujiNet FSK
+# engine (component rb_fujinet_fsk, beta v1.6.2-atari-fsk-beta.1, commit cf3382f). Applied after menu-sio:
+#   idf.py -B build-cas-fujinet -D SDKCONFIG=build-cas-fujinet/sdkconfig
+#          -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board.fujinet-atari-v1x;sdkconfig.menu-sio;sdkconfig.cas-fujinet" build
+# Compile only. It changes no gate: H4 is not approved and kTapeOutput stays false (main/menu_sio.cpp), so
+# DATA IN is not driven and the engine does not play. Not packaged, not for flashing, not for the 65XE.
+CONFIG_RB_CAS_ENGINE_FUJINET=y

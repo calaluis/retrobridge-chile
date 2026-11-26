@@ -35,3 +35,26 @@ Condiciones:
 
 Consecuencia: el punto 1 sigue vigente para todo el código de terceros. Esta excepción no permite consultar otro
 código de FujiNet ni de emuladores.
+
+## Enmienda 2 (2026-11-26, aprobada por el responsable): archivos propios tal cual y lectura de `cassette.cpp`
+
+Motivo: la tarea `cassette-motor-fujinet` pide ejecutar en RetroBridge el mismo motor FSK que la beta, con el
+código original siempre que se pueda.
+
+1. **Archivos propios tal cual.** Cambia la condición 3 de la enmienda 1 solo para los archivos que el
+   responsable creó en los PRs #1722, #1756 y #1773 (`casTape.h`, `casFSK.*`, `casFSKLoader.*`,
+   `cassetteFSK.*`, `cassetteFSKLoader.*`, `cassetteFSKRead.*`), en el commit
+   `cf3382fafeed9b57e307b8618d7ba7173e7e6ec9` (etiqueta `v1.6.2-atari-fsk-beta.1`). Pueden entrar sin
+   reescribir, en `components/rb_fujinet_fsk/lib/`. Un cambio solo se admite si es imprescindible para compilar;
+   cada uno lleva nombre y motivo en `FUENTE.md`. `tools/check_fujinet_fsk.py` compara cada archivo con el
+   SHA-256 del commit en la CI.
+2. **Cabeceras de FujiNet.** Las que esos archivos incluyen (`global_types.h`, `fnio.h`, `bus.h`, `debug.h`,
+   `pinmap.h`, `soc/uart_periph.h`) no se copian: se escriben adaptadores propios con el mismo nombre.
+3. **`cassette.cpp`, solo lectura.** `lib/device/sio/cassette.cpp` es código ajeno (GPL-3.0). Puede leerse en el
+   commit fijado, solo para describir su comportamiento. No se copia nada de él. Su papel lo cumplen
+   adaptadores escritos para RetroBridge. Esta enmienda no permite leer `sio.cpp` ni otro código de FujiNet.
+4. **Licencia.** No cambia la licencia de RetroBridge. Los archivos que entran son del responsable, que conserva
+   sus derechos (enmienda 1); no se trata como código de terceros ni se añade a `THIRD_PARTY_NOTICES.md`. Si un
+   revisor considera que hace falta otra licencia para esos archivos, ese cambio necesita una aprobación aparte.
+
+Consecuencia: el resto de la enmienda 1 sigue igual. Todo código de terceros sigue fuera (punto 1).

@@ -1,6 +1,8 @@
 #include "fake_idf.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <thread>
 
 #include "driver/gpio.h"
 #include "driver/rmt_encoder.h"
@@ -65,6 +67,9 @@ std::size_t play_symbols(std::size_t symbols)
         const std::size_t room = std::min<std::size_t>(64, symbols - total);
         const std::size_t n = cb(nullptr, 0, total, room, buffer, &done, s.encoderArg);
         total += n;
+        if (n > 0 && s.onSymbols != nullptr) {
+            s.onSymbols(buffer, n);
+        }
         if (n == 0 && !done) {
             break;
         }
@@ -508,6 +513,9 @@ esp_err_t rmt_transmit(rmt_channel_handle_t, rmt_encoder_handle_t, const void*, 
 esp_err_t rmt_tx_wait_all_done(rmt_channel_handle_t, int)
 {
     auto& s = fake_idf::state();
+    if (s.onRmtWait != nullptr) {
+        s.onRmtWait();
+    }
     if (!s.rmtBusy) {
         return ESP_OK;
     }
@@ -620,8 +628,31 @@ int64_t esp_timer_get_time() { return fake_idf::state().nowUs; }
 
 void esp_rom_delay_us(uint32_t us) { fake_idf::state().nowUs += us; }
 
+namespace {
+thread_local bool t_inTask = false;  // this thread is a task made by xTaskCreatePinnedToCore()
+}
+
+BaseType_t xTaskCreatePinnedToCore(TaskFunction_t fn, const char*, uint32_t, void* arg, UBaseType_t, TaskHandle_t*,
+                                   BaseType_t)
+{
+    std::thread([fn, arg] {
+        t_inTask = true;
+        fn(arg);
+    }).detach();
+    return pdPASS;
+}
+
+void vTaskDelete(TaskHandle_t) {}  // the task's function returns right after it (the owner's loader)
+
+void taskYIELD() { std::this_thread::yield(); }
+
 void vTaskDelay(TickType_t ticks)
 {
+    if (t_inTask) {
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
+        return;
+    }
+    std::this_thread::yield();  // a task thread waiting for the test thread gets to run
     auto& s = fake_idf::state();
     s.nowUs += static_cast<int64_t>(ticks) * 1000;
     ++s.taskDelays;

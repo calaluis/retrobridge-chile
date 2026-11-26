@@ -59,6 +59,7 @@ public:
     // Installs UART2 TX on the granted DATA IN pin. False leaves everything as it was.
     bool configure(const rb::board::CassetteOutputAssignment& pins) noexcept;
     bool enabled() const noexcept { return pin_ >= 0; }
+    int8_t pin() const noexcept { return pin_; }  // the DATA IN pin; -1 when not configured
 
     // Shared mode: UART2 is already installed (by the disk, with a TX ring of `txRing` bytes; 0: none)
     // and DATA IN is already its TX. Touches no hardware; the rate is set by setBaud() when the cassette

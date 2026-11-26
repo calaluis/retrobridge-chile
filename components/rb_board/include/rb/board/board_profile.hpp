@@ -67,6 +67,10 @@ struct BoardProfile {
     // (docs/hardware/procedimiento-medicion-pasiva-sio.md, M3a) and the gate is signed here.
     int8_t motor;            // input-only GPIO 34-39, or kNoPin
     bool motorGateApproved;  // M3a signed (cassette-cas C106)
+    // DATA IN for the menu-sio cassette by the owner's risk acceptance of R2, R6 and R7, H4 unsigned
+    // (docs/mediciones/aceptacion-data-in-casete-2026-11-26.md). Only validate_for_menu_cassette_output()
+    // reads it; validate_for_sio() and validate_for_cassette_output() still need H4.
+    bool dataInRiskAccepted;
 };
 
 // The only profile until the board is identified: blocks the microSD bus and
@@ -83,6 +87,7 @@ constexpr BoardProfile unconfirmed_profile() noexcept
                         false,
                         SioPins{kNoPin, kNoPin, kNoPin},
                         kNoPin,
+                        false,
                         false};
 }
 
@@ -187,14 +192,21 @@ class CassetteOutputAssignment;
 // ReceiveTransmit) (H4 signed) and validate_for_motor(profile) (M3a signed). Errors: as theirs.
 rb::core::Result<CassetteOutputAssignment> validate_for_cassette_output(const BoardProfile& profile) noexcept;
 
+// The menu-sio cassette only (cas-salida-data-in): DATA IN with H4 signed OR the owner's risk acceptance
+// for DATA IN (dataInRiskAccepted), always with M3a signed. The same pin rules as transmitting on the SIO.
+// Only main/menu_sio.cpp and main/tape_gates.hpp may call it, which the firmware packager checks.
+// Errors: BoardNotConfirmed (hardware not confirmed, neither H4 nor the acceptance, M3a unsigned),
+// InvalidPinAssignment.
+rb::core::Result<CassetteOutputAssignment> validate_for_menu_cassette_output(const BoardProfile& profile) noexcept;
+
 // Bench test C8 only (H4-C): DATA IN on the board alone, USB only, the Atari disconnected. Grants
 // the SIO TX line with no gate and no MOTOR (motor() == kNoPin). Nothing approves H4 or M3a here:
 // only the bench build (CONFIG_RB_BENCH_C8, main/bench_c8.cpp) may call it, which the firmware
 // packager checks. Errors: BoardNotConfirmed (hardware not confirmed), InvalidPinAssignment.
 rb::core::Result<CassetteOutputAssignment> validate_for_bench_data_in(const BoardProfile& profile) noexcept;
 
-// The pins the cassette output may use. Only validate_for_cassette_output() and
-// validate_for_bench_data_in() create one.
+// The pins the cassette output may use. Only validate_for_cassette_output(),
+// validate_for_menu_cassette_output() and validate_for_bench_data_in() create one.
 class CassetteOutputAssignment {
 public:
     int8_t dataIn() const noexcept { return dataIn_; }
@@ -206,6 +218,8 @@ private:
     friend rb::core::Result<CassetteOutputAssignment> validate_for_cassette_output(
         const BoardProfile& profile) noexcept;
     friend rb::core::Result<CassetteOutputAssignment> validate_for_bench_data_in(
+        const BoardProfile& profile) noexcept;
+    friend rb::core::Result<CassetteOutputAssignment> validate_for_menu_cassette_output(
         const BoardProfile& profile) noexcept;
 
     int8_t dataIn_;

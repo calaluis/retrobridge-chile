@@ -27,7 +27,7 @@ namespace {
 BoardProfile sio_board(SioPins sio, bool psram = false)
 {
     return BoardProfile{"test-fixture", true, psram, SdInterface::Spi, SdSpiPins{18, 23, 19, 4}, SpiHost::Spi3,
-                        kNoPin, false, sio, kNoPin, false};
+                        kNoPin, false, sio, kNoPin, false, false};
 }
 
 BoardProfile approved(BoardProfile profile)

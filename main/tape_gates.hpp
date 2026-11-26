@@ -11,7 +11,7 @@ namespace rb::menusio {
 
 inline bool tapeGatesOpen(bool tapeOutput, const rb::board::BoardProfile& board) noexcept
 {
-    return tapeOutput && rb::board::validate_for_cassette_output(board).ok();
+    return tapeOutput && rb::board::validate_for_menu_cassette_output(board).ok();
 }
 
 }  // namespace rb::menusio

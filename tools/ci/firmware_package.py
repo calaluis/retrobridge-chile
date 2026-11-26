@@ -122,6 +122,10 @@ CASSETTE_START_CHECK = "casetera sin arrancar (banco C8a, tabla de símbolos del
 BENCH_DECLARED_CHECK = "banco declarado en PROVENANCE.json (bench, SIO no autorizado)"
 BENCH_SIO_TEXT = "no autorizado"
 BENCH_GRANT = re.compile(r"\bvalidate_for_bench_data_in\b")
+# cas-salida-data-in: the DATA IN grant by risk acceptance is for the menu-sio cassette only.
+MENU_GRANT = re.compile(r"\bvalidate_for_menu_cassette_output\b")
+MENU_GRANT_SOURCES = ("main/menu_sio.cpp", "main/tape_gates.hpp")
+MENU_GRANT_CHECK = "DATA IN por aceptación de riesgo solo en menu-sio (código)"
 REGISTER_WRITE = re.compile(r"\b(REG_WRITE|REG_SET_BIT|REG_CLR_BIT|REG_SET_FIELD|REG_SET_BITS|WRITE_PERI_REG|"
                             r"SET_PERI_REG_MASK|CLEAR_PERI_REG_MASK|SET_PERI_REG_BITS)\b")
 
@@ -254,14 +258,18 @@ STACK_FS_PATHS = {
 BOARD_PROFILE_HEADER = "components/rb_board/include/rb/board/board_profile.hpp"
 CODE_CHECK = "sin GPIO/UART del SIO (código)"
 CASSETTE_CODE_CHECK = "GPIO/UART del SIO solo en rb_esp_cassette (código)"
-PROFILE_CHECK = "puertas H4 y M3a (perfil)"
-RECORD_CHECK = "puertas H4 y M3a (registro)"
+PROFILE_CHECK = "puertas H4, M3a y DATA-IN (perfil)"
+RECORD_CHECK = "puertas H4, M3a y DATA-IN (registro)"
 PROFILE_HEADER = "components/rb_board/include/rb/board/fujinet_atari_v1x.hpp"
 GATE_RECORD = "docs/mediciones/puertas.json"
 GATE_RECORD_IN_PACKAGE = "config/puertas.json"
-GATES = ("H4", "M3a")
-PROFILE_FIELDS = 11            # BoardProfile initializer, in declaration order
-PROFILE_H4, PROFILE_M3A = 7, 10  # sioGateApproved, motorGateApproved
+# DATA-IN: DATA IN for the menu-sio cassette by the owner's risk acceptance of R2, R6 and R7, H4 unsigned
+# (docs/mediciones/aceptacion-data-in-casete-2026-11-26.md). In the record it is "aprobada" like the others.
+GATES = ("H4", "M3a", "DATA-IN")
+PROFILE_FIELDS = 12            # BoardProfile initializer, in declaration order
+PROFILE_H4, PROFILE_M3A, PROFILE_DATA_IN = 7, 10, 11  # sioGateApproved, motorGateApproved, dataInRiskAccepted
+PROFILE_GATE_FIELDS = ((PROFILE_H4, "sioGateApproved"), (PROFILE_M3A, "motorGateApproved"),
+                       (PROFILE_DATA_IN, "dataInRiskAccepted"))
 
 
 @dataclass(frozen=True)
@@ -273,7 +281,7 @@ class Variant:
     version_matches_commit: bool = False  # esp_app_desc version must be a prefix of the pinned commit
     sio_calls: tuple = ()                 # (file, call, count) allowed; empty: no SIO call at all
     earlier_sio_calls: tuple = ()         # an older exact set also accepted (a pinned commit), or none
-    gates: tuple = ()                     # expected (H4, M3a) approval in profile and record; empty: not read
+    gates: tuple = ()                     # expected (H4, M3a, DATA-IN) in profile and record; empty: not read
     bench: bool = False                   # the bench test C8 build (CONFIG_RB_BENCH_C8); every other variant refuses it
     menu_sio: bool = False                # the menu-sio test package (CONFIG_RB_MENU_SIO); every other variant refuses it
     profile_text: str = "microSD por SPI3 en GPIO 18/23/19/5; sin pines SIO"
@@ -294,31 +302,34 @@ VARIANTS = {
     "cassette": Variant("retrobridge-fw-cassette-fujinet-atari-v1x",
                         "firmware con casetera .cas (DATA IN por UART2 y RMT) para FujiNet Atari FN32ROV-1.3/1.5",
                         features=("cassette",), version_matches_commit=True, sio_calls=CASSETTE_SIO_CALLS,
-                        earlier_sio_calls=CASSETTE_SIO_CALLS_BEFORE_C8, gates=(True, True),
+                        earlier_sio_calls=CASSETTE_SIO_CALLS_BEFORE_C8, gates=(True, True, False),
                         profile_text="microSD por SPI3 en GPIO 18/23/19/5; DATA IN en GPIO21 y MOTOR en GPIO36, "
                                      "con H4 y M3a aprobadas"),
     # menu-sio test package (menu-sio-fisico E1): the menu served as D1 on the physical SIO (UART2: TX DATA IN
     # GPIO21, RX DATA OUT GPIO33; COMMAND GPIO39 input). M3a approved by the owner's risk acceptance of R1
     # (docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md), so MOTOR (GPIO36) is read as an input; H4 stays
-    # unapproved, so the tape never leaves by the SIO. The only package to install before T9b.
+    # unapproved. T9b (cas-salida-data-in): the tape leaves by DATA IN, by the owner's risk acceptance of R2, R6
+    # and R7 (docs/mediciones/aceptacion-data-in-casete-2026-11-26.md), granted to menu-sio only.
     "menu-sio": Variant("retrobridge-fw-menu-sio-fujinet-atari-v1x",
-                        "firmware de prueba menu-sio (menú como D1 por el SIO físico, M3a aprobada y H4 sin aprobar) "
+                        "firmware de prueba menu-sio (menú como D1 por el SIO físico y casete, M3a aprobada, H4 sin aprobar, "
+                        "DATA IN por aceptación de riesgo) "
                         "para FujiNet Atari FN32ROV-1.3/1.5",
                         features=("menu_sio",), version_matches_commit=True,
-                        sio_calls=CASSETTE_SIO_CALLS + MENU_SIO_CALLS, gates=(False, True), menu_sio=True,
+                        sio_calls=CASSETTE_SIO_CALLS + MENU_SIO_CALLS, gates=(False, True, True), menu_sio=True,
                         profile_text="microSD por SPI3 en GPIO 18/23/19/5; paquete de prueba menu-sio: UART2 TX en "
                                      "DATA IN (GPIO21), RX en DATA OUT (GPIO33), COMMAND en GPIO39; MOTOR (GPIO36) "
-                                     "como entrada, con M3a aprobada por aceptación de riesgo; H4 sin aprobar: la "
-                                     "cinta no sale por el SIO"),
+                                     "como entrada, con M3a aprobada por aceptación de riesgo; H4 sin aprobar; la "
+                                     "cinta sale por DATA IN con aceptación de riesgo de R2, R6 y R7"),
     # Bench C8a (docs/hardware/banco-c8a-aislado.md, C-3 to C-7): bench C8 with the F1 controls, on the FujiNet
     # alone, USB only, the SIO cable disconnected. H4 unapproved and M3a approved, as today; if either changes the
-    # package fails and the variant must be reviewed. No menu, no cassette output, no new pin grant. No CI job
+    # package fails and the variant must be reviewed. DATA-IN accepted (reviewed for cas-salida-data-in): that
+    # grant is the menu-sio cassette's only (MENU_GRANT_CHECK); the bench does not use it. No menu, no cassette output, no new pin grant. No CI job
     # builds or uploads it until F3 and F4 are decided.
     "bench-c8a": Variant("retrobridge-BENCH-C8A-NO-SIO-fujinet-atari-v1x",
                          "firmware de BANCO C8a (NO CONECTAR AL SIO: solo USB, cable SIO desconectado; orden c8a run "
                          "con enclavamiento SIO_5V) para FujiNet Atari FN32ROV-1.3/1.5",
                          features=("bench_c8", "bench_c8a"), version_matches_commit=True,
-                         sio_calls=CASSETTE_SIO_CALLS, gates=(False, True), bench=True,
+                         sio_calls=CASSETTE_SIO_CALLS, gates=(False, True, True), bench=True,
                          profile_text="microSD por SPI3 en GPIO 18/23/19/5; banco C8a: GPIO21 (DATA IN) por UART2 y "
                                       "RMT solo con la orden c8a run y sin tensión SIO_5V en GPIO35; MOTOR (GPIO36) "
                                       "como entrada, con M3a aprobada por aceptación de riesgo; H4 sin aprobar: SIO "
@@ -684,11 +695,11 @@ def board_profile_fields(src: Path):
 
 
 def profile_gates(src: Path):
-    """(H4, M3a) as compiled into fujinet_atari_v1x_profile(), or None if it cannot be read exactly."""
+    """(H4, M3a, DATA-IN) as compiled into fujinet_atari_v1x_profile(), or None if it cannot be read exactly."""
     path = src / PROFILE_HEADER
     order = board_profile_fields(src)
     if (not path.is_file() or order is None or len(order) != PROFILE_FIELDS
-            or order[PROFILE_H4] != "sioGateApproved" or order[PROFILE_M3A] != "motorGateApproved"):
+            or any(order[i] != name for i, name in PROFILE_GATE_FIELDS)):
         return None
     text = path.read_text(encoding="utf-8")
     # Only #pragma once and #include: no #if, #ifdef or #define can hide which body is compiled.
@@ -708,13 +719,13 @@ def profile_gates(src: Path):
         depth += {"{": 1, "}": -1}.get(ch, 0)
         current += ch
     fields.append(current.strip())
-    if len(fields) != PROFILE_FIELDS or any(fields[i] not in ("true", "false") for i in (PROFILE_H4, PROFILE_M3A)):
+    if len(fields) != PROFILE_FIELDS or any(fields[i] not in ("true", "false") for i, _ in PROFILE_GATE_FIELDS):
         return None
-    return fields[PROFILE_H4] == "true", fields[PROFILE_M3A] == "true"
+    return tuple(fields[i] == "true" for i, _ in PROFILE_GATE_FIELDS)
 
 
-def check_gate_record(record, src=None, expected=(True, True)):
-    """Returns (ok, detail). Each gate as `expected` (H4, M3a): an approved one is JSON true, with a date and a
+def check_gate_record(record, src=None, expected=(True, True, False)):
+    """Returns (ok, detail). Each gate as `expected` (H4, M3a, DATA-IN): an approved one is JSON true, with a date and a
     record in docs/mediciones/ (with `src`, the record must also exist there and name the gate); an unapproved
     one is JSON false, nothing else."""
     if not isinstance(record, dict):
@@ -771,7 +782,7 @@ def load_record_json(text: str):
     return json.loads(text, object_pairs_hook=no_duplicates)
 
 
-def read_gate_record(src: Path, expected=(True, True)):
+def read_gate_record(src: Path, expected=(True, True, False)):
     """Returns (ok, detail, record) for docs/mediciones/puertas.json in a checkout."""
     path = src / GATE_RECORD
     if not path.is_file():
@@ -965,6 +976,24 @@ def check_bench_grant(src: Path):
     return not wrong, ", ".join(wrong) or "solo en main/bench_c8.cpp, sin escribir registros"
 
 
+def check_menu_grant(src: Path):
+    """Returns (ok, detail): validate_for_menu_cassette_output(), DATA IN by risk acceptance, is called only from
+    main/menu_sio.cpp and main/tape_gates.hpp (rb_board, which defines it, and the tests aside)."""
+    wrong = []
+    for base in ("main", "components"):
+        root = src / base
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            rel = path.relative_to(src)
+            if path.suffix not in SOURCE_SUFFIXES or "test" in rel.parts or rel.parts[:2] == ("components", "rb_board"):
+                continue
+            if rel.as_posix() not in MENU_GRANT_SOURCES and MENU_GRANT.search(
+                    strip_code(path.read_text(encoding="utf-8", errors="replace"))):
+                wrong.append(f"{rel.as_posix()}: validate_for_menu_cassette_output")
+    return not wrong, ", ".join(wrong) or "solo en " + " y ".join(MENU_GRANT_SOURCES)
+
+
 def check_build(src: Path, build: Path, source: SourceState, baseline: str, variant: Variant = VARIANTS["h3c"]) -> CheckLog:
     log = CheckLog()
     log.require("commit del firmware", source.head == baseline, f"checkout={source.head}, fijado={baseline}")
@@ -980,11 +1009,13 @@ def check_build(src: Path, build: Path, source: SourceState, baseline: str, vari
     log.require(NVS_CHECK, nvs_ok, nvs_detail)
     grant_ok, grant_detail = check_bench_grant(src)
     log.require(BENCH_GRANT_CHECK, grant_ok, grant_detail)
+    menu_grant_ok, menu_grant_detail = check_menu_grant(src)
+    log.require(MENU_GRANT_CHECK, menu_grant_ok, menu_grant_detail)
     if variant.gates:
         gates = profile_gates(src)
         log.require(PROFILE_CHECK, gates == variant.gates,
                     f"{PROFILE_HEADER}: " + ("no se pudo leer el perfil" if gates is None
-                                             else f"H4={'sí' if gates[0] else 'no'}, M3a={'sí' if gates[1] else 'no'}"))
+                                             else ", ".join(f"{g}={'sí' if a else 'no'}" for g, a in zip(GATES, gates))))
         record_ok, record_detail, record = read_gate_record(src, variant.gates)
         log.require(RECORD_CHECK, record_ok, f"{GATE_RECORD}: {record_detail}")
         log.facts["gates"] = record

@@ -185,6 +185,25 @@ Result<CassetteOutputAssignment> validate_for_cassette_output(const BoardProfile
     return CassetteOutputAssignment{sio.value().pins.tx, motor.value().pin()};
 }
 
+Result<CassetteOutputAssignment> validate_for_menu_cassette_output(const BoardProfile& profile) noexcept
+{
+    if (profile.sioGateApproved) {
+        return validate_for_cassette_output(profile);  // H4 signed: the same grant as the cassette
+    }
+    if (!profile.hardwareConfirmed || !profile.dataInRiskAccepted) {
+        return Failure{ErrorCode::BoardNotConfirmed};
+    }
+    const auto checked = check_sio_pins(profile, SioMode::ReceiveTransmit);
+    if (!checked.ok()) {
+        return Failure{checked.error()};
+    }
+    const auto motor = validate_for_motor(profile);
+    if (!motor.ok()) {
+        return Failure{motor.error()};
+    }
+    return CassetteOutputAssignment{profile.sio.tx, motor.value().pin()};
+}
+
 Result<CassetteOutputAssignment> validate_for_bench_data_in(const BoardProfile& profile) noexcept
 {
     if (!profile.hardwareConfirmed) {

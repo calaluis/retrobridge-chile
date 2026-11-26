@@ -183,7 +183,8 @@ ProgressSink g_progressSink{g_progress};
 // Who owns DATA IN (menu-cinta T7, plan §2.3): one arbiter, stepped by the SIO task between two frames.
 // kTapeOutput keeps the arbiter's gates closed until T9b (the 65XE bench): the disk never lets go (AC8,
 // rule 4), UART2 is installed without the cassette's TX ring, and the cassette never shares DATA IN.
-constexpr bool kTapeOutput = false;
+// T9b (cas-salida-data-in): on, by the owner's risk acceptance for DATA IN (R2, R6, R7; H4 unsigned).
+constexpr bool kTapeOutput = true;
 // Decision 3: with the cassette sharing UART2, the disk installs it once at boot with the TX ring.
 constexpr int kDiskTxRing = kTapeOutput ? rb::esp::EspSioUart::kSharedTxRing : rb::esp::EspSioUart::kUartTxBuffer;
 
@@ -430,7 +431,7 @@ void sioTask(void*)
             g_tapeApplied = true;
             ESP_LOGI(kTag, "cas: deck en el menu (puertas %s)", g_tape->deck().gatesOpen() ? "abiertas" : "cerradas");
             if (!g_tape->deck().gatesOpen()) {
-                ESP_LOGW(kTag, "cas: sin M3a/H4, la cinta no se reproduce; DATA IN queda para el disco");
+                ESP_LOGW(kTag, "cas: sin M3a o sin DATA IN, la cinta no se reproduce; DATA IN queda para el disco");
             } else if (!kTapeOutput) {
                 ESP_LOGW(kTag, "cas: la cinta aun no toma DATA IN (T9); DATA IN queda para el disco");
             }
@@ -674,9 +675,9 @@ bool registerCommand(const char* name, const char* help, esp_console_cmd_func_t 
 
 bool start(const rb::board::BoardProfile& board)
 {
-    ESP_LOGW(kTag, "menu-sio TEST PACKAGE: transmits on SIO DATA IN. H4 NOT approved (R2, R7 not accepted; "
-                   "R6 accepted on USB power only). "
-                   "M3a approved by risk acceptance of R1 only: MOTOR read on GPIO36. Tape output off.");
+    ESP_LOGW(kTag, "menu-sio TEST PACKAGE: transmits on SIO DATA IN. H4 NOT approved; DATA IN for the tape by "
+                   "risk acceptance of R2, R6, R7 (no measurement). "
+                   "M3a approved by risk acceptance of R1 only: MOTOR read on GPIO36. Tape output on.");
     if (board.sio.command < 0 || board.sio.rx < 0 || board.sio.tx < 0) {
         ESP_LOGE(kTag, "board profile has no SIO pins: menu not served");
         return false;
@@ -783,7 +784,7 @@ static void startCassette(bool sdMounted, rb::esp::CassetteService& cassette, rb
     cassette.reportEnd(g_progressSink);  // before start(): the loop publishes from its first tick
     if (kTapeOutput) {
         // T9a.7b: DATA IN shared with the disk, lent through g_handover (before start(): it picks the mode).
-        const auto pins = rb::board::validate_for_cassette_output(*g_board);
+        const auto pins = rb::board::validate_for_menu_cassette_output(*g_board);
         if (!pins.ok() || !cassette.shareDataIn(pins.value(), rb::esp::EspSioUart::kSharedTxRing, g_lender)) {
             ESP_LOGW(kTag, "cas: DATA IN no compartido; la cinta no sale por SIO");
         }

@@ -469,23 +469,32 @@ static void test_a_new_run_after_a_cancel_starts_and_ends(void)
     expectEveryCallOk();
 }
 
-static void test_a_restart_on_the_same_channel_waits_for_its_own_end(void)
+// D1 (cassette-cas-paridad). The owner's beta never resumes a run from the middle: an underrun ends it
+// and the same run is played again from its start (FujiNet PR #1773, CassetteFSKStatus::underrun; PR
+// #1756, cassette.cpp). Late portions after the RMT ran dry are dropped, not sent on a new
+// transmission: the pin goes back to the UART at mark, and the player sees idle() mid-run and replays
+// the run from its gap.
+static void test_portions_after_the_rmt_ran_dry_cut_the_run(void)
 {
     tracedAndConfigured();
+    TEST_ASSERT_TRUE(g_dataIn->realTime());
     startRun();
     TEST_ASSERT_TRUE(fake_idf::play_all() > 0);  // the RMT ran dry and notified the end
     TEST_ASSERT_TRUE(g_dataIn->push(FskPortion{false, 200}));  // more of the run arrives late
     TEST_ASSERT_TRUE(g_dataIn->push(FskPortion{true, 200}));
-    g_dataIn->pump();  // same channel, a new transmission: an underrun
+    g_dataIn->pump();  // not a new transmission: the run is cut
     TEST_ASSERT_EQUAL_UINT32(1, g_dataIn->underruns());
-    pumpWhilePlaying(20);  // the previous end must not end this one
-    TEST_ASSERT_TRUE(g_dataIn->fskActive());
-    TEST_ASSERT_EQUAL_UINT(2, fake_idf::state().rmtTransmits);
-    TEST_ASSERT_EQUAL_UINT(1, fake_idf::state().rmtNewChannels);
+    TEST_ASSERT_EQUAL_UINT(1, fake_idf::state().rmtTransmits);
+    TEST_ASSERT_FALSE(g_dataIn->fskActive());
+    TEST_ASSERT_TRUE(fake_idf::state().owner == Owner::Uart);
+    TEST_ASSERT_TRUE(g_dataIn->idle());  // the late portions are gone
+    TEST_ASSERT_EQUAL_UINT(1, count_calls("rmt_disable"));
+    startRun();  // the replay starts on a fresh channel
+    TEST_ASSERT_EQUAL_UINT(2, fake_idf::state().rmtNewChannels);
     TEST_ASSERT_TRUE(fake_idf::play_all() > 0);
     g_dataIn->pump();
     TEST_ASSERT_TRUE(fake_idf::state().owner == Owner::Uart);
-    TEST_ASSERT_EQUAL_UINT(1, count_calls("rmt_disable"));
+    TEST_ASSERT_EQUAL_UINT32(1, g_dataIn->underruns());
     expectEveryCallOk();
 }
 
@@ -657,7 +666,7 @@ int main()
     RUN_TEST(test_normal_end_comes_from_the_rmt_and_disables_once);
     RUN_TEST(test_cancel_disables_once_and_gives_the_pin_back);
     RUN_TEST(test_a_new_run_after_a_cancel_starts_and_ends);
-    RUN_TEST(test_a_restart_on_the_same_channel_waits_for_its_own_end);
+    RUN_TEST(test_portions_after_the_rmt_ran_dry_cut_the_run);
     RUN_TEST(test_a_failed_disable_on_stop_keeps_the_rmt_and_completes_later);
     RUN_TEST(test_a_failed_delete_after_a_run_keeps_the_channel_and_completes_later);
     RUN_TEST(test_release_with_a_failed_delete_can_be_completed_later);

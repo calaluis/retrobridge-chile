@@ -96,9 +96,13 @@ public:
     bool push(const rb::cassette::FskPortion& portion) override;
     bool idle() const override;
     void stop() override;
+    bool realTime() const override { return true; }  // the RMT plays at the signal's pace
+    uint32_t cuts() const override { return underruns_ + failures_; }  // runs cut or dropped
 
-    // Cassette loop, every tick: starts a queued run, restarts after an underrun, gives the pin
-    // back to the UART once a run has played.
+    // Cassette loop, every tick: starts a queued run, gives the pin back to the UART once a run has
+    // played. After an underrun the run is cut, never resumed from the middle (cassette-cas-paridad
+    // D1): portions that arrive after the RMT ran dry are dropped and the pin goes back to the UART;
+    // the player sees idle() mid-run and plays the run again from its gap.
     void pump() noexcept override;
 
     uint32_t underruns() const noexcept { return underruns_; }
@@ -158,7 +162,7 @@ private:
     bool rmtEnabled_ = false;   // the channel is enabled: rmt_disable() is due exactly once
     // Set by the RMT's on_trans_done interrupt, read by pump(): the transmission has ended.
     std::atomic<bool> txDone_{false};
-    bool started_ = false;      // this run has started once (a restart counts as an underrun)
+    bool started_ = false;      // this run has started once (another start would resume it: an underrun)
     uint32_t underruns_ = 0;
     uint32_t failures_ = 0;
     uint32_t pinFaults_ = 0;

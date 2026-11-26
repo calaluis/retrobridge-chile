@@ -133,6 +133,9 @@ void reset();
 // Plays the run in flight to its end through the encoder callback, as the RMT would, then calls
 // on_trans_done from "the interrupt". Returns the number of symbols the encoder produced.
 std::size_t play_all();
+// The RMT consumes up to `symbols` symbols of the run in flight through the encoder callback and keeps
+// transmitting: no on_trans_done unless the encoder said done (review H1 of PR #121).
+std::size_t play_symbols(std::size_t symbols);
 // True when DATA IN is at mark: nothing drives it low. A run in flight may drive it.
 bool line_released();
 // TX model: lets `us` of line time pass (the shift register sends, the interrupt refills the FIFO).

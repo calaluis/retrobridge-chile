@@ -54,6 +54,45 @@ en `C:` también después de una carga.
   rechaza con «UNA CINTA VA EN C:» (AC3). El «EL HOST NO RESPONDE» de D8 no era ese rechazo: la placa no
   contestó, con la línea todavía en la cinta tras la carga cortada (issue #125). Se mide en el 65XE.
 
+## Issue #125: «EL HOST NO RESPONDE» — medición (2026-11-27)
+
+Prueba física con `60ac6e4` (responsable, 65XE, USB y SIO conectados): «Cargando RetroBridge...» se ve;
+montar y cargar `.cas` desde la microSD funciona, también con carga Turbo; A + OPTION + START funciona;
+un `.cas` en D8 se rechaza. **Falla:** apagar y encender el 65XE, luego U y C: «EL HOST NO RESPONDE»;
+tras Esc, C: ya está desmontado (la placa ejecutó la orden). También pasó, intermitente, al arrancar.
+
+**Procedimiento reproducible:** USB y SIO conectados; C: con un `.cas`; apagar el 65XE 3 s y encender;
+en el menú, U y C. Al ver el error, dejar el 65XE encendido y leer `sio status` por la consola (sin
+reiniciar la placa); después apagar el 65XE para el resumen.
+
+**Demostrado:**
+- Bisección: con `d1eb418` la misma secuencia falla igual. El cargador (`10a1a92`) y `70abb98` no lo causan.
+- `sio status` de `60ac6e4` tras usar el menú: `err_tx 3`, `reintentos 3`, `ordenes 11`, `err_rx 0`,
+  `cortas 11`. Un envío de la respuesta del menú falló tres veces; tras cada fallo el Atari repitió la orden.
+- `SioSession` no ve esos fallos: las órdenes del menú se sirven en `MenuSioTransport::serveMenu`, que
+  corta la respuesta si un bloque no sale (`menu_sio_transport.cpp`) y descarta sin contar una trama con
+  checksum malo. Por eso el diagnóstico de `f6426ec` no mostró pasos fallidos.
+- Una respuesta del menú son 964 bytes (COMPLETE, 962 de pantalla, checksum): a 19200 baudios, ~502 ms
+  de línea. Los pasos de 337-553 ms de la consola eran esas respuestas, no esperas.
+
+**Hipótesis (sin demostrar):**
+- H1: la UART está aparcada o el TX no termina a tiempo (`EspSioUart::write`) cuando la cinta restaurada
+  de C: actúa tras el encendido. `33e72ee` cuenta cada causa (`uart tx: no_lista / escritura_corta /
+  sin_terminar`).
+- H2: el Atari falla tras agotar sus reintentos porque la placa está ocupada (respuesta de ~0,5 s más el
+  resto del bucle) cuando llega la orden repetida. Se ve como `reintentos` sin `envio_fallido` final.
+- H3 (lectura de código, aparte): `EspDataIn::baud_` no vuelve a 0 cuando el disco recupera la línea a
+  19200 (`EspSioUart::resume`); una segunda cinta en la misma sesión podría salir a 19200. Sin prueba.
+- La transferencia de 964 bytes sola no supera el plazo del menú (`DTIMLO` 7 s, ~0,5 s de línea).
+
+**Propuesta (para revisión, sin aplicar):** según el contador que suba con `33e72ee`:
+- `no_lista`: el menú no responde con la línea prestada; devolver DATA IN al disco antes de servir la
+  orden, o no aceptarla (sin ACK) para que el Atari la repita.
+- `sin_terminar`: medir la cola real del TX (bytes pendientes del anillo compartido) en vez de solo el
+  bloque, y revisar la tasa de la UART tras la cinta (H3).
+- solo `reintentos`: reducir el trabajo del bucle entre respuestas; el protocolo de pantalla (enviar solo
+  las filas cambiadas) queda para su propia spec.
+
 ## Scope
 
 - Paso 1 (este commit): diagnóstico que solo registra. `EspDataIn::hardwareFree()` guarda qué condición

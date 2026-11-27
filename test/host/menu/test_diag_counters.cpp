@@ -24,6 +24,7 @@ static void test_the_menu_counters_read_by_the_console_are_atomic(void)
     TEST_ASSERT_TRUE((std::is_same<decltype(MenuTransportStats::menuSendFailures), Counter>::value));
     TEST_ASSERT_TRUE((std::is_same<decltype(MenuTransportStats::menuAckFailures), Counter>::value));
     TEST_ASSERT_TRUE((std::is_same<decltype(MenuTransportStats::lastReplyUs), Counter>::value));
+    TEST_ASSERT_TRUE((std::is_same<decltype(MenuTransportStats::lastInterruptedUs), Counter>::value));
     TEST_ASSERT_TRUE((std::is_same<decltype(MenuTransportStats::maxReplyUs), Counter>::value));
 }
 

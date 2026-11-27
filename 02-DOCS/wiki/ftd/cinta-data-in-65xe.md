@@ -93,6 +93,15 @@ reiniciar la placa); después apagar el 65XE para el resumen.
 - solo `reintentos`: reducir el trabajo del bucle entre respuestas; el protocolo de pantalla (enviar solo
   las filas cambiadas) queda para su propia spec.
 
+**Revisión adicional de `832b222` (M1–M3):**
+- M1: `check_atomic_calls.py` cubre ahora `esp_sio_uart.cpp.obj` (perfil `uart`) y
+  `menu_sio_transport.cpp.obj` (perfil `menu`) en la CI. Los almacenamientos de los contadores son
+  `release` (`memw` + `s32i`). Pruebas negativas: sin `memw`, otro objeto, y una llamada a libatomic.
+- M2: una respuesta cortada por un bloque fallido ya no fija `respuesta ultima/maxima`; su tiempo va a
+  `cortada ultima` (`lastInterruptedUs`). Prueba RED→GREEN en `test_host_menu`.
+- M3 (limitación conocida): cada contador se lee por separado; una lectura de `sio status` no es una
+  instantánea de todos a la vez.
+
 ## Scope
 
 - Paso 1 (este commit): diagnóstico que solo registra. `EspDataIn::hardwareFree()` guarda qué condición
@@ -124,7 +133,8 @@ Fuera: H4, las puertas y los paquetes. Flashear y probar en el 65XE necesitan ap
   2 ms y paso SIO de 21,5 ms → `TakeTimedOut`; el plazo no cubre dos pasos SIO).
 - [x] GREEN — prueba: con 60 ms, `ctest` 109/109; `tools/tests` 341 OK; layering, notices, fsk OK.
 - [x] CI de la corrección y paquete `menu-sio-cinta` — prueba: run 45921940608 en `d1eb418`, 6/6; paquete
-  verificado (sha256 `48077aaa…`). Los commits posteriores solo tocan este documento.
+  verificado (sha256 `48077aaa…`). Los commits posteriores cambian firmware (texto de la tecla C,
+  diagnóstico de la Issue #125); cada uno tiene su CI y su paquete.
 - [x] Prueba en el 65XE: `international_karate.cas` carga (con aprobación) — prueba: «PROGRAMA CARGADO»
   en pantalla y el juego corre (lo vio el responsable), consola de `d1eb418` (sección «Prueba física»).
   Evidencia del responsable, no verificación independiente.

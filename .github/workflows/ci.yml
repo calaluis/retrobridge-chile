@@ -110,6 +110,11 @@ jobs:
                   --obj build-menu-sio/esp-idf/rb_esp_cassette/CMakeFiles/__idf_rb_esp_cassette.dir/src/esp_data_in.cpp.obj
           python3 -I tools/ci/check_atomic_calls.py check --expect tick \
                   --obj build-menu-sio/esp-idf/rb_esp_cassette/CMakeFiles/__idf_rb_esp_cassette.dir/src/cassette_service.cpp.obj
+          # fix-cinta-data-in-65xe (review PR #124, M1): the issue #125 counters the console reads.
+          python3 -I tools/ci/check_atomic_calls.py check --expect uart \
+                  --obj build-menu-sio/esp-idf/rb_esp_sio/CMakeFiles/__idf_rb_esp_sio.dir/src/esp_sio_uart.cpp.obj
+          python3 -I tools/ci/check_atomic_calls.py check --expect menu \
+                  --obj build-menu-sio/esp-idf/rb_menu/CMakeFiles/__idf_rb_menu.dir/src/menu_sio_transport.cpp.obj
 
   # The cassette firmware (variant "cassette", both gates) is not packaged: H4 stays unapproved, and before T9b only
   # menu-sio is installed (docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md). The read-only cassette-lectura and

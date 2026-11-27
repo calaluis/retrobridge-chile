@@ -563,6 +563,19 @@ void test_a_reply_block_that_cannot_be_sent_is_counted()
     TEST_ASSERT_EQUAL_UINT(2, rig.inner.sends());  // nothing after the failed block
 }
 
+// Review of PR #124 (M2): a reply cut off by a failed block is not a complete reply. Its time goes to
+// its own counter, so the complete-reply times stay what a whole screen takes.
+void test_an_interrupted_reply_is_not_timed_as_a_complete_one()
+{
+    DecoratorRig rig;
+    rig.inner.fail_send(2);
+    rig.inner.push_frame(frame(0x5A, 0x4B, K1));
+    TEST_ASSERT_FALSE(rig.transport.waitCommandFrame(20000).ok());
+    TEST_ASSERT_EQUAL_UINT32(0, rig.transport.stats().lastReplyUs);
+    TEST_ASSERT_EQUAL_UINT32(0, rig.transport.stats().maxReplyUs);
+    TEST_ASSERT_TRUE(rig.transport.stats().lastInterruptedUs > 0);
+}
+
 void test_the_reply_time_covers_the_whole_screen()
 {
     DecoratorRig rig;
@@ -780,6 +793,7 @@ int main()
     RUN_TEST(test_a_menu_frame_with_a_bad_checksum_is_counted_and_not_answered);
     RUN_TEST(test_an_ack_that_cannot_be_sent_is_counted_and_nothing_follows);
     RUN_TEST(test_a_reply_block_that_cannot_be_sent_is_counted);
+    RUN_TEST(test_an_interrupted_reply_is_not_timed_as_a_complete_one);
     RUN_TEST(test_the_reply_time_covers_the_whole_screen);
     RUN_TEST(test_a_key_repeated_by_siov_is_answered_again_but_applied_once);
     RUN_TEST(test_a_mount_whose_reply_was_lost_to_break_is_applied_once_then_break_shows_main);

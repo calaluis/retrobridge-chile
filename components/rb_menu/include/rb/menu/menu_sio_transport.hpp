@@ -41,8 +41,9 @@ struct MenuTransportStats {
     std::atomic<uint32_t> menuBadChecksums{0};  // a menu frame with a bad checksum: dropped, the Atari retries
     std::atomic<uint32_t> menuAckFailures{0};   // the ACK not sent: nothing selected, the Atari retries
     std::atomic<uint32_t> menuSendFailures{0};  // a block of the reply not sent: the rest is not sent
-    std::atomic<uint32_t> lastReplyUs{0};       // end of the ACK to the last byte of the reply
-    std::atomic<uint32_t> maxReplyUs{0};
+    std::atomic<uint32_t> lastReplyUs{0};       // end of the ACK to the last byte of a complete reply
+    std::atomic<uint32_t> maxReplyUs{0};        // the longest complete reply
+    std::atomic<uint32_t> lastInterruptedUs{0}; // end of the ACK to the failed block (review PR #124, M2)
 };
 // As in data_in_handover.hpp: only aligned 32-bit loads and stores (no read-modify-write). Always
 // lock-free on the host; the ESP32 GCC (Xtensa) does not report it, so the check is host only.

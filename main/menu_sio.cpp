@@ -591,12 +591,13 @@ void sioTask(void*)
                 const rb::esp::EspSioUart::WriteFailures& w = g_line->writeFailures();
                 ESP_LOGW(kTag,
                          "SIO diag: menu ack_fallido %u envio_fallido %u checksum_malo %u; uart no_lista %u corta %u "
-                         "sin_terminar %u (ultima %u B, %u ms); respuesta %u ms; err_rx %u",
+                         "sin_terminar %u (ultima %u B, %u ms); respuesta completa %u ms, cortada %u ms; err_rx %u",
                          static_cast<unsigned>(ackFailures), static_cast<unsigned>(sendFailures),
                          static_cast<unsigned>(badChecksums),
                          static_cast<unsigned>(w.notReady), static_cast<unsigned>(w.shortWrite),
                          static_cast<unsigned>(w.txNotDone), static_cast<unsigned>(w.lastBytes),
                          static_cast<unsigned>(w.lastWaitMs), static_cast<unsigned>(m.lastReplyUs / 1000),
+                         static_cast<unsigned>(m.lastInterruptedUs / 1000),
                          static_cast<unsigned>(g_transport->stats().receiveErrors));
                 sendFailuresSeen = sendFailures;
                 ackFailuresSeen = ackFailures;
@@ -829,10 +830,12 @@ int sioCommand(int argc, char** argv)
                 static_cast<unsigned long>(m.menuNaks), static_cast<unsigned long>(m.droppedAfterReset));
     // Issue #125 (PR #124): the ends of a menu command the Atari sees as "EL HOST NO RESPONDE".
     const rb::esp::EspSioUart::WriteFailures& w = g_line->writeFailures();
-    std::printf("menu: checksum_malo %lu ack_fallido %lu envio_fallido %lu respuesta ultima %lu ms, maxima %lu ms\n",
+    std::printf("menu: checksum_malo %lu ack_fallido %lu envio_fallido %lu respuesta ultima %lu ms, maxima %lu ms, "
+                "cortada ultima %lu ms\n",
                 static_cast<unsigned long>(m.menuBadChecksums), static_cast<unsigned long>(m.menuAckFailures),
                 static_cast<unsigned long>(m.menuSendFailures),
-                static_cast<unsigned long>(m.lastReplyUs / 1000), static_cast<unsigned long>(m.maxReplyUs / 1000));
+                static_cast<unsigned long>(m.lastReplyUs / 1000), static_cast<unsigned long>(m.maxReplyUs / 1000),
+                static_cast<unsigned long>(m.lastInterruptedUs / 1000));
     std::printf("uart tx: no_lista %lu escritura_corta %lu sin_terminar %lu (ultima %lu B, %lu ms) "
                 "escritura_maxima %lu ms\n",
                 static_cast<unsigned long>(w.notReady), static_cast<unsigned long>(w.shortWrite),

@@ -14,7 +14,7 @@ namespace {
 // The SIO task is the only writer (review of PR #124, H1): a relaxed load and store, never a lock.
 void bump(std::atomic<uint32_t>& counter) noexcept
 {
-    counter.store(counter.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+    counter.store(counter.load(std::memory_order_relaxed) + 1, std::memory_order_release);
 }
 }  // namespace
 using rb::core::Failure;
@@ -177,19 +177,26 @@ void MenuSioTransport::serveMenu(const CommandBytes& command)
     clock_.waitUntil(ackEnd + rb::sio::SioSession::kCompleteDelayUs);
     // COMPLETE, the screen and the checksum are one byte stream for the Atari;
     // the transport takes it in blocks of at most kSendBlock bytes.
+    bool complete = true;
     for (std::size_t sent = 0; sent < response_.size(); sent += kSendBlock) {
         const std::size_t left = response_.size() - sent;
         const std::size_t length = left < kSendBlock ? left : kSendBlock;
         if (!inner_.send(Span<const uint8_t>{response_.data() + sent, length}).ok()) {
             bump(stats_.menuSendFailures);
+            complete = false;
             break;  // the Atari's SIOV times out and shows that the host does not answer
         }
     }
     const uint64_t replyUs = clock_.nowMicros() - ackEnd;
     const uint32_t reply = replyUs > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(replyUs);
-    stats_.lastReplyUs.store(reply, std::memory_order_relaxed);
-    if (reply > stats_.maxReplyUs.load(std::memory_order_relaxed)) {
-        stats_.maxReplyUs.store(reply, std::memory_order_relaxed);
+    // Review of PR #124 (M2): only a whole reply sets the reply times; a cut-off one is kept apart.
+    if (!complete) {
+        stats_.lastInterruptedUs.store(reply, std::memory_order_release);
+    } else {
+        stats_.lastReplyUs.store(reply, std::memory_order_release);
+        if (reply > stats_.maxReplyUs.load(std::memory_order_relaxed)) {
+            stats_.maxReplyUs.store(reply, std::memory_order_release);
+        }
     }
     inner_.releaseDataLine();
 }

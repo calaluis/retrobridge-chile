@@ -238,7 +238,7 @@ void test_menu_disk_is_a_valid_single_density_atr_with_the_program()
     std::array<uint8_t, 128> sector{};
     TEST_ASSERT_TRUE(image.value().readSector(rb::domain::SectorNumber::from(1).value(), Span<uint8_t>{sector}).ok());
     TEST_ASSERT_EQUAL_UINT8_ARRAY(MenuImage::block().data(), sector.data(), 128);
-    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLoadSectors, sector[1]);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuBootSectors, sector[1]);  // the loader (fix-cinta-data-in-65xe)
     TEST_ASSERT_TRUE(image.value().readSector(rb::domain::SectorNumber::from(720).value(), Span<uint8_t>{sector}).ok());
     for (uint8_t byte : sector) {
         TEST_ASSERT_EQUAL_UINT8(0, byte);

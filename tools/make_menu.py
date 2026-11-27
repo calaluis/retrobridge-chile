@@ -67,6 +67,14 @@ REPEAT_FIRST = 30            # frames a held direction waits before it repeats
 REPEAT_NEXT = 9              # frames between repeats after that
 STICK_CENTRED = 0x0F
 MENU_TIMEOUT_S = 7           # DTIMLO: seconds the OS waits for the device
+# fix-cinta-data-in-65xe: D1 starts with a loader the OS boots at LOADER_ORG (page 6, which the
+# menu never uses). It writes LOADER_TEXT on the OS screen (SAVMSC) at once, then reads the menu
+# block from D1 to MENU_ORG and starts it, so the 65XE says what it is doing while the menu loads.
+LOADER_ORG = 0x0600
+LOADER_TEXT = "Cargando RetroBridge..."
+LOADER_COLUMN = 2            # GR.0 left margin: the editor's first column
+SAVMSC = 0x58                # OS: address of the screen in use (zero page)
+DISK_DEVICE, DISK_READ = 0x31, 0x52
 LINE_WIDTH = 40
 TITLE_WIDTH = 20             # ANTIC modes 6 and 7: 20 characters per line
 SCREEN_SIZE = 960            # the largest layout (900 bytes) rounded to 24 lines
@@ -805,6 +813,77 @@ def menu_program():
     return bytes(block), labels
 
 
+def loader_program(menu_sectors: int):
+    """Returns (sectors, labels): the boot sectors of D1, loaded by the OS at LOADER_ORG."""
+    store = lambda value, address: [bytes([0xA9, value]), abs_op(0x8D, address)]  # noqa: E731
+    first = None  # the sector the menu block starts on, known once the loader's size is
+    for boot in (1, 2, 3):
+        first = boot + 1
+        program = [
+            # Boot record: flags, sectors the OS loads, load address, init address.
+            bytes([0x00, boot, LOADER_ORG & 0xFF, LOADER_ORG >> 8]), ("abs", "ld_init"),
+            # The text first: Y is the screen column, from the last one down to LOADER_COLUMN.
+            bytes([0xA0, LOADER_COLUMN + len(LOADER_TEXT) - 1]),  # LDY #last column
+            ("label", "ld_text"),
+            bytes([0xB9]), ("abs", "ld_text_at"),     # LDA text - LOADER_COLUMN,Y
+            bytes([0x91, SAVMSC]),                    # STA (SAVMSC),Y
+            bytes([0x88]),                            # DEY
+            bytes([0xC0, LOADER_COLUMN]),             # CPY #LOADER_COLUMN
+            bytes([0xB0]), ("rel", "ld_text"),       # BCS ld_text
+            # Then the menu block: sector `first` and the ones after it, 128 bytes each, to MENU_ORG.
+            *store(DISK_DEVICE, DDEVIC),
+            *store(0x01, DUNIT),
+            *store(DISK_READ, DCOMND),
+            *store(MENU_TIMEOUT_S, DTIMLO),
+            *store(BOOT_SECTOR_SIZE, DBYTLO),
+            bytes([0xA9, 0x00]), abs_op(0x8D, DBYTHI), abs_op(0x8D, DAUX2),  # LDA #0 / STA / STA
+            *store(first, DAUX1),
+            *store(MENU_ORG & 0xFF, DBUFLO),
+            *store(MENU_ORG >> 8, DBUFHI),
+            ("label", "ld_next"),
+            *store(0x40, DSTATS),                     # data from the drive to the Atari
+            abs_op(0x20, SIOV),                       # JSR SIOV
+            bytes([0x98]),                            # TYA (SIO status)
+            bytes([0x30]), ("rel", "ld_fail"),       # BMI ld_fail
+            # DBUF += 128: MENU_ORG starts a page, so the low byte is $00 or $80.
+            abs_op(0xAD, DBUFLO), bytes([0x49, BOOT_SECTOR_SIZE]), abs_op(0x8D, DBUFLO),
+            bytes([0x30]), ("rel", "ld_page"),       # BMI ld_page ($80: the same page)
+            abs_op(0xEE, DBUFHI),                     # INC DBUFHI
+            ("label", "ld_page"),
+            abs_op(0xEE, DAUX1),                      # INC DAUX1 (the next sector)
+            abs_op(0xAD, DAUX1),                      # LDA DAUX1
+            bytes([0xC9, first + menu_sectors]),      # CMP #the sector after the block
+            bytes([0xD0]), ("rel", "ld_next"),       # BNE ld_next
+            abs_op(0x4C, MENU_ORG + 6),               # JMP the menu (its own entry, as before)
+            ("label", "ld_fail"),
+            abs_op(0x4C, COLDSV),                     # JMP COLDSV: the OS boots D1 again
+            ("label", "ld_init"),
+            bytes([0x60]),                            # RTS (DOSINI)
+            ("label", "ld_text_end"),
+        ]
+        text = screen_codes(LOADER_TEXT, len(LOADER_TEXT))
+        size = sum(2 if isinstance(i, tuple) and i[0] == "abs" else 1 if isinstance(i, tuple) and i[0] == "rel"
+                   else 0 if isinstance(i, tuple) else len(i) for i in program) + len(text)
+        if size <= boot * BOOT_SECTOR_SIZE:
+            break
+    else:
+        raise ValueError("the loader does not fit in three boot sectors")
+    code_end = LOADER_ORG + size - len(text)
+    code = assemble(program, LOADER_ORG, extra_labels={"ld_text_at": code_end - LOADER_COLUMN})
+    code += text
+    if LOADER_ORG + boot * BOOT_SECTOR_SIZE > MENU_ORG:
+        raise ValueError("the loader must end below the menu")
+    labels = {"ld_text": code_end, "ld_first": first}
+    return bytes(code + bytes(boot * BOOT_SECTOR_SIZE - len(code))), labels
+
+
+def disk_block() -> bytes:
+    """The first sectors of D1: the loader, then the menu block exactly as menu_program() builds it."""
+    menu, _ = menu_program()
+    loader, _ = loader_program(len(menu) // BOOT_SECTOR_SIZE)
+    return loader + menu
+
+
 def c_array(name: str, data: bytes) -> list:
     lines = [f"constexpr unsigned char {name}[{len(data)}] = {{"]
     for i in range(0, len(data), 16):
@@ -814,8 +893,10 @@ def c_array(name: str, data: bytes) -> list:
 
 
 def render_include(block: bytes, labels: dict) -> str:
+    disk = disk_block()  # fix-cinta-data-in-65xe: the loader, then `block`
     constants = {
-        "kMenuLoadSectors": block[1], "kMenuLineWidth": LINE_WIDTH, "kMenuTitleWidth": TITLE_WIDTH,
+        "kMenuLoadSectors": len(disk) // BOOT_SECTOR_SIZE, "kMenuBootSectors": disk[1],
+        "kMenuLineWidth": LINE_WIDTH, "kMenuTitleWidth": TITLE_WIDTH,
         "kMenuScreenSize": SCREEN_SIZE, "kMenuReplySize": REPLY_SIZE, "kMenuNoKey": NO_KEY,
         "kMenuPollKey": POLL, "kMenuKeyMask": KEY_MASK,
         "kMenuNavUp": NAV_UP, "kMenuNavDown": NAV_DOWN, "kMenuNavLeft": NAV_LEFT,
@@ -845,7 +926,7 @@ def render_include(block: bytes, labels: dict) -> str:
               f"constexpr unsigned char kMenuTextCommand = 0x{TEXT_COMMAND:02X};"]
     lines += c_array("kMenuMainTemplate", main_template())
     lines += c_array("kMenuListTemplate", list_template())
-    lines += c_array("kMenuBlock", block)
+    lines += c_array("kMenuBlock", disk)
     return "\n".join(lines) + "\n"
 
 

@@ -41,6 +41,19 @@ Que `international_karate.cas` cargue en el 65XE con `menu-sio-cinta`. Primero, 
   con COMMAND bajo o al fin de la cinta. Falta ver qué pasa cuando el Atari vuelve a usar el disco.
 - Log fuera del repo, sin datos de red.
 
+## Ampliación pedida por el responsable (2026-11-26)
+
+La PR #124 entrega la cinta completa: carga, mensaje de carga del menú, y montar y desmontar `.cas`
+en `C:` también después de una carga.
+
+- Mensaje «Cargando RetroBridge...»: D1 empieza con un cargador en la página 6 (`LOADER_ORG` $0600, 2
+  sectores). El sistema del Atari carga solo esos sectores; el cargador escribe el texto en la pantalla
+  del sistema (`SAVMSC`) y lee el bloque del menú a $0700, igual que antes, sector por sector. Un sector
+  que no se lee vuelve al arranque en frío. El bloque del menú no cambia (D1: 20 sectores, antes 18).
+- Montar y desmontar en `C:`: ya existe (elegir el `.cas` y C; U y luego C). Un `.cas` en D1-D8 ya se
+  rechaza con «UNA CINTA VA EN C:» (AC3). El «EL HOST NO RESPONDE» de D8 no era ese rechazo: la placa no
+  contestó, con la línea todavía en la cinta tras la carga cortada (issue #125). Se mide en el 65XE.
+
 ## Scope
 
 - Paso 1 (este commit): diagnóstico que solo registra. `EspDataIn::hardwareFree()` guarda qué condición
@@ -86,7 +99,14 @@ Fuera: H4, las puertas y los paquetes. Flashear y probar en el 65XE necesitan ap
   y esa unidad responde. El plazo de 60 ms no lo corrige por sí solo.
 - Fuera de alcance: H4 y la medición de GPIO36 siguen pendientes; ni la CI ni esta carga son aprobación
   eléctrica.
-- [ ] Pendientes: D8/.cas con AC3; limpiar `TakeDiag` al cancelar una toma.
+- [x] Mensaje de carga — prueba: `test_menu_program` `MenuLoaderTest` (4): el texto está en pantalla antes
+  de la primera lectura; el cargador lee los sectores 3-20 a $0700 en orden y arranca el menú; un sector
+  que falla vuelve al arranque en frío; D1 es el cargador y luego el bloque del menú sin cambios. RED
+  (`disk_block` no existía) → GREEN; `tools/tests` 345 OK; `ctest` 109/109.
+- [ ] CI y paquete con el cargador; flasheo (aprobado por el responsable) y prueba en el 65XE: el mensaje
+  se ve; cargar el juego, apagar y encender, desmontar `C:` (U, C), montar otro `.cas` en `C:`; `.cas` en
+  D8 dice «UNA CINTA VA EN C:».
+- [ ] Limpiar `TakeDiag` al cancelar una toma.
 
 ## Next
 

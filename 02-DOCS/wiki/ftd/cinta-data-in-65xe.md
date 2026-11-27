@@ -31,6 +31,15 @@ Que `international_karate.cas` cargue en el 65XE con `menu-sio-cinta`. Primero, 
   plazo (`kTakeTimeoutUs` = 20 ms) antes que la confirmación: la descarta y la toma vence.
 - Logs fuera del repo, sin datos de red.
 
+## Prueba física de la corrección (2026-11-26, `d1eb418`)
+
+- Pantalla del 65XE: «PROGRAMA CARGADO» con `INTERNATIONAL_KARATE.CAS` en `C:`, START+OPTION y RETURN.
+- Consola: `cambio 1` → `cambio 2` (ToTape) a los 22 ms, vencidas 0. La cinta tuvo la línea de 22:43:52 a
+  22:50:44 (~7 min, 106 arranques del canal RMT, uno cada ~3,7 s), MOTOR on, COMMAND alto.
+- Después: MOTOR off, COMMAND alto, dueño cinta. Según `givesBack()`, es una pausa: la línea vuelve al disco
+  con COMMAND bajo o al fin de la cinta. Falta ver qué pasa cuando el Atari vuelve a usar el disco.
+- Log fuera del repo, sin datos de red.
+
 ## Scope
 
 - Paso 1 (este commit): diagnóstico que solo registra. `EspDataIn::hardwareFree()` guarda qué condición
@@ -62,7 +71,8 @@ Fuera: H4, las puertas y los paquetes. Flashear y probar en el 65XE necesitan ap
   2 ms y paso SIO de 21,5 ms → `TakeTimedOut`; el plazo no cubre dos pasos SIO).
 - [x] GREEN — prueba: con 60 ms, `ctest` 109/109; `tools/tests` 341 OK; layering, notices, fsk OK.
 - [ ] CI de la corrección y paquete `menu-sio-cinta`.
-- [ ] Prueba en el 65XE: `international_karate.cas` carga (con aprobación).
+- [x] Prueba en el 65XE: `international_karate.cas` carga (con aprobación) — prueba: «PROGRAMA CARGADO»
+  en pantalla, consola de `d1eb418` (sección «Prueba física»).
 - [x] Revisión independiente, ronda 4 (`d1eb418`): sin bloqueante en el delta; no es prueba de carga.
 - [ ] Incidente «EL HOST NO RESPONDE» tras el segmento 36: contrastar con la especificación las
   transiciones reales (COMMAND, `tapeEnded`, dueño del árbitro, Release) con los registros `DATA IN diag:`

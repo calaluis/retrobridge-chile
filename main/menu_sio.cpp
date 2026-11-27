@@ -436,6 +436,14 @@ void logDataInDiag(rb::host::DataInChange change, const rb::host::DataInReadings
     switch (change) {
     case rb::host::DataInChange::TakeRequested:
         return;  // its baseline was taken before the arbiter step (stepWithTakeBaseline, review PR #124 H2)
+    case rb::host::DataInChange::TakeFailed:
+    case rb::host::DataInChange::ReleaseRequested:
+        g_takeDiag.cancelled();  // a take that never reached Tape or expired: forget its baseline
+        break;
+    default:
+        break;
+    }
+    switch (change) {
     case rb::host::DataInChange::ToTape:
     case rb::host::DataInChange::TakeTimedOut: {
         const bool confirmed = change == rb::host::DataInChange::ToTape;

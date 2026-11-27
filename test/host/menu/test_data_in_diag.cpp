@@ -116,6 +116,19 @@ static void test_a_step_that_is_not_a_take_keeps_the_pending_baseline(void)
     TEST_ASSERT_EQUAL_UINT32(1, diag.ended(1000, live).calls);
 }
 
+// Review PR #124, round 3: a take cancelled before ToTape or TakeTimedOut leaves no baseline, so a
+// later end without a request of its own is N/D, never timed from the old request.
+static void test_a_cancelled_take_leaves_no_baseline(void)
+{
+    TakeDiag diag;
+    diag.requested(1000, HardwareProbe{3, 1, 0x40});
+    diag.cancelled();
+    const TakeDiag::Result r = diag.ended(90000, HardwareProbe{9, 2, 0});
+    TEST_ASSERT_FALSE(r.hasRequest);
+    TEST_ASSERT_EQUAL_INT64(0, r.elapsedUs);
+    TEST_ASSERT_EQUAL_UINT32(0, r.calls);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -128,5 +141,6 @@ int main()
     RUN_TEST(test_counters_that_wrap_give_small_deltas);
     RUN_TEST(test_a_check_made_while_the_take_is_published_counts_for_that_take);
     RUN_TEST(test_a_step_that_is_not_a_take_keeps_the_pending_baseline);
+    RUN_TEST(test_a_cancelled_take_leaves_no_baseline);
     return UNITY_END();
 }

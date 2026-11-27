@@ -106,7 +106,8 @@ Fuera: H4, las puertas y los paquetes. Flashear y probar en el 65XE necesitan ap
 - [ ] CI y paquete con el cargador; flasheo (aprobado por el responsable) y prueba en el 65XE: el mensaje
   se ve; cargar el juego, apagar y encender, desmontar `C:` (U, C), montar otro `.cas` en `C:`; `.cas` en
   D8 dice «UNA CINTA VA EN C:».
-- [ ] Limpiar `TakeDiag` al cancelar una toma.
+- [x] Limpiar `TakeDiag` al cancelar una toma (`TakeFailed` o `ReleaseRequested`) — prueba:
+  `test_a_cancelled_take_leaves_no_baseline`; con `cancelled()` vacío falla (mutante muerto); 10/10.
 
 ## Next
 

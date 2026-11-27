@@ -63,6 +63,10 @@ public:
         return r;
     }
 
+    // The take ended another way (refused, or given back before it was confirmed): its baseline
+    // must not be used by a later end (review PR #124, round 3).
+    void cancelled() noexcept { pending_ = false; }
+
 private:
     bool pending_ = false;
     int64_t askedUs_ = 0;

@@ -401,10 +401,13 @@ void driveSaveTask(void*)
 }
 
 // Diagnostics (fix-cinta-data-in-65xe, 65XE test of 2026-11-26): why the tape's take of DATA IN expires.
-// Logs only; it changes no decision. Per take (review PR #124, H1): the hardwareFree() counters when it
-// was asked and when it ended, so the verdict is this take's (TakeDiag, main/data_in_diag.hpp). Also how
+// Logs only; it changes no decision. Per take (review PR #124, H1 and H2): the hardwareFree() counters
+// just before the arbiter step that asks it, and when it ended, so the verdict is this take's (TakeDiag and
+// stepWithTakeBaseline, main/data_in_diag.hpp). `lastBusy` is indicative (three separate atomics). Also how
 // old the cassette loop's last tick is. While DATA IN is not the disk's, the state every 2 s. Expired
 // takes: the first 10, then every 50th.
+rb::menusio::TakeDiag g_takeDiag;  // SIO task only
+
 rb::menusio::HardwareProbe probeOf(const rb::esp::EspDataIn& dataIn) noexcept
 {
     rb::menusio::HardwareProbe probe;
@@ -416,7 +419,6 @@ rb::menusio::HardwareProbe probeOf(const rb::esp::EspDataIn& dataIn) noexcept
 
 void logDataInDiag(rb::host::DataInChange change, const rb::host::DataInReadings& readings, int64_t now)
 {
-    static rb::menusio::TakeDiag take;
     static uint32_t expired = 0;
     static int64_t lastPeriodicUs = 0;
     if (g_cassetteDiag == nullptr) {
@@ -427,15 +429,14 @@ void logDataInDiag(rb::host::DataInChange change, const rb::host::DataInReadings
     const char* what = nullptr;
     switch (change) {
     case rb::host::DataInChange::TakeRequested:
-        take.requested(now, probeOf(dataIn));
-        return;
+        return;  // its baseline was taken before the arbiter step (stepWithTakeBaseline, review PR #124 H2)
     case rb::host::DataInChange::ToTape:
     case rb::host::DataInChange::TakeTimedOut: {
         const bool confirmed = change == rb::host::DataInChange::ToTape;
         if (!confirmed) {
             ++expired;
         }
-        const rb::menusio::TakeDiag::Result r = take.ended(now, probeOf(dataIn));
+        const rb::menusio::TakeDiag::Result r = g_takeDiag.ended(now, probeOf(dataIn));
         if (!confirmed && !(expired <= 10 || expired % 50 == 0)) {
             return;
         }
@@ -569,8 +570,16 @@ void sioTask(void*)
             readings.tapeOnC = g_tape->deck().loaded()[0] != '\0';
             readings.atariOff = g_atariOff;
             readings.tapeEnded = tapeEnded(g_progress);  // the cassette task's last publish
-            const rb::host::DataInChange change =
-                g_arbiter.step(rb::host::dataInInputs(readings), static_cast<uint64_t>(now));
+            // Diagnostics: the take's baseline BEFORE the step, which publishes the take (review PR #124, H2).
+            const rb::host::DataInChange change = rb::menusio::stepWithTakeBaseline(
+                g_takeDiag, now,
+                []() {
+                    return g_cassetteDiag != nullptr ? probeOf(g_cassetteDiag->dataIn()) : rb::menusio::HardwareProbe{};
+                },
+                [&readings, now]() {
+                    return g_arbiter.step(rb::host::dataInInputs(readings), static_cast<uint64_t>(now));
+                },
+                [](rb::host::DataInChange c) { return c == rb::host::DataInChange::TakeRequested; });
             if (change != rb::host::DataInChange::None) {
                 ESP_LOGW(kTag, "DATA IN: cambio %d, ahora %s", static_cast<int>(change),
                          rb::host::dataInOwnerName(g_arbiter.owner()));

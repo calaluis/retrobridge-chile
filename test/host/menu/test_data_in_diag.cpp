@@ -84,6 +84,38 @@ static void test_counters_that_wrap_give_small_deltas(void)
     TEST_ASSERT_EQUAL_INT(static_cast<int>(TakeVerdict::Busy), static_cast<int>(r.verdict));
 }
 
+// H2 (review PR #124, round 2): step() publishes the take to the cassette task BEFORE it returns
+// TakeRequested. A hardwareFree() call in that gap belongs to this take: the baseline is taken before
+// step(), never after. Here the fake step() makes one busy call while it "publishes" the take.
+static void test_a_check_made_while_the_take_is_published_counts_for_that_take(void)
+{
+    TakeDiag diag;
+    HardwareProbe live{4, 1, 0};
+    const auto probe = [&live]() { return live; };
+    const auto step = [&live]() {
+        live = HardwareProbe{live.calls + 1, live.refusals + 1, 0x40};  // the cassette checks, finds it busy
+        return 1;                                                         // 1 = TakeRequested
+    };
+    const int change = rb::menusio::stepWithTakeBaseline(diag, 1000, probe, step, [](int c) { return c == 1; });
+    TEST_ASSERT_EQUAL_INT(1, change);
+    const TakeDiag::Result r = diag.ended(21000, live);  // expires, no further check
+    TEST_ASSERT_TRUE(r.hasRequest);
+    TEST_ASSERT_EQUAL_UINT32(1, r.calls);
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(TakeVerdict::Busy), static_cast<int>(r.verdict));
+    TEST_ASSERT_EQUAL_INT64(20000, r.elapsedUs);
+}
+
+// Any other change takes no baseline: a pending take keeps its own.
+static void test_a_step_that_is_not_a_take_keeps_the_pending_baseline(void)
+{
+    TakeDiag diag;
+    diag.requested(0, HardwareProbe{2, 0, 0});
+    HardwareProbe live{3, 0, 0};
+    (void)rb::menusio::stepWithTakeBaseline(diag, 500, [&live]() { return live; }, []() { return 0; },
+                                            [](int c) { return c == 1; });
+    TEST_ASSERT_EQUAL_UINT32(1, diag.ended(1000, live).calls);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -94,5 +126,7 @@ int main()
     RUN_TEST(test_an_end_without_a_request_has_no_elapsed_time);
     RUN_TEST(test_each_end_consumes_its_request);
     RUN_TEST(test_counters_that_wrap_give_small_deltas);
+    RUN_TEST(test_a_check_made_while_the_take_is_published_counts_for_that_take);
+    RUN_TEST(test_a_step_that_is_not_a_take_keeps_the_pending_baseline);
     return UNITY_END();
 }

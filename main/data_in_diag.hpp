@@ -15,6 +15,9 @@ struct HardwareProbe {
     uint32_t refusals = 0;  // calls that returned false
     uint32_t lastBusy = 0;  // the busy bits of the last call (0: free)
 };
+// The three counters are separate atomics, not one snapshot: `calls` is read first (acquire), so
+// `refusals` and `lastBusy` are at least as new, and may already belong to a later call. The deltas
+// are exact; `lastBusy`, and so Busy against FreeNotConfirmed, is indicative only (review PR #124).
 
 enum class TakeVerdict {
     NotChecked,        // the cassette did not call hardwareFree() during the take
@@ -65,6 +68,22 @@ private:
     int64_t askedUs_ = 0;
     HardwareProbe start_{};
 };
+
+// One arbiter step with the take's baseline taken BEFORE the step (review PR #124, H2): step() publishes
+// the take to the cassette task before it returns, so a hardwareFree() call in that gap belongs to this
+// take. `probe()` reads the counters (never blocks), `step()` runs the arbiter, `isTake(change)` says
+// whether the change is TakeRequested. Returns the step's change, unchanged.
+template <typename Probe, typename Step, typename IsTake>
+auto stepWithTakeBaseline(TakeDiag& diag, int64_t nowUs, Probe&& probe, Step&& step, IsTake&& isTake)
+    -> decltype(step())
+{
+    const HardwareProbe before = probe();
+    const auto change = step();
+    if (isTake(change)) {
+        diag.requested(nowUs, before);
+    }
+    return change;
+}
 
 inline const char* takeVerdictName(TakeVerdict v) noexcept
 {

@@ -38,6 +38,9 @@ Fuera: H4, las puertas y los paquetes. Flashear y probar en el 65XE necesitan ap
 - [x] H1 — prueba: `test_data_in_diag` (7): sin consulta nueva, con bit ocupado, libre sin confirmar, toma
   confirmada sin pedido (N/D), contadores que dan la vuelta. 3 de 3 mutaciones caen. Contadores de 32 bits
   con un solo escritor; `check_atomic_calls` revisa `esp_data_in.cpp` y `cassette_service.cpp` en la CI.
+- [x] Ronda 2 — H2: la referencia se tomaba después de `g_arbiter.step()`, que ya publicó la toma; una
+  consulta en ese intervalo se perdía. Prueba: `stepWithTakeBaseline` (2 pruebas nuevas, 9 en total);
+  la mutación «referencia después del paso» cae. `lastBusy` queda como orientativo (tres atómicos sueltos).
 - [ ] CI del diagnóstico y paquete `menu-sio-cinta`.
 - [ ] Medición en el 65XE (con aprobación).
 - [ ] RED → GREEN de la causa y corrección.

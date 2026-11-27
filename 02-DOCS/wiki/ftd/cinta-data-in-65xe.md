@@ -19,13 +19,24 @@ Que `international_karate.cas` cargue en el 65XE con `menu-sio-cinta`. Primero, 
   UART; `rmt_new_tx_channel` no falló. No se trata como causa.
 - Logs fuera del repo: `D:\GitHub\Respaldos\FujiNet-RB-menu-sio-cinta-47e5f56\consola-*.log`.
 
+## Medición con el diagnóstico (2026-11-26, `e286c35`)
+
+- 282 tomas, todas vencidas a los 21-22 ms. En cada una: 1 consulta a `hardwareFree()`, 0 negativas,
+  bits `0x00`: la casetera vio la línea libre y confirmó en su tick (2 ms). MOTOR on, COMMAND alto.
+- Causa: con MOTOR encendido el 65XE solo escucha, no manda COMMAND. La tarea SIO espera entonces su
+  poll completo (`SioSession::kPollTimeoutUs` = 20 ms) y vuelve a mirar a ~21,5 ms. El árbitro mira el
+  plazo (`kTakeTimeoutUs` = 20 ms) antes que la confirmación: la descarta y la toma vence.
+- Logs fuera del repo, sin datos de red.
+
 ## Scope
 
 - Paso 1 (este commit): diagnóstico que solo registra. `EspDataIn::hardwareFree()` guarda qué condición
   estaba ocupada (bits) y cuántas veces dijo que no; `CassetteService` guarda el último tick; `menu_sio`
   registra cada toma (confirmada o vencida) con los deltas de esa toma, y cada 2 s mientras la línea
   no es del disco.
-- Paso 2: con la medición, prueba RED en el host y corrección.
+- Paso 2: con la medición, prueba RED en el host y corrección: `kTakeTimeoutUs` = 60 ms, y
+  `main/menu_sio.cpp` exige en compilación que cubra dos polls SIO completos (más 5 ms de trabajo cada uno).
+  La regla de §2.4 no cambia: una confirmación en el plazo o después se descarta.
 
 Fuera: H4, las puertas y los paquetes. Flashear y probar en el 65XE necesitan aprobación aparte.
 
@@ -41,10 +52,17 @@ Fuera: H4, las puertas y los paquetes. Flashear y probar en el 65XE necesitan ap
 - [x] Ronda 2 — H2: la referencia se tomaba después de `g_arbiter.step()`, que ya publicó la toma; una
   consulta en ese intervalo se perdía. Prueba: `stepWithTakeBaseline` (2 pruebas nuevas, 9 en total);
   la mutación «referencia después del paso» cae. `lastBusy` queda como orientativo (tres atómicos sueltos).
-- [ ] CI del diagnóstico y paquete `menu-sio-cinta`.
-- [ ] Medición en el 65XE (con aprobación).
-- [ ] RED → GREEN de la causa y corrección.
+- [x] CI del diagnóstico y paquete `menu-sio-cinta` — prueba: run 45918286814, 6/6; paquete `e286c35`
+  verificado (sha256 `ac8ea9b3…`).
+- [x] Medición en el 65XE (con aprobación) — prueba: consola de `e286c35`, sección «Medición».
+- [x] RED — prueba: `test_data_in_handover`, 2 pruebas nuevas fallan con 20 ms (toma confirmada a los
+  2 ms y paso SIO de 21,5 ms → `TakeTimedOut`; el plazo no cubre dos pasos SIO).
+- [x] GREEN — prueba: con 60 ms, `ctest` 109/109; `tools/tests` 341 OK; layering, notices, fsk OK.
+- [ ] CI de la corrección y paquete `menu-sio-cinta`.
+- [ ] Prueba en el 65XE: `international_karate.cas` carga (con aprobación).
+- [ ] Pendientes: la cinta que se detiene a mitad no suelta DATA IN; D8/.cas con AC3; limpiar `TakeDiag`
+  al cancelar una toma.
 
 ## Next
 
-CI del diagnóstico. Después, con aprobación, instalarlo y repetir el arranque de la cinta.
+CI de la corrección. Después, con aprobación, instalar el paquete y repetir el arranque de la cinta.

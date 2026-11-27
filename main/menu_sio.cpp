@@ -44,6 +44,7 @@
 #include "rb/menu/startup_flags.hpp"
 #include "rb/menu/storage_reason.hpp"
 #include "rb/sio/sio_line_transport.hpp"
+#include "rb/sio/sio_session.hpp"
 
 #include "esp_pthread.h"
 #include "esp_tape_deck.hpp"
@@ -55,6 +56,11 @@
 #include "wifi_station.hpp"
 
 namespace rb::menusio {
+
+// fix-cinta-data-in-65xe: a take confirmed in time must never expire while the SIO task waits a whole
+// idle poll (MOTOR on: the 65XE sends no COMMAND frame). Two idle polls, plus their work, fit in the deadline.
+static_assert(rb::host::DataInArbiter::kTakeTimeoutUs > 2u * (rb::sio::SioSession::kPollTimeoutUs + 5000u),
+              "the DATA IN take deadline must cover two idle SIO steps");
 
 namespace {
 

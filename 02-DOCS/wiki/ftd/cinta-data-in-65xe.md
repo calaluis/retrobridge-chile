@@ -34,6 +34,7 @@ Que `international_karate.cas` cargue en el 65XE con `menu-sio-cinta`. Primero, 
 ## Prueba física de la corrección (2026-11-26, `d1eb418`)
 
 - Pantalla del 65XE: «PROGRAMA CARGADO» con `INTERNATIONAL_KARATE.CAS` en `C:`, START+OPTION y RETURN.
+- El juego corre (confirmado por el responsable en el 65XE).
 - Consola: `cambio 1` → `cambio 2` (ToTape) a los 22 ms, vencidas 0. La cinta tuvo la línea de 22:43:52 a
   22:50:44 (~7 min, 106 arranques del canal RMT, uno cada ~3,7 s), MOTOR on, COMMAND alto.
 - Después: MOTOR off, COMMAND alto, dueño cinta. Según `givesBack()`, es una pausa: la línea vuelve al disco

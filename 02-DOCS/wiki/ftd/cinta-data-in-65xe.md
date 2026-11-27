@@ -14,7 +14,9 @@ Que `international_karate.cas` cargue en el 65XE con `menu-sio-cinta`. Primero, 
 - Menú en el 65XE: sí. `C: INTERNATIONAL_KARATE.CAS` montada. Arranque con START+OPTION: BOOT ERROR.
 - Consola: `cambio 1` (TakeRequested) → `cambio 4` (TakeTimedOut) → `cambio 6` (ToDisk), 369 veces en 47 s.
   La toma vence a los 20 ms (`kTakeTimeoutUs`). Después, una toma se confirmó y la cinta llegó al
-  segmento 36 de 213; con MOTOR apagado no soltó DATA IN, y el menú dijo «EL HOST NO RESPONDE».
+  segmento 36 de 213; con MOTOR apagado la línea siguió en la cinta, y el menú dijo «EL HOST NO
+  RESPONDE». MOTOR apagado solo pausa y conserva la cinta (`givesBack()`: hace falta además COMMAND bajo
+  o fin de cinta); no está demostrado que sea un defecto.
 - `rmt: GPIO 21 is not usable, maybe conflict with others`: aviso de ESP-IDF por el pin ya reservado por la
   UART; `rmt_new_tx_channel` no falló. No se trata como causa.
 - Logs fuera del repo: `D:\GitHub\Respaldos\FujiNet-RB-menu-sio-cinta-47e5f56\consola-*.log`.
@@ -22,7 +24,8 @@ Que `international_karate.cas` cargue en el 65XE con `menu-sio-cinta`. Primero, 
 ## Medición con el diagnóstico (2026-11-26, `e286c35`)
 
 - 282 tomas, todas vencidas a los 21-22 ms. En cada una: 1 consulta a `hardwareFree()`, 0 negativas,
-  bits `0x00`: la casetera vio la línea libre y confirmó en su tick (2 ms). MOTOR on, COMMAND alto.
+  bits `0x00`: la casetera vio la línea libre. Según el código (`CassetteTick::answer()`), con la línea
+  libre confirma en ese mismo tick; el instante del ACK no se registró. MOTOR on, COMMAND alto.
 - Causa: con MOTOR encendido el 65XE solo escucha, no manda COMMAND. La tarea SIO espera entonces su
   poll completo (`SioSession::kPollTimeoutUs` = 20 ms) y vuelve a mirar a ~21,5 ms. El árbitro mira el
   plazo (`kTakeTimeoutUs` = 20 ms) antes que la confirmación: la descarta y la toma vence.
@@ -60,8 +63,11 @@ Fuera: H4, las puertas y los paquetes. Flashear y probar en el 65XE necesitan ap
 - [x] GREEN — prueba: con 60 ms, `ctest` 109/109; `tools/tests` 341 OK; layering, notices, fsk OK.
 - [ ] CI de la corrección y paquete `menu-sio-cinta`.
 - [ ] Prueba en el 65XE: `international_karate.cas` carga (con aprobación).
-- [ ] Pendientes: la cinta que se detiene a mitad no suelta DATA IN; D8/.cas con AC3; limpiar `TakeDiag`
-  al cancelar una toma.
+- [x] Revisión independiente, ronda 4 (`d1eb418`): sin bloqueante en el delta; no es prueba de carga.
+- [ ] Incidente «EL HOST NO RESPONDE» tras el segmento 36: contrastar con la especificación las
+  transiciones reales (COMMAND, `tapeEnded`, dueño del árbitro, Release) con los registros `DATA IN diag:`
+  cada 2 s de la próxima prueba. El plazo de 60 ms no lo corrige por sí solo.
+- [ ] Pendientes: D8/.cas con AC3; limpiar `TakeDiag` al cancelar una toma.
 
 ## Next
 

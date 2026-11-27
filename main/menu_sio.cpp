@@ -170,6 +170,7 @@ constexpr int64_t kPowerSampleUs = 50000;  // plan §4: the SIO task samples the
 // (review of PR #85): with the plan seen the deck is seen too, gives the deck to the controller between
 // two frames and only then applies the plan, so the restore of C: always has it; and pumps it every step.
 const rb::board::BoardProfile* g_board = nullptr;  // start(): the gates come from it
+const rb::esp::CassetteService* g_cassetteDiag = nullptr;  // diagnostics only (fix-cinta-data-in-65xe)
 EspTapeDeck* g_tape = nullptr;                     // finish() creates it; then the SIO task only
 bool g_tapeApplied = false;                        // SIO task only
 rb::host::StartupFlags g_startup;                  // finish(): publishTape(), then publishPlan()
@@ -398,6 +399,63 @@ void driveSaveTask(void*)
     }
 }
 
+// Diagnostics (fix-cinta-data-in-65xe, 65XE test of 2026-11-26): why the tape's take of DATA IN expires.
+// Logs only; it changes no decision. A take: how long until it is confirmed or expires, what
+// hardwareFree() last found busy, and how old the cassette loop's last tick is. While DATA IN is not the
+// disk's, the same every 2 s. Expired takes: the first 10, then every 50th.
+void logDataInDiag(rb::host::DataInChange change, const rb::host::DataInReadings& readings, int64_t now)
+{
+    static int64_t takeAskedUs = 0;
+    static uint32_t expired = 0;
+    static int64_t lastPeriodicUs = 0;
+    if (g_cassetteDiag == nullptr) {
+        return;
+    }
+    const rb::esp::EspDataIn& dataIn = g_cassetteDiag->dataIn();
+    const uint32_t tickAgeUs = static_cast<uint32_t>(now) - g_cassetteDiag->lastTickUs();  // modulo 2^32
+    bool emit = false;
+    const char* what = "";
+    switch (change) {
+    case rb::host::DataInChange::TakeRequested:
+        takeAskedUs = now;
+        return;
+    case rb::host::DataInChange::ToTape:
+        what = "toma confirmada";
+        emit = true;
+        break;
+    case rb::host::DataInChange::TakeTimedOut:
+        ++expired;
+        what = "toma vencida";
+        emit = expired <= 10 || expired % 50 == 0;
+        break;
+    case rb::host::DataInChange::ToDisk:
+        what = "disco de vuelta";
+        emit = expired <= 10 || expired % 50 == 0;
+        break;
+    case rb::host::DataInChange::None:
+        if (g_arbiter.owner() != rb::host::DataInOwner::Disk && now - lastPeriodicUs >= 2000000) {
+            what = "linea fuera del disco";
+            emit = true;
+        }
+        break;
+    default:
+        what = "cambio";
+        emit = true;
+        break;
+    }
+    if (!emit) {
+        return;
+    }
+    lastPeriodicUs = now;
+    ESP_LOGW(kTag,
+             "DATA IN diag: %s, duenio %s, %lld ms desde la toma, vencidas %lu; ocupado 0x%02x (negativas %lu); "
+             "tick de la casetera hace %lld us; MOTOR %s, COMMAND %s",
+             what, rb::host::dataInOwnerName(g_arbiter.owner()), msOf(now - takeAskedUs),
+             static_cast<unsigned long>(expired), static_cast<unsigned>(dataIn.lastBusy()),
+             static_cast<unsigned long>(dataIn.busyRefusals()), static_cast<long long>(tickAgeUs),
+             readings.motorOn ? "on" : "off", readings.commandHigh ? "alto" : "bajo");
+}
+
 void sioTask(void*)
 {
     bool wasMenu = true;
@@ -492,6 +550,7 @@ void sioTask(void*)
                 ESP_LOGW(kTag, "DATA IN: cambio %d, ahora %s", static_cast<int>(change),
                          rb::host::dataInOwnerName(g_arbiter.owner()));
             }
+            logDataInDiag(change, readings, now);
         }
         if (poweredOnUs != 0 && framesSoFar() != framesAtPowerOn) {
             ESP_LOGI(kTag, "first COMMAND frame after power-on at %lld ms (%lld ms after +5V)", msOf(now),
@@ -807,6 +866,7 @@ static void startCassette(bool sdMounted, rb::esp::CassetteService& cassette, rb
         ESP_LOGW(kTag, "cas: MOTOR %s, DATA IN %s: la cinta no se ofrece", cassette.motorEnabled() ? "listo" : "sin configurar",
                  cassette.outputEnabled() ? "listo" : "sin configurar");
     }
+    g_cassetteDiag = &cassette;
     g_tape = createOnce<EspTapeDeck>(cassette, gatesOpen);
     if (g_tape == nullptr) {
         ESP_LOGE(kTag, "cas: sin memoria para el deck; C: dice CASETERA NO DISPONIBLE");

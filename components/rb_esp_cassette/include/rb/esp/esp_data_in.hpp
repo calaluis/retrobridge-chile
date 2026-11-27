@@ -118,6 +118,13 @@ public:
     // The UART could not take DATA IN back: the pin is reset (no output) and everything is refused.
     bool faulted() const noexcept { return faulted_; }
     uint32_t pinFaults() const noexcept { return pinFaults_; }  // times the UART refused the pin
+
+    // Diagnostics (fix-cinta-data-in-65xe): what the last hardwareFree() found busy, as bits
+    // (kBusy*), and how many times it said no. Written by the cassette task, read by any task.
+    static constexpr uint8_t kBusyDisabled = 1, kBusyFaulted = 2, kBusyChannel = 4, kBusyReleasePending = 8,
+                             kBusySending = 16, kBusyFeed = 32, kBusyTx = 64;
+    uint8_t lastBusy() const noexcept { return lastBusy_.load(std::memory_order_relaxed); }
+    uint32_t busyRefusals() const noexcept { return busyRefusals_.load(std::memory_order_relaxed); }
     // Explicit recovery: gives the pin back to the UART. True when not (or no longer) faulted. Shared mode:
     // true only once the GPIO matrix reads UART2 TX with the output on; otherwise the pin is reset again.
     bool recover() noexcept;
@@ -173,6 +180,8 @@ private:
     bool discardFeed_ = false;   // a cancelled or dropped run: clear the feed once the RMT is disabled
     CallTrace trace_ = nullptr;
     uint32_t lastSize_ = 0;     // feed size at the previous pump()
+    mutable std::atomic<uint8_t> lastBusy_{0};        // diagnostics only: see lastBusy()
+    mutable std::atomic<uint32_t> busyRefusals_{0};
     uint8_t dummy_ = 0;         // rmt_transmit() wants a payload; the encoder reads the feed
     uint32_t slots_[kFeedPortions] = {};
     rb::cassette::FskSymbolFeed feed_;

@@ -147,8 +147,22 @@ bool EspDataIn::sharedRoom(std::size_t bytes) const noexcept
 
 bool EspDataIn::hardwareFree() const noexcept
 {
-    return enabled() && !faulted_ && channel_ == nullptr && !releasePending_ && !sending_ && feed_.empty() &&
-           txEmpty();
+    // Same conditions and order as before; txEmpty() is still asked only when all the others hold.
+    uint8_t busy = 0;
+    busy |= enabled() ? 0 : kBusyDisabled;
+    busy |= faulted_ ? kBusyFaulted : 0;
+    busy |= channel_ != nullptr ? kBusyChannel : 0;
+    busy |= releasePending_ ? kBusyReleasePending : 0;
+    busy |= sending_ ? kBusySending : 0;
+    busy |= feed_.empty() ? 0 : kBusyFeed;
+    if (busy == 0 && !txEmpty()) {
+        busy = kBusyTx;
+    }
+    lastBusy_.store(busy, std::memory_order_relaxed);
+    if (busy != 0) {
+        busyRefusals_.fetch_add(1, std::memory_order_relaxed);
+    }
+    return busy == 0;
 }
 
 EspDataIn::GiveBack EspDataIn::giveBack() noexcept

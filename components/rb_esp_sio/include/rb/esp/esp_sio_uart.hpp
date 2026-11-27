@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -33,15 +34,17 @@ public:
     static constexpr int kSharedTxRing = 2048;
     static constexpr uint32_t kTxDoneMarginMs = 20;
 
-    // Issue #125 (PR #124): why write() failed, for the console. Read from the SIO task only.
+    // Issue #125 (PR #124): why write() failed, for the console. Written by the SIO task only, read by
+    // the console task: lock-free atomics, each field read on its own (review of PR #124, H1).
     struct WriteFailures {
-        uint32_t notReady = 0;     // not installed, or parked for the cassette
-        uint32_t shortWrite = 0;   // uart_write_bytes() took fewer bytes
-        uint32_t txNotDone = 0;    // the bytes were not out within the line time + kTxDoneMarginMs
-        uint32_t lastBytes = 0;    // the size of the last failed write
-        uint32_t lastWaitMs = 0;   // how long the last txNotDone waited
-        uint32_t maxWriteMs = 0;   // the longest write(), failed or not
+        std::atomic<uint32_t> notReady{0};    // not installed, or parked for the cassette
+        std::atomic<uint32_t> shortWrite{0};  // uart_write_bytes() took fewer bytes
+        std::atomic<uint32_t> txNotDone{0};   // the bytes were not out within the line time + kTxDoneMarginMs
+        std::atomic<uint32_t> lastBytes{0};   // the size of the last failed write
+        std::atomic<uint32_t> lastWaitMs{0};  // how long the last shortWrite or txNotDone write() took
+        std::atomic<uint32_t> maxWriteMs{0};  // the longest write(), failed or not; not a command's latency
     };
+    static_assert(std::atomic<uint32_t>::is_always_lock_free, "the console reads these without a lock");
     const WriteFailures& writeFailures() const noexcept { return failures_; }
 
     explicit EspSioUart(Pins pins, int txRing = kUartTxBuffer) noexcept : pins_(pins), txRing_(txRing) {}

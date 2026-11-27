@@ -540,6 +540,18 @@ void test_a_menu_frame_with_a_bad_checksum_is_counted_and_not_answered()
     TEST_ASSERT_EQUAL_UINT(0, rig.transport.stats().menuCommands);
 }
 
+// Review of PR #124 (H2): an ACK that cannot be sent is counted apart from a reply block.
+void test_an_ack_that_cannot_be_sent_is_counted_and_nothing_follows()
+{
+    DecoratorRig rig;
+    rig.inner.fail_send(0);  // the ACK
+    rig.inner.push_frame(frame(0x5A, 0x4B, K1));
+    TEST_ASSERT_FALSE(rig.transport.waitCommandFrame(20000).ok());
+    TEST_ASSERT_EQUAL_UINT(1, rig.transport.stats().menuAckFailures);
+    TEST_ASSERT_EQUAL_UINT(0, rig.transport.stats().menuSendFailures);
+    TEST_ASSERT_EQUAL_UINT(0, rig.inner.sends());  // the ACK failed (not recorded): no reply follows
+}
+
 void test_a_reply_block_that_cannot_be_sent_is_counted()
 {
     DecoratorRig rig;
@@ -547,6 +559,7 @@ void test_a_reply_block_that_cannot_be_sent_is_counted()
     rig.inner.push_frame(frame(0x5A, 0x4B, K1));
     TEST_ASSERT_FALSE(rig.transport.waitCommandFrame(20000).ok());
     TEST_ASSERT_EQUAL_UINT(1, rig.transport.stats().menuSendFailures);
+    TEST_ASSERT_EQUAL_UINT(0, rig.transport.stats().menuAckFailures);
     TEST_ASSERT_EQUAL_UINT(2, rig.inner.sends());  // nothing after the failed block
 }
 
@@ -765,6 +778,7 @@ int main()
     RUN_TEST(test_shift_and_control_do_not_change_a_key);
     RUN_TEST(test_key_command_gets_ack_then_the_screen_in_blocks_with_checksum);
     RUN_TEST(test_a_menu_frame_with_a_bad_checksum_is_counted_and_not_answered);
+    RUN_TEST(test_an_ack_that_cannot_be_sent_is_counted_and_nothing_follows);
     RUN_TEST(test_a_reply_block_that_cannot_be_sent_is_counted);
     RUN_TEST(test_the_reply_time_covers_the_whole_screen);
     RUN_TEST(test_a_key_repeated_by_siov_is_answered_again_but_applied_once);

@@ -579,20 +579,28 @@ void sioTask(void*)
         {
             // Issue #125: what the Atari sees as "EL HOST NO RESPONDE", said when it happens.
             static uint32_t sendFailuresSeen = 0;
+            static uint32_t ackFailuresSeen = 0;
             static uint32_t badChecksumsSeen = 0;
             const rb::host::MenuTransportStats& m = g_station->stats();
-            if (m.menuSendFailures != sendFailuresSeen || m.menuBadChecksums != badChecksumsSeen) {
+            const uint32_t sendFailures = m.menuSendFailures.load(std::memory_order_relaxed);
+            const uint32_t ackFailures = m.menuAckFailures.load(std::memory_order_relaxed);
+            const uint32_t badChecksums = m.menuBadChecksums.load(std::memory_order_relaxed);
+            // Review of PR #124 (H2): a failed ACK is said too, not only a failed reply block.
+            if (sendFailures != sendFailuresSeen || ackFailures != ackFailuresSeen ||
+                badChecksums != badChecksumsSeen) {
                 const rb::esp::EspSioUart::WriteFailures& w = g_line->writeFailures();
                 ESP_LOGW(kTag,
-                         "SIO diag: menu envio_fallido %u checksum_malo %u; uart no_lista %u corta %u "
+                         "SIO diag: menu ack_fallido %u envio_fallido %u checksum_malo %u; uart no_lista %u corta %u "
                          "sin_terminar %u (ultima %u B, %u ms); respuesta %u ms; err_rx %u",
-                         static_cast<unsigned>(m.menuSendFailures), static_cast<unsigned>(m.menuBadChecksums),
+                         static_cast<unsigned>(ackFailures), static_cast<unsigned>(sendFailures),
+                         static_cast<unsigned>(badChecksums),
                          static_cast<unsigned>(w.notReady), static_cast<unsigned>(w.shortWrite),
                          static_cast<unsigned>(w.txNotDone), static_cast<unsigned>(w.lastBytes),
                          static_cast<unsigned>(w.lastWaitMs), static_cast<unsigned>(m.lastReplyUs / 1000),
                          static_cast<unsigned>(g_transport->stats().receiveErrors));
-                sendFailuresSeen = m.menuSendFailures;
-                badChecksumsSeen = m.menuBadChecksums;
+                sendFailuresSeen = sendFailures;
+                ackFailuresSeen = ackFailures;
+                badChecksumsSeen = badChecksums;
             }
         }
         {
@@ -634,10 +642,12 @@ void sioTask(void*)
                              g_loopDiag.slowest(rb::menusio::LoopPhase::Pump) / 1000,
                              g_loopDiag.slowest(rb::menusio::LoopPhase::DataIn) / 1000);
                     ESP_LOGI(kTag,
-                             "SIO diag resumen menu: ordenes %u reintentos %u envio_fallido %u checksum_malo %u "
+                             "SIO diag resumen menu: ordenes %u reintentos %u ack_fallido %u envio_fallido %u "
+                             "checksum_malo %u "
                              "respuesta maxima %u ms; linea err_rx %u err_tx %u cortas %u",
                              static_cast<unsigned>(g_station->stats().menuCommands),
                              static_cast<unsigned>(g_station->stats().menuRetries),
+                             static_cast<unsigned>(g_station->stats().menuAckFailures),
                              static_cast<unsigned>(g_station->stats().menuSendFailures),
                              static_cast<unsigned>(g_station->stats().menuBadChecksums),
                              static_cast<unsigned>(g_station->stats().maxReplyUs / 1000),
@@ -819,8 +829,9 @@ int sioCommand(int argc, char** argv)
                 static_cast<unsigned long>(m.menuNaks), static_cast<unsigned long>(m.droppedAfterReset));
     // Issue #125 (PR #124): the ends of a menu command the Atari sees as "EL HOST NO RESPONDE".
     const rb::esp::EspSioUart::WriteFailures& w = g_line->writeFailures();
-    std::printf("menu: checksum_malo %lu envio_fallido %lu respuesta ultima %lu ms, maxima %lu ms\n",
-                static_cast<unsigned long>(m.menuBadChecksums), static_cast<unsigned long>(m.menuSendFailures),
+    std::printf("menu: checksum_malo %lu ack_fallido %lu envio_fallido %lu respuesta ultima %lu ms, maxima %lu ms\n",
+                static_cast<unsigned long>(m.menuBadChecksums), static_cast<unsigned long>(m.menuAckFailures),
+                static_cast<unsigned long>(m.menuSendFailures),
                 static_cast<unsigned long>(m.lastReplyUs / 1000), static_cast<unsigned long>(m.maxReplyUs / 1000));
     std::printf("uart tx: no_lista %lu escritura_corta %lu sin_terminar %lu (ultima %lu B, %lu ms) "
                 "escritura_maxima %lu ms\n",

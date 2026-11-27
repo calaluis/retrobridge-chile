@@ -9,6 +9,14 @@ namespace rb::host {
 
 using rb::app::CommandBytes;
 using rb::core::ErrorCode;
+
+namespace {
+// The SIO task is the only writer (review of PR #124, H1): a relaxed load and store, never a lock.
+void bump(std::atomic<uint32_t>& counter) noexcept
+{
+    counter.store(counter.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+}
+}  // namespace
 using rb::core::Failure;
 using rb::core::Result;
 using rb::core::Span;
@@ -122,7 +130,7 @@ void MenuSioTransport::serveMenu(const CommandBytes& command)
 {
     const Span<const uint8_t> body{command.bytes.data(), 4};
     if (rb::sio::sio_checksum(body) != command.bytes[4]) {
-        ++stats_.menuBadChecksums;
+        bump(stats_.menuBadChecksums);
         inner_.releaseDataLine();
         return;
     }
@@ -140,6 +148,7 @@ void MenuSioTransport::serveMenu(const CommandBytes& command)
     ++stats_.menuCommands;
     const uint8_t ack = rb::sio::code::kAck;
     if (!inner_.send(Span<const uint8_t>{&ack, 1}).ok()) {
+        bump(stats_.menuAckFailures);  // review of PR #124 (H2): counted apart from a reply block
         inner_.releaseDataLine();  // without an ACK the Atari retries; nothing was selected
         return;
     }
@@ -172,14 +181,15 @@ void MenuSioTransport::serveMenu(const CommandBytes& command)
         const std::size_t left = response_.size() - sent;
         const std::size_t length = left < kSendBlock ? left : kSendBlock;
         if (!inner_.send(Span<const uint8_t>{response_.data() + sent, length}).ok()) {
-            ++stats_.menuSendFailures;
+            bump(stats_.menuSendFailures);
             break;  // the Atari's SIOV times out and shows that the host does not answer
         }
     }
     const uint64_t replyUs = clock_.nowMicros() - ackEnd;
-    stats_.lastReplyUs = replyUs > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(replyUs);
-    if (stats_.lastReplyUs > stats_.maxReplyUs) {
-        stats_.maxReplyUs = stats_.lastReplyUs;
+    const uint32_t reply = replyUs > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(replyUs);
+    stats_.lastReplyUs.store(reply, std::memory_order_relaxed);
+    if (reply > stats_.maxReplyUs.load(std::memory_order_relaxed)) {
+        stats_.maxReplyUs.store(reply, std::memory_order_relaxed);
     }
     inner_.releaseDataLine();
 }

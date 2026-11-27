@@ -11,6 +11,12 @@
 namespace rb::esp {
 
 namespace {
+// The SIO task is the only writer of the failure counters (review of PR #124, H1): load and store.
+void bump(std::atomic<uint32_t>& counter) noexcept
+{
+    counter.store(counter.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+}
+
 
 constexpr const char* kTag = "rb_sio_line";
 constexpr uart_port_t kUart = UART_NUM_2;
@@ -147,8 +153,8 @@ rb::core::Result<std::size_t> EspSioUart::read(rb::core::Span<uint8_t> out, uint
 rb::core::Result<void> EspSioUart::write(rb::core::Span<const uint8_t> bytes)
 {
     if (!ready_ || parked_) {  // parked: never transmit over the tape
-        ++failures_.notReady;
-        failures_.lastBytes = static_cast<uint32_t>(bytes.size());
+        bump(failures_.notReady);
+        failures_.lastBytes.store(static_cast<uint32_t>(bytes.size()), std::memory_order_relaxed);
         return rb::core::Failure{rb::core::ErrorCode::TransportError};
     }
     const int64_t start = esp_timer_get_time();
@@ -157,13 +163,13 @@ rb::core::Result<void> EspSioUart::write(rb::core::Span<const uint8_t> bytes)
     const bool written = n == static_cast<int>(bytes.size());
     const bool done = written && uart_wait_tx_done(kUart, pdMS_TO_TICKS(lineMs + kTxDoneMarginMs)) == ESP_OK;
     const uint32_t tookMs = static_cast<uint32_t>((esp_timer_get_time() - start) / 1000);
-    if (tookMs > failures_.maxWriteMs) {
-        failures_.maxWriteMs = tookMs;
+    if (tookMs > failures_.maxWriteMs.load(std::memory_order_relaxed)) {
+        failures_.maxWriteMs.store(tookMs, std::memory_order_relaxed);
     }
     if (!written || !done) {
-        ++(written ? failures_.txNotDone : failures_.shortWrite);
-        failures_.lastBytes = static_cast<uint32_t>(bytes.size());
-        failures_.lastWaitMs = tookMs;
+        bump(written ? failures_.txNotDone : failures_.shortWrite);
+        failures_.lastBytes.store(static_cast<uint32_t>(bytes.size()), std::memory_order_relaxed);
+        failures_.lastWaitMs.store(tookMs, std::memory_order_relaxed);
         return rb::core::Failure{rb::core::ErrorCode::TransportError};
     }
     return {};

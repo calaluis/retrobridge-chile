@@ -18,6 +18,7 @@
 // and reported once to the SioWriteObserver, if any (menu-escritura-disco).
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -34,12 +35,16 @@ struct MenuTransportStats {
     uint32_t droppedAfterReset = 0;
     uint32_t menuRetries = 0;  // a key repeated by SIOV, answered with the same reply
     uint32_t textCommands = 0;  // 'T': characters of an edited server (menu-editar-servidor)
-    // Issue #125 (PR #124): the two ends of a menu command the Atari sees as "EL HOST NO RESPONDE".
-    uint32_t menuBadChecksums = 0;  // a menu frame with a bad checksum: dropped, the Atari retries
-    uint32_t menuSendFailures = 0;  // a block of the reply not sent: the rest of the reply is not sent
-    uint32_t lastReplyUs = 0;       // end of the ACK to the last byte of the reply
-    uint32_t maxReplyUs = 0;
+    // Issue #125 (PR #124): the ends of a menu command the Atari sees as "EL HOST NO RESPONDE". Written
+    // by the SIO task only, read by the console (`sio status`): lock-free atomics (review of PR #124, H1).
+    // Each field is read on its own; a reading is not one snapshot of all of them.
+    std::atomic<uint32_t> menuBadChecksums{0};  // a menu frame with a bad checksum: dropped, the Atari retries
+    std::atomic<uint32_t> menuAckFailures{0};   // the ACK not sent: nothing selected, the Atari retries
+    std::atomic<uint32_t> menuSendFailures{0};  // a block of the reply not sent: the rest is not sent
+    std::atomic<uint32_t> lastReplyUs{0};       // end of the ACK to the last byte of the reply
+    std::atomic<uint32_t> maxReplyUs{0};
 };
+static_assert(std::atomic<uint32_t>::is_always_lock_free, "the console reads these without a lock");
 
 class MenuSioTransport final : public rb::app::SioTransport {
 public:

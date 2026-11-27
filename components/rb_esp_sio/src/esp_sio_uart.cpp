@@ -147,12 +147,23 @@ rb::core::Result<std::size_t> EspSioUart::read(rb::core::Span<uint8_t> out, uint
 rb::core::Result<void> EspSioUart::write(rb::core::Span<const uint8_t> bytes)
 {
     if (!ready_ || parked_) {  // parked: never transmit over the tape
+        ++failures_.notReady;
+        failures_.lastBytes = static_cast<uint32_t>(bytes.size());
         return rb::core::Failure{rb::core::ErrorCode::TransportError};
     }
+    const int64_t start = esp_timer_get_time();
     const int n = uart_write_bytes(kUart, bytes.data(), bytes.size());
     const uint32_t lineMs = (rb::sio::SioLineTransport::byteTimeUs(bytes.size()) + 999u) / 1000u;
-    if (n != static_cast<int>(bytes.size()) ||
-        uart_wait_tx_done(kUart, pdMS_TO_TICKS(lineMs + kTxDoneMarginMs)) != ESP_OK) {
+    const bool written = n == static_cast<int>(bytes.size());
+    const bool done = written && uart_wait_tx_done(kUart, pdMS_TO_TICKS(lineMs + kTxDoneMarginMs)) == ESP_OK;
+    const uint32_t tookMs = static_cast<uint32_t>((esp_timer_get_time() - start) / 1000);
+    if (tookMs > failures_.maxWriteMs) {
+        failures_.maxWriteMs = tookMs;
+    }
+    if (!written || !done) {
+        ++(written ? failures_.txNotDone : failures_.shortWrite);
+        failures_.lastBytes = static_cast<uint32_t>(bytes.size());
+        failures_.lastWaitMs = tookMs;
         return rb::core::Failure{rb::core::ErrorCode::TransportError};
     }
     return {};

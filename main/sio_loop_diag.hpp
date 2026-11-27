@@ -33,6 +33,9 @@ class SioLoopDiag {
 public:
     static constexpr int64_t kSlowUs = 50000;  // the Atari retries a command for a few hundred ms
     static constexpr uint32_t kMaxLines = 64;  // reports per power-on; the counts go on
+    // A step carries a whole menu reply (964 bytes at 19200 baud, about 502 ms): only above this it is
+    // slow (issue #125: the 337-553 ms steps on the 65XE were replies, not faults).
+    static constexpr int64_t kSlowStepUs = 700000;
 
     // A new power-on of the 65XE: the counts and the line budget start again.
     void poweredOn() noexcept
@@ -76,7 +79,8 @@ public:
         if (elapsedUs > slowest) {
             slowest = elapsedUs;
         }
-        if (elapsedUs > kSlowUs && take()) {
+        const int64_t limit = phase == LoopPhase::Step ? kSlowStepUs : kSlowUs;
+        if (elapsedUs > limit && take()) {
             ++slowLines_;
             return true;
         }

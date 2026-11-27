@@ -577,6 +577,25 @@ void sioTask(void*)
         const rb::sio::StepOutcome stepped = g_station->step();
         notePhase(rb::menusio::LoopPhase::Step, phaseStart);
         {
+            // Issue #125: what the Atari sees as "EL HOST NO RESPONDE", said when it happens.
+            static uint32_t sendFailuresSeen = 0;
+            static uint32_t badChecksumsSeen = 0;
+            const rb::host::MenuTransportStats& m = g_station->stats();
+            if (m.menuSendFailures != sendFailuresSeen || m.menuBadChecksums != badChecksumsSeen) {
+                const rb::esp::EspSioUart::WriteFailures& w = g_line->writeFailures();
+                ESP_LOGW(kTag,
+                         "SIO diag: menu envio_fallido %u checksum_malo %u; uart no_lista %u corta %u "
+                         "sin_terminar %u (ultima %u B, %u ms); respuesta %u ms; err_rx %u",
+                         static_cast<unsigned>(m.menuSendFailures), static_cast<unsigned>(m.menuBadChecksums),
+                         static_cast<unsigned>(w.notReady), static_cast<unsigned>(w.shortWrite),
+                         static_cast<unsigned>(w.txNotDone), static_cast<unsigned>(w.lastBytes),
+                         static_cast<unsigned>(w.lastWaitMs), static_cast<unsigned>(m.lastReplyUs / 1000),
+                         static_cast<unsigned>(g_transport->stats().receiveErrors));
+                sendFailuresSeen = m.menuSendFailures;
+                badChecksumsSeen = m.menuBadChecksums;
+            }
+        }
+        {
             // The 65XE is on once it has sent a frame and no power-off was seen since.
             const rb::menusio::StepKind kind = stepKindOf(stepped);
             if (g_loopDiag.noteStep(kind, !g_atariOff && framesSoFar() > 0)) {
@@ -614,6 +633,17 @@ void sioTask(void*)
                              g_loopDiag.slowest(rb::menusio::LoopPhase::Step) / 1000,
                              g_loopDiag.slowest(rb::menusio::LoopPhase::Pump) / 1000,
                              g_loopDiag.slowest(rb::menusio::LoopPhase::DataIn) / 1000);
+                    ESP_LOGI(kTag,
+                             "SIO diag resumen menu: ordenes %u reintentos %u envio_fallido %u checksum_malo %u "
+                             "respuesta maxima %u ms; linea err_rx %u err_tx %u cortas %u",
+                             static_cast<unsigned>(g_station->stats().menuCommands),
+                             static_cast<unsigned>(g_station->stats().menuRetries),
+                             static_cast<unsigned>(g_station->stats().menuSendFailures),
+                             static_cast<unsigned>(g_station->stats().menuBadChecksums),
+                             static_cast<unsigned>(g_station->stats().maxReplyUs / 1000),
+                             static_cast<unsigned>(g_transport->stats().receiveErrors),
+                             static_cast<unsigned>(g_transport->stats().sendErrors),
+                             static_cast<unsigned>(g_transport->stats().shortFrames));
                     g_loopDiag.poweredOn();  // the same totals are not reported twice
                     g_station->returnToMenu();  // ready before the next power-on reads D1; drives kept
                     poweredOnUs = 0;
@@ -787,6 +817,16 @@ int sioCommand(int argc, char** argv)
     std::printf("menu: ordenes %lu reintentos %lu nak %lu descartadas_tras_vuelta %lu\n",
                 static_cast<unsigned long>(m.menuCommands), static_cast<unsigned long>(m.menuRetries),
                 static_cast<unsigned long>(m.menuNaks), static_cast<unsigned long>(m.droppedAfterReset));
+    // Issue #125 (PR #124): the ends of a menu command the Atari sees as "EL HOST NO RESPONDE".
+    const rb::esp::EspSioUart::WriteFailures& w = g_line->writeFailures();
+    std::printf("menu: checksum_malo %lu envio_fallido %lu respuesta ultima %lu ms, maxima %lu ms\n",
+                static_cast<unsigned long>(m.menuBadChecksums), static_cast<unsigned long>(m.menuSendFailures),
+                static_cast<unsigned long>(m.lastReplyUs / 1000), static_cast<unsigned long>(m.maxReplyUs / 1000));
+    std::printf("uart tx: no_lista %lu escritura_corta %lu sin_terminar %lu (ultima %lu B, %lu ms) "
+                "escritura_maxima %lu ms\n",
+                static_cast<unsigned long>(w.notReady), static_cast<unsigned long>(w.shortWrite),
+                static_cast<unsigned long>(w.txNotDone), static_cast<unsigned long>(w.lastBytes),
+                static_cast<unsigned long>(w.lastWaitMs), static_cast<unsigned long>(w.maxWriteMs));
     int pinMv = 0;
     int sioMv = 0;
     if (readSio5v(pinMv, sioMv)) {

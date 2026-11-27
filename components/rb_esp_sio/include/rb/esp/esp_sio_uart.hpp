@@ -33,6 +33,17 @@ public:
     static constexpr int kSharedTxRing = 2048;
     static constexpr uint32_t kTxDoneMarginMs = 20;
 
+    // Issue #125 (PR #124): why write() failed, for the console. Read from the SIO task only.
+    struct WriteFailures {
+        uint32_t notReady = 0;     // not installed, or parked for the cassette
+        uint32_t shortWrite = 0;   // uart_write_bytes() took fewer bytes
+        uint32_t txNotDone = 0;    // the bytes were not out within the line time + kTxDoneMarginMs
+        uint32_t lastBytes = 0;    // the size of the last failed write
+        uint32_t lastWaitMs = 0;   // how long the last txNotDone waited
+        uint32_t maxWriteMs = 0;   // the longest write(), failed or not
+    };
+    const WriteFailures& writeFailures() const noexcept { return failures_; }
+
     explicit EspSioUart(Pins pins, int txRing = kUartTxBuffer) noexcept : pins_(pins), txRing_(txRing) {}
     EspSioUart(const EspSioUart&) = delete;
     EspSioUart& operator=(const EspSioUart&) = delete;
@@ -67,6 +78,7 @@ private:
     int txRing_;
     bool ready_ = false;
     bool parked_ = false;
+    WriteFailures failures_{};
 };
 
 }  // namespace rb::esp

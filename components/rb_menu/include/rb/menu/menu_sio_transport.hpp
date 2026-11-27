@@ -34,6 +34,11 @@ struct MenuTransportStats {
     uint32_t droppedAfterReset = 0;
     uint32_t menuRetries = 0;  // a key repeated by SIOV, answered with the same reply
     uint32_t textCommands = 0;  // 'T': characters of an edited server (menu-editar-servidor)
+    // Issue #125 (PR #124): the two ends of a menu command the Atari sees as "EL HOST NO RESPONDE".
+    uint32_t menuBadChecksums = 0;  // a menu frame with a bad checksum: dropped, the Atari retries
+    uint32_t menuSendFailures = 0;  // a block of the reply not sent: the rest of the reply is not sent
+    uint32_t lastReplyUs = 0;       // end of the ACK to the last byte of the reply
+    uint32_t maxReplyUs = 0;
 };
 
 class MenuSioTransport final : public rb::app::SioTransport {

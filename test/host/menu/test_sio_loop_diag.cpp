@@ -60,9 +60,22 @@ static void test_a_phase_is_slow_only_above_the_limit(void)
 {
     SioLoopDiag diag;
     diag.poweredOn();
-    TEST_ASSERT_FALSE(diag.notePhase(LoopPhase::Step, SioLoopDiag::kSlowUs));
-    TEST_ASSERT_TRUE(diag.notePhase(LoopPhase::Step, SioLoopDiag::kSlowUs + 1));
+    TEST_ASSERT_FALSE(diag.notePhase(LoopPhase::Pump, SioLoopDiag::kSlowUs));
+    TEST_ASSERT_TRUE(diag.notePhase(LoopPhase::Pump, SioLoopDiag::kSlowUs + 1));
     TEST_ASSERT_TRUE(diag.notePhase(LoopPhase::DriveMemory, 154000));
+}
+
+// Issue #125: a step carries a whole menu reply, 964 bytes at 19200 baud (about 502 ms). The 65XE
+// console showed 337-553 ms steps that were only that; a step is slow above kSlowStepUs.
+static void test_a_step_is_slow_only_above_a_whole_reply(void)
+{
+    SioLoopDiag diag;
+    diag.poweredOn();
+    TEST_ASSERT_TRUE(SioLoopDiag::kSlowStepUs > 964 * 10 * 1000000LL / 19200);
+    TEST_ASSERT_FALSE(diag.notePhase(LoopPhase::Step, 553000));
+    TEST_ASSERT_FALSE(diag.notePhase(LoopPhase::Step, SioLoopDiag::kSlowStepUs));
+    TEST_ASSERT_TRUE(diag.notePhase(LoopPhase::Step, SioLoopDiag::kSlowStepUs + 1));
+    TEST_ASSERT_EQUAL_INT64(SioLoopDiag::kSlowStepUs + 1, diag.slowest(LoopPhase::Step));
 }
 
 // Slow phases share the line budget with failed steps.
@@ -120,6 +133,7 @@ int main()
     RUN_TEST(test_reports_stop_at_the_limit_and_start_again_at_power_on);
     RUN_TEST(test_a_phase_is_slow_only_above_the_limit);
     RUN_TEST(test_slow_phases_share_the_line_limit);
+    RUN_TEST(test_a_step_is_slow_only_above_a_whole_reply);
     RUN_TEST(test_phase_names_are_stable);
     RUN_TEST(test_the_slowest_run_of_each_phase_is_kept_under_the_limit_and_past_the_budget);
     return UNITY_END();

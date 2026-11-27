@@ -122,6 +122,7 @@ void MenuSioTransport::serveMenu(const CommandBytes& command)
 {
     const Span<const uint8_t> body{command.bytes.data(), 4};
     if (rb::sio::sio_checksum(body) != command.bytes[4]) {
+        ++stats_.menuBadChecksums;
         inner_.releaseDataLine();
         return;
     }
@@ -171,8 +172,14 @@ void MenuSioTransport::serveMenu(const CommandBytes& command)
         const std::size_t left = response_.size() - sent;
         const std::size_t length = left < kSendBlock ? left : kSendBlock;
         if (!inner_.send(Span<const uint8_t>{response_.data() + sent, length}).ok()) {
+            ++stats_.menuSendFailures;
             break;  // the Atari's SIOV times out and shows that the host does not answer
         }
+    }
+    const uint64_t replyUs = clock_.nowMicros() - ackEnd;
+    stats_.lastReplyUs = replyUs > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(replyUs);
+    if (stats_.lastReplyUs > stats_.maxReplyUs) {
+        stats_.maxReplyUs = stats_.lastReplyUs;
     }
     inner_.releaseDataLine();
 }

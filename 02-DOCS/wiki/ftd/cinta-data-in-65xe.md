@@ -23,7 +23,8 @@ Que `international_karate.cas` cargue en el 65XE con `menu-sio-cinta`. Primero, 
 
 - Paso 1 (este commit): diagnóstico que solo registra. `EspDataIn::hardwareFree()` guarda qué condición
   estaba ocupada (bits) y cuántas veces dijo que no; `CassetteService` guarda el último tick; `menu_sio`
-  registra cada toma (confirmada o vencida), y cada 2 s mientras la línea no es del disco.
+  registra cada toma (confirmada o vencida) con los deltas de esa toma, y cada 2 s mientras la línea
+  no es del disco.
 - Paso 2: con la medición, prueba RED en el host y corrección.
 
 Fuera: H4, las puertas y los paquetes. Flashear y probar en el 65XE necesitan aprobación aparte.
@@ -33,6 +34,10 @@ Fuera: H4, las puertas y los paquetes. Flashear y probar en el 65XE necesitan ap
 - [x] Rama `fix/cinta-data-in-65xe` desde `main` `47e5f56` — prueba: `git log`.
 - [x] Diagnóstico sin cambios de decisión — prueba: mismo orden de condiciones en `hardwareFree()`;
   atómicos de 32 bits (sin libatomic).
+- [x] Revisión independiente, ronda 1 — NO FUSIONAR: H1 (el estado ocupado no era de la toma que venció).
+- [x] H1 — prueba: `test_data_in_diag` (7): sin consulta nueva, con bit ocupado, libre sin confirmar, toma
+  confirmada sin pedido (N/D), contadores que dan la vuelta. 3 de 3 mutaciones caen. Contadores de 32 bits
+  con un solo escritor; `check_atomic_calls` revisa `esp_data_in.cpp` y `cassette_service.cpp` en la CI.
 - [ ] CI del diagnóstico y paquete `menu-sio-cinta`.
 - [ ] Medición en el 65XE (con aprobación).
 - [ ] RED → GREEN de la causa y corrección.

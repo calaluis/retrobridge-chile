@@ -105,6 +105,11 @@ jobs:
           # T9a.7 (requirement 2): every access of the cassette ports (DataInHandover, TapeProgress) is here.
           python3 -I tools/ci/check_atomic_calls.py check --expect progress \
                   --obj build-menu-sio/esp-idf/main/CMakeFiles/__idf_main.dir/cassette_ports.cpp.obj
+          # fix-cinta-data-in-65xe (review PR #124, H1): the take diagnostics, read across tasks.
+          python3 -I tools/ci/check_atomic_calls.py check --expect probe \
+                  --obj build-menu-sio/esp-idf/rb_esp_cassette/CMakeFiles/__idf_rb_esp_cassette.dir/src/esp_data_in.cpp.obj
+          python3 -I tools/ci/check_atomic_calls.py check --expect tick \
+                  --obj build-menu-sio/esp-idf/rb_esp_cassette/CMakeFiles/__idf_rb_esp_cassette.dir/src/cassette_service.cpp.obj
 
   # The cassette firmware (variant "cassette", both gates) is not packaged: H4 stays unapproved, and before T9b only
   # menu-sio is installed (docs/mediciones/puertas-aceptacion-riesgo-2026-11-25.md). The read-only cassette-lectura and

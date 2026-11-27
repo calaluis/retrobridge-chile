@@ -151,6 +151,9 @@ target_link_libraries(test_motor_assignment PRIVATE rb_board)
 rb_add_host_test(test_tape_gates board/test_tape_gates.cpp)
 target_link_libraries(test_tape_gates PRIVATE rb_board)
 target_include_directories(test_tape_gates PRIVATE ${rb_root}/main)
+# fix-cinta-data-in-65xe (review PR #124, H1): what the cassette did for one take (main/data_in_diag.hpp).
+rb_add_host_test(test_data_in_diag menu/test_data_in_diag.cpp)
+target_include_directories(test_data_in_diag PRIVATE ${rb_root}/main)
 rb_add_host_test(test_cassette_output_assignment board/test_cassette_output_assignment.cpp)
 target_link_libraries(test_cassette_output_assignment PRIVATE rb_board)
 # cas-salida-data-in: the menu-sio cassette drives DATA IN by the owner's risk acceptance (H4 unsigned).

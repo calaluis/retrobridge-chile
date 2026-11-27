@@ -102,7 +102,7 @@ public:
     // Diagnostics (fix-cinta-data-in-65xe): the DATA IN driver, read only, and when the loop last ticked.
     const EspDataIn& dataIn() const noexcept { return dataIn_; }
     // The low 32 bits of esp_timer_get_time(): a 64-bit atomic would take a lock on the ESP32.
-    uint32_t lastTickUs() const noexcept { return lastTickUs_.load(std::memory_order_relaxed); }
+    uint32_t lastTickUs() const noexcept;  // out of line: tools/ci/check_atomic_calls.py checks the object
     bool outputEnabled() const noexcept { return driving_; }
 
     // Console task: runs `cas <args>` on the cassette loop and copies the reply.

@@ -151,6 +151,11 @@ class ProgressAccesses(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("tapeEnded", problems[0])
 
+    def test_the_take_diagnostic_profiles_do_not_accept_the_progress_object(self):
+        # fix-cinta-data-in-65xe: each new profile names its own functions; another object fails them all.
+        self.assertEqual(len(cac.missing_accesses(PROGRESS, cac.PROFILES["probe"])), 2)
+        self.assertEqual(len(cac.missing_accesses(PROGRESS, cac.PROFILES["tick"])), 2)
+
     def test_the_byte_accesses_are_counted(self):
         self.assertEqual(cac.plain_accesses(PROGRESS), {"l32i.n": 1, "memw": 2, "s8i": 1, "l8ui": 1})
 

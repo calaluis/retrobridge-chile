@@ -69,7 +69,18 @@ PROGRESS = {
     "rb::menusio::ProgressSink::publish(": "store",
     "rb::menusio::tapeEnded(": "load",
 }
-PROFILES = {"handover": REQUIRED, "progress": PROGRESS}
+# fix-cinta-data-in-65xe (review PR #124, H1): the take diagnostics, written by the cassette task and read
+# by the SIO task. "probe": EspDataIn's hardwareFree() counters (esp_data_in.cpp). "tick": the cassette
+# loop's last tick (cassette_service.cpp).
+PROBE = {
+    "rb::esp::EspDataIn::hardwareFree(": "store",
+    "rb::esp::EspDataIn::hardwareProbeCalls(": "load",
+}
+TICK = {
+    "rb::esp::CassetteService::loop(": "store",
+    "rb::esp::CassetteService::lastTickUs(": "load",
+}
+PROFILES = {"handover": REQUIRED, "progress": PROGRESS, "probe": PROBE, "tick": TICK}
 FUNCTION = re.compile(r"^[0-9a-f]+ <(.+)>:$")
 INSTRUCTION = re.compile(r"^\s*[0-9a-f]+:\s+[0-9a-f]+\s+([a-z0-9.]+)")
 

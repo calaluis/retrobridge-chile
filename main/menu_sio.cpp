@@ -47,6 +47,7 @@
 
 #include "esp_pthread.h"
 #include "esp_tape_deck.hpp"
+#include "data_in_diag.hpp"
 #include "tape_gates.hpp"
 #include "tnfs_link.hpp"
 #include "tnfs_loader.hpp"
@@ -400,12 +401,22 @@ void driveSaveTask(void*)
 }
 
 // Diagnostics (fix-cinta-data-in-65xe, 65XE test of 2026-11-26): why the tape's take of DATA IN expires.
-// Logs only; it changes no decision. A take: how long until it is confirmed or expires, what
-// hardwareFree() last found busy, and how old the cassette loop's last tick is. While DATA IN is not the
-// disk's, the same every 2 s. Expired takes: the first 10, then every 50th.
+// Logs only; it changes no decision. Per take (review PR #124, H1): the hardwareFree() counters when it
+// was asked and when it ended, so the verdict is this take's (TakeDiag, main/data_in_diag.hpp). Also how
+// old the cassette loop's last tick is. While DATA IN is not the disk's, the state every 2 s. Expired
+// takes: the first 10, then every 50th.
+rb::menusio::HardwareProbe probeOf(const rb::esp::EspDataIn& dataIn) noexcept
+{
+    rb::menusio::HardwareProbe probe;
+    probe.calls = dataIn.hardwareProbeCalls();  // first, with acquire: the other two are at least as new
+    probe.refusals = dataIn.hardwareProbeRefusals();
+    probe.lastBusy = dataIn.hardwareProbeLastBusy();
+    return probe;
+}
+
 void logDataInDiag(rb::host::DataInChange change, const rb::host::DataInReadings& readings, int64_t now)
 {
-    static int64_t takeAskedUs = 0;
+    static rb::menusio::TakeDiag take;
     static uint32_t expired = 0;
     static int64_t lastPeriodicUs = 0;
     if (g_cassetteDiag == nullptr) {
@@ -413,47 +424,61 @@ void logDataInDiag(rb::host::DataInChange change, const rb::host::DataInReadings
     }
     const rb::esp::EspDataIn& dataIn = g_cassetteDiag->dataIn();
     const uint32_t tickAgeUs = static_cast<uint32_t>(now) - g_cassetteDiag->lastTickUs();  // modulo 2^32
-    bool emit = false;
-    const char* what = "";
+    const char* what = nullptr;
     switch (change) {
     case rb::host::DataInChange::TakeRequested:
-        takeAskedUs = now;
+        take.requested(now, probeOf(dataIn));
         return;
     case rb::host::DataInChange::ToTape:
-        what = "toma confirmada";
-        emit = true;
-        break;
-    case rb::host::DataInChange::TakeTimedOut:
-        ++expired;
-        what = "toma vencida";
-        emit = expired <= 10 || expired % 50 == 0;
-        break;
+    case rb::host::DataInChange::TakeTimedOut: {
+        const bool confirmed = change == rb::host::DataInChange::ToTape;
+        if (!confirmed) {
+            ++expired;
+        }
+        const rb::menusio::TakeDiag::Result r = take.ended(now, probeOf(dataIn));
+        if (!confirmed && !(expired <= 10 || expired % 50 == 0)) {
+            return;
+        }
+        if (!r.hasRequest) {
+            ESP_LOGW(kTag, "DATA IN diag: %s sin pedido visto (N/D); vencidas %lu",
+                     confirmed ? "toma confirmada" : "toma vencida", static_cast<unsigned long>(expired));
+            return;
+        }
+        ESP_LOGW(kTag,
+                 "DATA IN diag: %s tras %lld ms, vencidas %lu; en esta toma: %lu consultas, %lu negativas, ultimo "
+                 "0x%02lx (%s); tick de la casetera hace %lu us; MOTOR %s, COMMAND %s",
+                 confirmed ? "toma confirmada" : "toma vencida", msOf(r.elapsedUs), static_cast<unsigned long>(expired),
+                 static_cast<unsigned long>(r.calls), static_cast<unsigned long>(r.refusals),
+                 static_cast<unsigned long>(r.lastBusy), rb::menusio::takeVerdictName(r.verdict),
+                 static_cast<unsigned long>(tickAgeUs), readings.motorOn ? "on" : "off",
+                 readings.commandHigh ? "alto" : "bajo");
+        return;
+    }
     case rb::host::DataInChange::ToDisk:
+        if (!(expired <= 10 || expired % 50 == 0)) {
+            return;
+        }
         what = "disco de vuelta";
-        emit = expired <= 10 || expired % 50 == 0;
         break;
     case rb::host::DataInChange::None:
-        if (g_arbiter.owner() != rb::host::DataInOwner::Disk && now - lastPeriodicUs >= 2000000) {
-            what = "linea fuera del disco";
-            emit = true;
+        if (g_arbiter.owner() == rb::host::DataInOwner::Disk || now - lastPeriodicUs < 2000000) {
+            return;
         }
+        what = "linea fuera del disco";
         break;
     default:
         what = "cambio";
-        emit = true;
         break;
     }
-    if (!emit) {
-        return;
-    }
     lastPeriodicUs = now;
+    const rb::menusio::HardwareProbe probe = probeOf(dataIn);
     ESP_LOGW(kTag,
-             "DATA IN diag: %s, duenio %s, %lld ms desde la toma, vencidas %lu; ocupado 0x%02x (negativas %lu); "
-             "tick de la casetera hace %lld us; MOTOR %s, COMMAND %s",
-             what, rb::host::dataInOwnerName(g_arbiter.owner()), msOf(now - takeAskedUs),
-             static_cast<unsigned long>(expired), static_cast<unsigned>(dataIn.lastBusy()),
-             static_cast<unsigned long>(dataIn.busyRefusals()), static_cast<long long>(tickAgeUs),
-             readings.motorOn ? "on" : "off", readings.commandHigh ? "alto" : "bajo");
+             "DATA IN diag: %s, duenio %s; hardwareFree: %lu consultas, %lu negativas, ultimo 0x%02lx; tick de la "
+             "casetera hace %lu us; MOTOR %s, COMMAND %s",
+             what, rb::host::dataInOwnerName(g_arbiter.owner()), static_cast<unsigned long>(probe.calls),
+             static_cast<unsigned long>(probe.refusals), static_cast<unsigned long>(probe.lastBusy),
+             static_cast<unsigned long>(tickAgeUs), readings.motorOn ? "on" : "off",
+             readings.commandHigh ? "alto" : "bajo");
 }
 
 void sioTask(void*)

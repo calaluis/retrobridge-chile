@@ -37,15 +37,18 @@ struct MenuTransportStats {
     uint32_t textCommands = 0;  // 'T': characters of an edited server (menu-editar-servidor)
     // Issue #125 (PR #124): the ends of a menu command the Atari sees as "EL HOST NO RESPONDE". Written
     // by the SIO task only, read by the console (`sio status`): atomics, so a read never races a write
-    // (review of PR #124, H1). Lock-free on the host; on the ESP32 toolchain they are not always
-    // lock-free (CI of 2da5b81), as for the std::atomic the firmware already shares between these tasks.
-    // Each field is read on its own; a reading is not one snapshot of all of them.
+    // (review of PR #124, H1). Each field is read on its own; a reading is not one snapshot of all of them.
     std::atomic<uint32_t> menuBadChecksums{0};  // a menu frame with a bad checksum: dropped, the Atari retries
     std::atomic<uint32_t> menuAckFailures{0};   // the ACK not sent: nothing selected, the Atari retries
     std::atomic<uint32_t> menuSendFailures{0};  // a block of the reply not sent: the rest is not sent
     std::atomic<uint32_t> lastReplyUs{0};       // end of the ACK to the last byte of the reply
     std::atomic<uint32_t> maxReplyUs{0};
 };
+// As in data_in_handover.hpp: only aligned 32-bit loads and stores (no read-modify-write). Always
+// lock-free on the host; the ESP32 GCC (Xtensa) does not report it, so the check is host only.
+#ifndef ESP_PLATFORM
+static_assert(std::atomic<uint32_t>::is_always_lock_free, "the console reads these without a lock");
+#endif
 
 class MenuSioTransport final : public rb::app::SioTransport {
 public:

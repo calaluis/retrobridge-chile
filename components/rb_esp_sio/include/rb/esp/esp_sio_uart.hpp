@@ -35,8 +35,8 @@ public:
     static constexpr uint32_t kTxDoneMarginMs = 20;
 
     // Issue #125 (PR #124): why write() failed, for the console. Written by the SIO task only, read by
-    // the console task: atomics, each field read on its own (review of PR #124, H1). Not always
-    // lock-free on the ESP32 toolchain (CI of 2da5b81); one load or store each, no mutex.
+    // the console task: atomics, each field read on its own (review of PR #124, H1). Only aligned 32-bit
+    // loads and stores; lock-freedom is checked on the host only, as in data_in_handover.hpp.
     struct WriteFailures {
         std::atomic<uint32_t> notReady{0};    // not installed, or parked for the cassette
         std::atomic<uint32_t> shortWrite{0};  // uart_write_bytes() took fewer bytes

@@ -1,7 +1,7 @@
 // Review of PR #124 (H1): the diagnostic counters of issue #125 are written by the SIO task and read by
 // the console task (`sio status`). Each one is a 32-bit std::atomic, so a read never races a write;
-// the fields are independent (a reading is not one snapshot of all of them). Lock-freedom is not
-// asserted: the ESP32 toolchain does not give it (CI of 2da5b81).
+// the fields are independent (a reading is not one snapshot of all of them). Lock-freedom is checked
+// here, on the host, as in data_in_handover.hpp: the ESP32 GCC does not report it (CI of 2da5b81).
 #include <atomic>
 #include <cstdint>
 #include <type_traits>
@@ -38,10 +38,13 @@ static void test_the_uart_write_failures_read_by_the_console_are_atomic(void)
     TEST_ASSERT_TRUE((std::is_same<decltype(W::maxWriteMs), Counter>::value));
 }
 
+static void test_the_counters_are_lock_free_on_the_host(void) { TEST_ASSERT_TRUE(Counter::is_always_lock_free); }
+
 int main()
 {
     UNITY_BEGIN();
     RUN_TEST(test_the_menu_counters_read_by_the_console_are_atomic);
     RUN_TEST(test_the_uart_write_failures_read_by_the_console_are_atomic);
+    RUN_TEST(test_the_counters_are_lock_free_on_the_host);
     return UNITY_END();
 }

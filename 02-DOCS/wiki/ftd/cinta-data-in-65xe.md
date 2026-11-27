@@ -71,15 +71,24 @@ Fuera: H4, las puertas y los paquetes. Flashear y probar en el 65XE necesitan ap
 - [x] RED — prueba: `test_data_in_handover`, 2 pruebas nuevas fallan con 20 ms (toma confirmada a los
   2 ms y paso SIO de 21,5 ms → `TakeTimedOut`; el plazo no cubre dos pasos SIO).
 - [x] GREEN — prueba: con 60 ms, `ctest` 109/109; `tools/tests` 341 OK; layering, notices, fsk OK.
-- [ ] CI de la corrección y paquete `menu-sio-cinta`.
+- [x] CI de la corrección y paquete `menu-sio-cinta` — prueba: run 45921940608 en `d1eb418`, 6/6; paquete
+  verificado (sha256 `48077aaa…`). Los commits posteriores solo tocan este documento.
 - [x] Prueba en el 65XE: `international_karate.cas` carga (con aprobación) — prueba: «PROGRAMA CARGADO»
-  en pantalla, consola de `d1eb418` (sección «Prueba física»).
+  en pantalla y el juego corre (lo vio el responsable), consola de `d1eb418` (sección «Prueba física»).
+  Evidencia del responsable, no verificación independiente.
+- [x] Revisión independiente, ronda 5 (`7863d59`): sin bloqueante de firmware; pide coherencia documental,
+  CI del HEAD y seguimiento explícito del incidente.
 - [x] Revisión independiente, ronda 4 (`d1eb418`): sin bloqueante en el delta; no es prueba de carga.
-- [ ] Incidente «EL HOST NO RESPONDE» tras el segmento 36: contrastar con la especificación las
-  transiciones reales (COMMAND, `tapeEnded`, dueño del árbitro, Release) con los registros `DATA IN diag:`
-  cada 2 s de la próxima prueba. El plazo de 60 ms no lo corrige por sí solo.
+- [ ] Seguimiento aparte, fuera de esta PR — incidente «EL HOST NO RESPONDE» (prueba de `47e5f56`, tras el
+  segmento 36): contrastar con la especificación las transiciones reales (COMMAND, `tapeEnded`, dueño del
+  árbitro, Release) con los registros `DATA IN diag:`. Criterio de aceptación: tras una carga, con MOTOR
+  apagado, la primera orden del 65XE a una unidad (COMMAND bajo) devuelve la línea al disco (`cambio 6`)
+  y esa unidad responde. El plazo de 60 ms no lo corrige por sí solo.
+- Fuera de alcance: H4 y la medición de GPIO36 siguen pendientes; ni la CI ni esta carga son aprobación
+  eléctrica.
 - [ ] Pendientes: D8/.cas con AC3; limpiar `TakeDiag` al cancelar una toma.
 
 ## Next
 
-CI de la corrección. Después, con aprobación, instalar el paquete y repetir el arranque de la cinta.
+Alcance de esta PR: diagnóstico y corrección del plazo de la toma. El responsable decide la fusión. El
+incidente de cesión de DATA IN se sigue aparte, con su criterio de aceptación.

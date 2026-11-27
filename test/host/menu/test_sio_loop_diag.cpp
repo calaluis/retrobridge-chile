@@ -88,6 +88,29 @@ static void test_phase_names_are_stable(void)
     TEST_ASSERT_EQUAL_STRING("transport", SioLoopDiag::name(StepKind::TransportFailed));
 }
 
+// Review PR #124 (M2): no slow line does not mean a healthy bus. The slowest run of each phase is
+// kept, also under the limit and after the line budget, for the summary at power-off.
+static void test_the_slowest_run_of_each_phase_is_kept_under_the_limit_and_past_the_budget(void)
+{
+    SioLoopDiag diag;
+    diag.poweredOn();
+    TEST_ASSERT_EQUAL_INT64(0, diag.slowest(LoopPhase::Step));
+    diag.notePhase(LoopPhase::Step, 12000);
+    diag.notePhase(LoopPhase::Step, 30000);
+    diag.notePhase(LoopPhase::Step, 20000);
+    TEST_ASSERT_EQUAL_INT64(30000, diag.slowest(LoopPhase::Step));
+    TEST_ASSERT_EQUAL_INT64(0, diag.slowest(LoopPhase::Pump));
+    for (uint32_t i = 0; i < SioLoopDiag::kMaxLines; ++i) {
+        diag.notePhase(LoopPhase::Pump, SioLoopDiag::kSlowUs + 1);
+    }
+    TEST_ASSERT_FALSE(diag.notePhase(LoopPhase::DriveMemory, 154000));
+    TEST_ASSERT_EQUAL_INT64(154000, diag.slowest(LoopPhase::DriveMemory));
+    TEST_ASSERT_EQUAL_UINT32(SioLoopDiag::kMaxLines, diag.slowLines());
+    diag.poweredOn();
+    TEST_ASSERT_EQUAL_INT64(0, diag.slowest(LoopPhase::DriveMemory));
+    TEST_ASSERT_EQUAL_UINT32(0, diag.slowLines());
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -98,5 +121,6 @@ int main()
     RUN_TEST(test_a_phase_is_slow_only_above_the_limit);
     RUN_TEST(test_slow_phases_share_the_line_limit);
     RUN_TEST(test_phase_names_are_stable);
+    RUN_TEST(test_the_slowest_run_of_each_phase_is_kept_under_the_limit_and_past_the_budget);
     return UNITY_END();
 }

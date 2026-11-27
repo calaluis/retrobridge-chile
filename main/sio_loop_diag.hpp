@@ -5,6 +5,7 @@
 // the 65XE was on, and which phase of the loop kept the bus unattended for too long. Pure logic,
 // tested on the host; it decides only what is logged, never what the loop does.
 
+#include <array>
 #include <cstdint>
 
 namespace rb::menusio {
@@ -26,6 +27,7 @@ enum class LoopPhase : uint8_t {
     Pump,         // the tape deck's pump()
     DataIn,       // the DATA IN arbiter step
 };
+constexpr std::size_t kLoopPhases = 4;
 
 class SioLoopDiag {
 public:
@@ -39,6 +41,8 @@ public:
         nacked_ = 0;
         failed_ = 0;
         lines_ = 0;
+        slowLines_ = 0;
+        slowest_.fill(0);
     }
 
     // True when this step must be logged: a failure while the 65XE is on, within the budget.
@@ -64,8 +68,25 @@ public:
         return take();
     }
 
-    // True when this phase must be logged: it took longer than kSlowUs, within the budget.
-    bool notePhase(LoopPhase, int64_t elapsedUs) noexcept { return elapsedUs > kSlowUs && take(); }
+    // True when this phase must be logged: it took longer than kSlowUs, within the budget. The
+    // slowest run of each phase is kept in any case (review PR #124, M2): no line is not a healthy bus.
+    bool notePhase(LoopPhase phase, int64_t elapsedUs) noexcept
+    {
+        int64_t& slowest = slowest_[static_cast<std::size_t>(phase)];
+        if (elapsedUs > slowest) {
+            slowest = elapsedUs;
+        }
+        if (elapsedUs > kSlowUs && take()) {
+            ++slowLines_;
+            return true;
+        }
+        return false;
+    }
+
+    // The slowest run of a phase since the last power-on, for the summary at power-off.
+    int64_t slowest(LoopPhase phase) const noexcept { return slowest_[static_cast<std::size_t>(phase)]; }
+    uint32_t slowLines() const noexcept { return slowLines_; }
+    uint32_t lines() const noexcept { return lines_; }
 
     uint32_t count(StepKind kind) const noexcept
     {
@@ -124,6 +145,8 @@ private:
     uint32_t nacked_ = 0;
     uint32_t failed_ = 0;
     uint32_t lines_ = 0;
+    uint32_t slowLines_ = 0;
+    std::array<int64_t, kLoopPhases> slowest_{};
 };
 
 }  // namespace rb::menusio

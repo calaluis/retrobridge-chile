@@ -601,6 +601,20 @@ void sioTask(void*)
             if (readSio5v(pinMv, sioMv, false)) {
                 switch (power.sample(sioMv, static_cast<uint64_t>(now))) {
                 case rb::host::SioPowerWatch::Event::PoweredOff:
+                    // Review PR #124 (M2): the totals and the slowest phases, also when no line was logged.
+                    ESP_LOGI(kTag,
+                             "SIO diag resumen: ignored %u, nak %u, transport %u; lineas %u/%u; max ms: "
+                             "drive-memory %lld, step %lld, pump %lld, data-in %lld",
+                             static_cast<unsigned>(g_loopDiag.count(rb::menusio::StepKind::Ignored)),
+                             static_cast<unsigned>(g_loopDiag.count(rb::menusio::StepKind::Nacked)),
+                             static_cast<unsigned>(g_loopDiag.count(rb::menusio::StepKind::TransportFailed)),
+                             static_cast<unsigned>(g_loopDiag.lines()),
+                             static_cast<unsigned>(rb::menusio::SioLoopDiag::kMaxLines),
+                             g_loopDiag.slowest(rb::menusio::LoopPhase::DriveMemory) / 1000,
+                             g_loopDiag.slowest(rb::menusio::LoopPhase::Step) / 1000,
+                             g_loopDiag.slowest(rb::menusio::LoopPhase::Pump) / 1000,
+                             g_loopDiag.slowest(rb::menusio::LoopPhase::DataIn) / 1000);
+                    g_loopDiag.poweredOn();  // the same totals are not reported twice
                     g_station->returnToMenu();  // ready before the next power-on reads D1; drives kept
                     poweredOnUs = 0;
                     g_atariOff = true;  // the arbiter gives DATA IN back to the disk (rule 3)

@@ -182,10 +182,11 @@ void test_a_tape_on_a_drive_says_it_goes_on_c()
     Rig rig;
     rig.start();
     rig.press(K1);
-    assert_line(rig.press(KC), kMainMessage, " UNIDAD PARA: KARATE.CAS");
+    // The owner, 65XE test of PR #124: the screen must say that C mounts the tape.
+    assert_line(rig.press(KC), kMainMessage, " CINTA, PULSA C: KARATE.CAS");
     const MenuReply refused = rig.settle(K2);
     TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLayoutMain, refused.layout());
-    assert_line(refused, kMainMessage, " UNA CINTA VA EN C:");
+    assert_line(refused, kMainMessage, " UNA CINTA VA EN C: (ELIGELA Y PULSA C)");
     rig.step();
     TEST_ASSERT_EQUAL_STRING("", rig.mounted(2));
     TEST_ASSERT_NULL(rig.controller->driveName(2));
@@ -200,7 +201,7 @@ void test_a_tape_on_d1_says_it_goes_on_c()
     rig.press(K1);
     rig.press(KC);
     const MenuReply refused = rig.settle(K1);
-    assert_line(refused, kMainMessage, " UNA CINTA VA EN C:");
+    assert_line(refused, kMainMessage, " UNA CINTA VA EN C: (ELIGELA Y PULSA C)");
     TEST_ASSERT_NULL(rig.controller->driveName(1));
 }
 

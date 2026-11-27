@@ -35,7 +35,8 @@ public:
     static constexpr uint32_t kTxDoneMarginMs = 20;
 
     // Issue #125 (PR #124): why write() failed, for the console. Written by the SIO task only, read by
-    // the console task: lock-free atomics, each field read on its own (review of PR #124, H1).
+    // the console task: atomics, each field read on its own (review of PR #124, H1). Not always
+    // lock-free on the ESP32 toolchain (CI of 2da5b81); one load or store each, no mutex.
     struct WriteFailures {
         std::atomic<uint32_t> notReady{0};    // not installed, or parked for the cassette
         std::atomic<uint32_t> shortWrite{0};  // uart_write_bytes() took fewer bytes
@@ -44,7 +45,6 @@ public:
         std::atomic<uint32_t> lastWaitMs{0};  // how long the last shortWrite or txNotDone write() took
         std::atomic<uint32_t> maxWriteMs{0};  // the longest write(), failed or not; not a command's latency
     };
-    static_assert(std::atomic<uint32_t>::is_always_lock_free, "the console reads these without a lock");
     const WriteFailures& writeFailures() const noexcept { return failures_; }
 
     explicit EspSioUart(Pins pins, int txRing = kUartTxBuffer) noexcept : pins_(pins), txRing_(txRing) {}

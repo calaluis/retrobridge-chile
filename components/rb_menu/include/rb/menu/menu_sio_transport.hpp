@@ -36,7 +36,9 @@ struct MenuTransportStats {
     uint32_t menuRetries = 0;  // a key repeated by SIOV, answered with the same reply
     uint32_t textCommands = 0;  // 'T': characters of an edited server (menu-editar-servidor)
     // Issue #125 (PR #124): the ends of a menu command the Atari sees as "EL HOST NO RESPONDE". Written
-    // by the SIO task only, read by the console (`sio status`): lock-free atomics (review of PR #124, H1).
+    // by the SIO task only, read by the console (`sio status`): atomics, so a read never races a write
+    // (review of PR #124, H1). Lock-free on the host; on the ESP32 toolchain they are not always
+    // lock-free (CI of 2da5b81), as for the std::atomic the firmware already shares between these tasks.
     // Each field is read on its own; a reading is not one snapshot of all of them.
     std::atomic<uint32_t> menuBadChecksums{0};  // a menu frame with a bad checksum: dropped, the Atari retries
     std::atomic<uint32_t> menuAckFailures{0};   // the ACK not sent: nothing selected, the Atari retries
@@ -44,7 +46,6 @@ struct MenuTransportStats {
     std::atomic<uint32_t> lastReplyUs{0};       // end of the ACK to the last byte of the reply
     std::atomic<uint32_t> maxReplyUs{0};
 };
-static_assert(std::atomic<uint32_t>::is_always_lock_free, "the console reads these without a lock");
 
 class MenuSioTransport final : public rb::app::SioTransport {
 public:

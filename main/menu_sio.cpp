@@ -49,6 +49,7 @@
 #include "esp_pthread.h"
 #include "esp_tape_deck.hpp"
 #include "data_in_diag.hpp"
+#include "sio_loop_diag.hpp"
 #include "tape_gates.hpp"
 #include "tnfs_link.hpp"
 #include "tnfs_loader.hpp"
@@ -413,6 +414,35 @@ void driveSaveTask(void*)
 // old the cassette loop's last tick is. While DATA IN is not the disk's, the state every 2 s. Expired
 // takes: the first 10, then every 50th.
 rb::menusio::TakeDiag g_takeDiag;  // SIO task only
+rb::menusio::SioLoopDiag g_loopDiag;  // SIO task only: failed steps and slow phases (PR #124)
+
+rb::menusio::StepKind stepKindOf(rb::sio::StepOutcome outcome) noexcept
+{
+    switch (outcome) {
+    case rb::sio::StepOutcome::Idle:
+        return rb::menusio::StepKind::Idle;
+    case rb::sio::StepOutcome::Completed:
+        return rb::menusio::StepKind::Completed;
+    case rb::sio::StepOutcome::Ignored:
+        return rb::menusio::StepKind::Ignored;
+    case rb::sio::StepOutcome::Nacked:
+        return rb::menusio::StepKind::Nacked;
+    case rb::sio::StepOutcome::TransportFailed:
+        return rb::menusio::StepKind::TransportFailed;
+    default:
+        return rb::menusio::StepKind::Other;
+    }
+}
+
+// Logs a phase of the SIO loop that kept the bus unattended longer than SioLoopDiag::kSlowUs.
+void notePhase(rb::menusio::LoopPhase phase, int64_t startUs)
+{
+    const int64_t end = esp_timer_get_time();
+    if (g_loopDiag.notePhase(phase, end - startUs)) {
+        ESP_LOGW(kTag, "SIO diag: fase %s lenta, %lld ms, a %lld ms", rb::menusio::SioLoopDiag::name(phase),
+                 (end - startUs) / 1000, end / 1000);
+    }
+}
 
 rb::menusio::HardwareProbe probeOf(const rb::esp::EspDataIn& dataIn) noexcept
 {
@@ -539,11 +569,25 @@ void sioTask(void*)
                 ESP_LOGW(kTag, "cas: la cinta aun no toma DATA IN (T9); DATA IN queda para el disco");
             }
         }
+        int64_t phaseStart = esp_timer_get_time();
         serviceDriveMemory(g_station->controller(), published.plan, planSeen, restoreLogged);
+        notePhase(rb::menusio::LoopPhase::DriveMemory, phaseStart);
 
+        phaseStart = esp_timer_get_time();
         const rb::sio::StepOutcome stepped = g_station->step();
+        notePhase(rb::menusio::LoopPhase::Step, phaseStart);
+        {
+            // The 65XE is on once it has sent a frame and no power-off was seen since.
+            const rb::menusio::StepKind kind = stepKindOf(stepped);
+            if (g_loopDiag.noteStep(kind, !g_atariOff && framesSoFar() > 0)) {
+                ESP_LOGW(kTag, "SIO diag: paso %s (n=%u) a %lld ms", rb::menusio::SioLoopDiag::name(kind),
+                         static_cast<unsigned>(g_loopDiag.count(kind)), esp_timer_get_time() / 1000);
+            }
+        }
         if (g_tapeApplied) {
+            phaseStart = esp_timer_get_time();
             g_tape->deck().pump();  // takes `cas` replies and sends what waits; never blocks
+            notePhase(rb::menusio::LoopPhase::Pump, phaseStart);
         }
 
         const bool down = gpio_get_level(kButtonA) == 0;
@@ -567,6 +611,7 @@ void sioTask(void*)
                     poweredOnUs = now;
                     g_atariOff = false;
                     framesAtPowerOn = framesSoFar();
+                    g_loopDiag.poweredOn();
                     ESP_LOGI(kTag, "65XE on at %lld ms (SIO +5V %d mV)", msOf(now), sioMv);
                     break;
                 case rb::host::SioPowerWatch::Event::None:
@@ -585,6 +630,7 @@ void sioTask(void*)
             readings.atariOff = g_atariOff;
             readings.tapeEnded = tapeEnded(g_progress);  // the cassette task's last publish
             // Diagnostics: the take's baseline BEFORE the step, which publishes the take (review PR #124, H2).
+            phaseStart = esp_timer_get_time();
             const rb::host::DataInChange change = rb::menusio::stepWithTakeBaseline(
                 g_takeDiag, now,
                 []() {
@@ -599,6 +645,7 @@ void sioTask(void*)
                          rb::host::dataInOwnerName(g_arbiter.owner()));
             }
             logDataInDiag(change, readings, now);
+            notePhase(rb::menusio::LoopPhase::DataIn, phaseStart);
         }
         if (poweredOnUs != 0 && framesSoFar() != framesAtPowerOn) {
             ESP_LOGI(kTag, "first COMMAND frame after power-on at %lld ms (%lld ms after +5V)", msOf(now),

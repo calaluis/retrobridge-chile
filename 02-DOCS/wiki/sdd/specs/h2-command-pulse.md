@@ -78,6 +78,11 @@ paquete; sin ellas el árbitro nunca mueve la línea (regla 4) y nada de esto ap
 
 ## Qué debe respetar
 
+- **Cambio de contrato propuesto (C3):** H2 **amplía la regla 3** de `DataInArbiter`. Hoy, con MOTOR
+  apagado, devuelve DATA IN el **nivel** COMMAND bajo en el paso. La ampliación añade una **aserción de
+  COMMAND que ya terminó** antes del siguiente paso (B1). No es una corrección de aserciones de prueba:
+  es comportamiento nuevo, y necesita aprobación antes de cualquier diseño. Las demás condiciones de
+  devolución y las invariantes de seguridad quedan intactas.
 - **R1, exclusión eléctrica:** UART2 no se reanuda mientras la casetera pueda manejar GPIO21. Con
   `release()` en `Pending`, `Failed` o vencido, el disco sigue aparcado (`ReleasePending`, `Fault`).
 - Regla 1 (toma por estado), regla 2 (pausas de MOTOR conservan la cinta), regla 3 (apagado visto,
@@ -113,7 +118,8 @@ hardware puede mostrar se lista aparte y **no** se declara demostrado por el hos
 
 ### 2. Devolución segura
 
-- **B8.** Un COMMAND visto según B1 tiene el mismo efecto que hoy tiene COMMAND bajo: pide `release()`.
+- **B8.** Con la regla 3 ampliada (C3), un COMMAND visto según B1 pide `release()`, igual que hoy lo
+  pide el nivel COMMAND bajo. Las otras condiciones de la regla 3 no cambian.
 - **B9.** UART2 se reanuda solo después de `release()` = `Done`. `Pending` mantiene `ReleasePending`, y
   `Failed` o el plazo vencido llevan a `Fault`, con el disco aparcado. `Released` deja la línea sin dueño.
   Esto ya rige y no cambia.
@@ -122,8 +128,20 @@ hardware puede mostrar se lista aparte y **no** se declara demostrado por el hos
 
 - **B10.** Detectar COMMAND no es recibir la orden. Los bytes que llegaron mientras la UART estaba
   aparcada no se leyeron y no se reconstruyen.
-- **B11.** Una orden perdida no recibe ninguna respuesta: ni ACK, ni NAK, ni datos. Se cuenta como hoy,
-  como trama corta y lectura aparcada, y ningún registro afirma que se recuperó.
+- **B11.** Una orden perdida no recibe ninguna respuesta: ni ACK, ni NAK, ni datos. Ningún registro
+  afirma que se recuperó. Se cuenta según cómo terminó su ventana de COMMAND en
+  `SioLineTransport::waitCommandFrame()`, y los tres resultados no se mezclan:
+
+  | Resultado | Cuándo | Contador | Paso de `SioSession` |
+  |---|---|---|---|
+  | Trama corta | COMMAND se liberó con menos de 5 bytes leídos | `shortFrames` | `Ignored` |
+  | COMMAND sostenido | COMMAND no se liberó dentro de `kReleaseWaitUs` | `stuckLows` | `TransportFailed` |
+  | Error de recepción | falló `read()` | `receiveErrors` | `TransportFailed` |
+
+  Con la UART aparcada, `EspSioUart::read()` no falla: espera, devuelve 0 bytes y cuenta
+  `readsWhileParked`. Por eso, en el modelo, una orden perdida con la cinta dueña termina como trama
+  corta o como COMMAND sostenido, no como error de recepción. **No** toda orden perdida es una trama
+  corta, y el error de recepción sigue siendo un resultado distinto con la UART del disco activa.
 - **B12.** Una trama que empezó con la UART aparcada y termina tras la reanudación se descarta. Nunca se
   contesta como si fuera completa.
 
@@ -145,7 +163,9 @@ Todos en el host (H). Los marcados como HW **no** se dan por demostrados en el h
 1. (H, RED→GREEN) Dado `Tape` con MOTOR apagado, cuando hay un pulso de 1, 2, 3, 4, 6 u 8 ms en las 7
    fases de `test_command_pulse`, entonces el árbitro devuelve DATA IN: 0 pérdidas.
 2. (H, RED→GREEN) Dados 10 pulsos simulados de 3 ms en secuencia fija cada 5, 10, 20 y 50 ms, entonces
-   hay devolución y ningún pulso queda sin contar mientras el dueño es `Tape`.
+   hay devolución, y **una sola** detección inicia `release()`. Las aserciones dentro de una misma
+   ventana pueden agruparse (B2), y las posteriores a `ReleaseRequested` no cuentan (B4). No se exige
+   contar cada pulso por separado.
 3. (H, RED→GREEN) Dada una trama de estado a D1 por `SioSession::step()` con MOTOR apagado, entonces el
    paso termina `Ignored`, con 1 trama corta, 1 lectura aparcada y 0 bytes de TX (B10 y B11), y después
    hay devolución.
@@ -155,8 +175,9 @@ Todos en el host (H). Los marcados como HW **no** se dan por demostrados en el h
    sigue en 1 y no hay TX hasta `Done` (B4 y B9).
 6. (H, nuevo) Dado un pulso de 3 ms con MOTOR encendido, entonces la cinta conserva DATA IN (B7). Ya
    existe como GREEN y sigue GREEN.
-7. (H, nuevo) Dada una trama que empieza con la UART aparcada y termina tras `ToDisk`, entonces no hay
-   respuesta (B12).
+7. (H, prueba específica) Dada una trama que empieza con la UART aparcada y termina tras `ToDisk`,
+   entonces no hay respuesta (B12). Si resulta GREEN sin cambios, se registra como **control** y no como
+   corrección.
 8. (H) Tras la devolución, la siguiente trama de estado a D1 termina `Completed` con exactamente 7 bytes
    `41 43 00 FF E0 00` más checksum (B13). Ya existe como GREEN y sigue GREEN.
 9. (H, invariante) En todos los pasos de todos los casos, nunca `parkedNow` = 0 mientras el dueño no es
@@ -179,16 +200,22 @@ Todos en el host (H). Los marcados como HW **no** se dan por demostrados en el h
 
 ## Puntos a clarificar
 
-- **pregunta abierta** — ¿Cuál es el ancho mínimo de una aserción para contar como COMMAND visto? Las
-  RED de 1 ms exigen contar 1 ms. Un filtro de ruido más ancho contradiría el criterio 1. *Recomendación:*
-  ningún filtro nuevo; usar el mismo criterio de nivel que hoy usa el camino SIO. Decide el responsable.
+- **pregunta abierta** — ¿Cuál es el ancho mínimo de una aserción para contar como COMMAND visto, y
+  conviene un filtro de ruido? **Sin decidir.** Falta evidencia física del ancho real y del ruido de
+  COMMAND en el 65XE. Las RED de 1 ms exigen contar 1 ms. Si el responsable aprobara un filtro más ancho,
+  el criterio 1 se revisa **en esta spec** antes de implementar, nunca debilitando la prueba en silencio.
+  Usar el mismo criterio de nivel que hoy usa el camino SIO es una opción a evaluar, no una decisión
+  aprobada. Decide el responsable.
 - **suposición tomada** — MOTOR se evalúa en el paso, no en el instante del pulso (B7). *Base:* regla 1
   y regla 2 por estado. *Riesgo:* un pulso con MOTOR encendido seguido de MOTOR apagado en el mismo paso
   devolvería la línea.
 - **suposición tomada** — En `TakePending`, un COMMAND visto según B1 pide la devolución como hoy lo hace
   COMMAND bajo. *Base:* `step()` ya llama a `givesBack()` en `TakePending`.
-- **suposición tomada** — B12 puede estar ya cubierto por la sesión SIO actual. *Base:* no comprobado. Si
-  el criterio 7 resulta GREEN sin cambios, se registra como control y no como RED.
+- **suposición tomada** — B12 puede estar ya cubierto. *Base (C4):* dos vaciados de la entrada UART.
+  `SioLineTransport::waitCommandFrame()` llama a `flushInput()` antes de esperar COMMAND, y
+  `EspSioUart::resume()` exige `flushed()` antes de quitar el aparcado. Es evidencia de la protección
+  existente, **no** demostración de B12 en todas las condiciones: por ejemplo, una reanudación con
+  COMMAND todavía bajo. Por eso el criterio 7 se conserva como prueba específica.
 - **decisión diferida** — Que el Atari reintente y cuántas veces. *Base:* no se da por real ningún
   número de reintentos del Atari; los 10 pulsos son simulados.
 - **área no formulable** — El ruido real de COMMAND en el 65XE durante una pausa de MOTOR. Se vuelve
@@ -203,4 +230,8 @@ la alternativa «no construir» sigue abierta para el responsable.
 
 ## Clarificaciones
 
-Ninguna todavía.
+- 2026-11-28 — Revisión propia contra el código, correcciones C1–C4 autorizadas por el responsable. C1:
+  la spec distingue trama corta (`shortFrames`), COMMAND sostenido (`stuckLows`) y error de recepción
+  (`receiveErrors`). C2: el criterio 2 acepta agrupar pulsos (B2 y B4). C3: H2 se declara una
+  ampliación de la regla 3, y el ancho mínimo y el filtro siguen abiertos. C4: los dos vaciados de la
+  entrada se citan como evidencia parcial de B12, y el criterio 7 se conserva. Sigue en `draft`.

@@ -252,10 +252,10 @@ registrado.
 *Hallazgo aparte, sin registro de consola:* F0 ya traía `envio_fallido 2`, `sin_terminar 2` y una
 respuesta cortada de 514 ms (máxima 707 ms), que no estaban en E1 (`envio_fallido 0`). Ocurrieron entre E1
 y F0, cuando no corría ningún registro. Una respuesta del menú se cortó y no se sabe cuándo ni si se vio
-el error en pantalla.
+el error en pantalla. Seguimiento: issue #127.
 
 *BOOT ERROR del primer intento:* hallazgo nuevo. El plazo de 60 ms (`d1eb418`) lo había corregido en las
-pruebas anteriores con la misma cinta. Queda abierto, sin causa atribuida.
+pruebas anteriores con la misma cinta. Queda abierto, sin causa atribuida. Seguimiento: issue #126.
 
 *Observado en el registro de E, sin concluir causa:* al apagar, fallan dos pasos de transporte, uno con
 la cinta aún dueña de DATA IN (1109698 ms) y otro durante la devolución (1109737 ms). La devolución la
@@ -266,6 +266,23 @@ pero el contador no lleva hora: **no** se afirma que esos dos fallos sean las do
 antes de leer COMMAND para `g_arbiter.step()`; un pulso de COMMAND durante ese paso podría no verlo el
 árbitro. Es hipótesis de lectura estática. La prueba de host de ese pulso queda pendiente, en evaluación
 aparte. Cambiar el criterio **no** descarta ese riesgo.
+
+## Riesgos pendientes antes de fusionar la PR #124
+
+Registro expreso (2026-11-28, pedido del responsable). La fusión la decide el responsable; nada de esta
+lista está cerrado.
+
+| Riesgo | Dónde se sigue | ¿Afecta un criterio de aceptación? |
+|---|---|---|
+| Punto 3 de #125: primera orden relevante tras el encendido, no verificable con los registros actuales | #125 | Sí: el punto 3 de #125, sin aprobar ni fallar |
+| H2: un pulso de COMMAND durante `g_station->step()` que el árbitro no ve | #125, prueba de host aparte | Sí: es el riesgo que #125 conserva junto a sus cuatro puntos |
+| Punto 4 de #125: evidencia favorable en una sola prueba (variante F) | #125 | Sí: favorable, sin cerrar el criterio 1–4 |
+| BOOT ERROR en el primer intento de `international_karate.cas` | trasladado a #126 | Sí: el criterio de #126 (reproducir o descartar en N cargas) |
+| `envio_fallido 2` y respuesta cortada entre E1 y F0, sin registro | trasladado a #127 | Sí: el criterio de #127 |
+| H3 (caché de `baud_`), H4 y GPIO36 | fuera de esta PR | No: siguen sin aprobar; ninguna prueba de aquí es aprobación eléctrica |
+
+Lo que esta PR sí aporta, con evidencia: el plazo de toma de 60 ms (`d1eb418`) y la instrumentación de
+#125. Ninguna de las dos cierra #125, #126 ni #127.
 
 ## Scope
 

@@ -300,6 +300,46 @@ causa de «EL HOST NO RESPONDE» de `3863461` ni de `47e5f56`. Con el flujo real
 encendido), el apagado devuelve la línea antes del menú, como se vio en E y F. H2 **no** queda resuelto:
 queda reproducido en el modelo de host, con corrección pendiente de decisión y revisión.
 
+### Matriz ampliada de H2 (revisión de `d20616b`, M1–M3; pedido del responsable)
+
+Misma rama, misma prueba (`test_command_pulse`, 23 casos). La expectativa es la regla 3 tal como está
+escrita en `DataInArbiter::givesBack()`: con MOTOR apagado, COMMAND bajo devuelve DATA IN. Es
+independiente de cualquier corrección; ningún RED se debilitó. Fases: momento de la caída de COMMAND
+respecto del inicio de la ventana de 20 ms (−500 µs = ya bajo al abrirse; 0, 250, 500, 750 µs; 10 ms;
+19,5 ms).
+
+| Escenario | Esperado | Resultado | Clase |
+|---|---|---|---|
+| pulso de 1, 2, 3, 4, 6 y 8 ms, en las 7 fases | devuelve | **pierde en 7 de 7** (trama corta, COMMAND ya alto) | RED esperado |
+| pulso de 10 y 20 ms, en las 7 fases | devuelve | devuelve en 7 de 7 (COMMAND pegado) | GREEN |
+| 10 pulsos de 3 ms cada 5, 10, 20 y 50 ms | devuelve | **pierde los 10** en los cuatro intervalos (cada 5 ms solo 5 llegan a verse como trama corta; el resto cae dentro de una espera) | RED esperado |
+| trama de estado a D1 con sus 5 bytes, por `SioSession::step()` real | devuelve | **pierde**; el paso termina `Ignored`; 0 bytes transmitidos | RED esperado |
+| COMMAND liberado vs. todavía bajo | corta vs. pegado | corta (3 ms) y pegado (1 s) | GREEN |
+| error de recepción con la UART aparcada | no alcanzable | `read()` aparcada nunca falla: 0 `rx_err`, 1 lectura aparcada | GREEN (límite del modelo) |
+| fin de cinta, puertas cerradas, cinta expulsada, apagado visto | devuelve | devuelve en los cuatro | GREEN |
+| control negativo: MOTOR apagado y nada más | conserva la cinta | la conserva | GREEN |
+| control negativo: pulso de 3 ms con MOTOR encendido | conserva la cinta | la conserva | GREEN |
+| tras una devolución segura, trama de estado a D1 por `SioSession::step()` | respondida | `Completed`; 7 bytes: ACK `0x41`, COMPLETE `0x43`, 4 de estado y checksum | GREEN |
+| devolución pendiente (`release()` = `Pending`) | UART2 sigue aparcada | aparcada hasta `Done`; luego `Disk` y `parkedNow 0` | GREEN |
+
+*Total:* 11 RED esperados, 12 GREEN, 0 fallos inesperados. Resto del host 111/111; `check_layering` y
+`check_notices` OK.
+
+*Dónde aparece y dónde desaparece H2, en el modelo:* aparece con todo COMMAND de 8 ms o menos, en todas
+las fases probadas, aislado o repetido. Desaparece con 10 ms o más, porque COMMAND sigue bajo cuando
+termina la ventana (lectura aparcada de 6 ms más espera de liberación de 2 ms) y el árbitro lo ve. El
+umbral exacto entre 8 y 10 ms no se midió. Las otras vías de devolución no dependen de COMMAND y funcionan.
+
+*Seguridad de DATA IN:* ninguna prueba exige reactivar UART2 mientras la cinta controla GPIO21. En los
+casos perdidos `parkedNow` sigue en 1, no se transmite ningún byte, y con la devolución pendiente la UART
+sigue aparcada hasta que la cinta suelta la línea.
+
+*Fuera del modelo:* `sioTask()` completo, el transporte del menú (`MenuSioTransport`, dispositivo `$5A`;
+la trama de prueba va al disco D1), la memoria de unidades, el vigilante de alimentación y la tarea de la
+casetera. La cinta es un stub sin demoras. Las duraciones e intervalos son supuestos, no mediciones del
+65XE; ningún número de reintentos del Atari se da por real. **No** se atribuye H2 a «EL HOST NO
+RESPONDE». H2 sigue sin resolver y sin corrección.
+
 ## Riesgos pendientes antes de fusionar la PR #124
 
 Registro expreso (2026-11-28, pedido del responsable). La fusión la decide el responsable; nada de esta

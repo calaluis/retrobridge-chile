@@ -145,6 +145,27 @@ Si la consola no los expone, requiere un commit de diagnóstico acotado con RED�
 **Diseño de esa medición (sin implementar):** [registro de eventos SIO](cinta-data-in-65xe-eventos-sio.md),
 publicado para revisión independiente.
 
+**Medición mínima en lugar de la cola (`aa8ee49`, decisión del responsable):** el diseño de la cola queda en
+pausa. `sio status` muestra `data in: duenio …, aparcada …, lecturas_aparcada N`. `lecturas_aparcada` cuenta
+los `read()` hechos con la UART aparcada, que devuelven 0 bytes.
+
+**Cómo leer los deltas entre dos lecturas** (revisión de `aa8ee49`, M1). Una lectura aparcada termina como
+trama corta solo si COMMAND se libera después; si COMMAND sigue bajo, cuenta como `command_pegado`. Lo
+prueban `test_a_parked_read_with_command_released_is_a_short_frame` y
+`test_a_parked_read_with_command_stuck_is_not_a_short_frame`.
+
+| Δ`cortas` | Δ`lecturas_aparcada` | Qué se puede decir |
+|---|---|---|
+| > 0 | 0 | esas tramas cortas no vienen de lecturas aparcadas |
+| > 0 | > 0 | hubo de las dos clases; **no** prueba que sean los mismos intentos |
+| 0 | > 0 | hubo lecturas aparcadas; pudieron terminar en COMMAND pegado |
+| 0 | 0 | no constan esos sucesos en el intervalo |
+
+**Límites:** `duenio` y `aparcada` son el estado en el momento de la lectura, no un historial; no muestran
+una cesión breve que ya se revirtió. Los contadores son acumulados y no llevan hora. El perfil `uart` de
+`check_atomic_calls` confirma un almacenamiento con barrera en el objeto, no la secuencia de cada contador
+nuevo por separado.
+
 ## Scope
 
 - Paso 1 (este commit): diagnóstico que solo registra. `EspDataIn::hardwareFree()` guarda qué condición

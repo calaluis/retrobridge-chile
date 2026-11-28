@@ -190,6 +190,38 @@ expliquen el error visto con `3863461` es hipótesis, no está demostrado. Que e
 prueba que esté resuelto; el issue #125 sigue abierto. La retención de DATA IN tras la carga queda medida,
 sin efecto visible en el menú en estas pruebas.
 
+**Criterio de aceptación de #125, revisado (2026-11-27, decisión del responsable).**
+
+*Antecedente:* el criterio anterior decía: «tras una carga desde cinta, con MOTOR apagado, la primera orden
+del 65XE a una unidad (COMMAND bajo) devuelve DATA IN al disco (`DATA IN: cambio 6`) y esa unidad
+responde». *Por qué cambia:* en el 65XE real, después de cargar un juego en RAM, la única forma de volver
+al menú es apagar y encender el equipo con su interruptor físico. El criterio anterior describía una orden
+con la cinta todavía dueña de DATA IN, sin apagado entre medio; ese flujo no ocurre en el uso real.
+
+*Flujo que se acepta:* carga completa del juego → apagado físico → encendido físico → regreso al menú.
+
+*Se cumple cuando, en una misma prueba, la consola y la pantalla del 65XE muestran todo esto:*
+
+1. DATA IN vuelve al disco: `DATA IN: cambio 6, ahora disco` y `sio status` con `data in: duenio disco`.
+2. La UART deja de estar aparcada: `sio status` con `aparcada no`.
+3. La primera orden SIO después del encendido recibe respuesta: el menú aparece en pantalla y `ordenes`
+   sube sin `envio_fallido` ni `ack_fallido`.
+4. Después, desmontar `C:` (U) y montar otra cinta en `C:` (C) funciona sin «EL HOST NO RESPONDE».
+
+*Estado:* **pendiente.** La variante E de `f93ad2e` da evidencia de 1–3 en una prueba, reportada por
+Claude y el responsable. El punto 4, con otra cinta distinta, falta verificarlo. #125 sigue abierta hasta
+tener evidencia suficiente de los cuatro puntos.
+
+*Observado en el registro de E, sin concluir causa:* al apagar, fallan dos pasos de transporte, uno con
+la cinta aún dueña de DATA IN (1109698 ms) y otro durante la devolución (1109737 ms). La devolución la
+dispara COMMAND bajo, antes de que se detecte «65XE off» (1109842 ms). `lecturas_aparcada` subió en 2,
+pero el contador no lleva hora: **no** se afirma que esos dos fallos sean las dos lecturas aparcadas.
+
+*Riesgo que sigue abierto (H2 de la revisión de `afa7c03`):* en `sioTask()`, `g_station->step()` corre
+antes de leer COMMAND para `g_arbiter.step()`; un pulso de COMMAND durante ese paso podría no verlo el
+árbitro. Es hipótesis de lectura estática. La prueba de host de ese pulso queda pendiente, en evaluación
+aparte. Cambiar el criterio **no** descarta ese riesgo.
+
 ## Scope
 
 - Paso 1 (este commit): diagnóstico que solo registra. `EspDataIn::hardwareFree()` guarda qué condición
@@ -231,9 +263,9 @@ Fuera: H4, las puertas y los paquetes. Flashear y probar en el 65XE necesitan ap
 - [x] Revisión independiente, ronda 4 (`d1eb418`): sin bloqueante en el delta; no es prueba de carga.
 - [ ] Seguimiento aparte, fuera de esta PR — incidente «EL HOST NO RESPONDE» (prueba de `47e5f56`, tras el
   segmento 36): contrastar con la especificación las transiciones reales (COMMAND, `tapeEnded`, dueño del
-  árbitro, Release) con los registros `DATA IN diag:`. Criterio de aceptación: tras una carga, con MOTOR
-  apagado, la primera orden del 65XE a una unidad (COMMAND bajo) devuelve la línea al disco (`cambio 6`)
-  y esa unidad responde. El plazo de 60 ms no lo corrige por sí solo.
+  árbitro, Release) con los registros `DATA IN diag:`. Criterio de aceptación revisado (2026-11-27): ver
+  «Criterio de aceptación de #125, revisado» arriba; el criterio anterior queda ahí como antecedente.
+  Pendiente: punto 4 (U y C con otra cinta) y la prueba H2. El plazo de 60 ms no lo corrige por sí solo.
 - Fuera de alcance: H4 y la medición de GPIO36 siguen pendientes; ni la CI ni esta carga son aprobación
   eléctrica.
 - [x] Mensaje de carga — prueba: `test_menu_program` `MenuLoaderTest` (4): el texto está en pantalla antes

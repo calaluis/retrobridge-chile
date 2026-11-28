@@ -81,6 +81,9 @@ enum class PlayerPhase : uint8_t { Gap, Bytes, FskWait, FskPlay, FskDrain, End }
 class CassettePlayer {
 public:
     static constexpr uint32_t kMaxSend = 512;
+    // Bytes handed to ByteOut ahead of the one whose slot has begun (spec cassette-cas, Bytes seguidos,
+    // issue #126): the UART never runs dry in a record while the loop is less than one byte late.
+    static constexpr uint32_t kLeadBytes = 1;
     static constexpr uint64_t kBitsPerByte = 10;
     static constexpr uint64_t kUsPerSecond = 1000000;
 

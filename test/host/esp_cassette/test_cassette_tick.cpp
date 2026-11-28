@@ -408,12 +408,13 @@ void test_the_published_end_waits_for_uart2_and_then_gives_the_line_back()
         (void)step();
     }
     TEST_ASSERT_TRUE(arbiter.owner() == DataInOwner::Tape);
-    for (int i = 0; i < 20000 && !tape.player.atEnd(); ++i) {
+    for (int i = 0; i < 20000 && s.written.size() < 3; ++i) {
         (void)step();
     }
-    TEST_ASSERT_TRUE(tape.player.atEnd());
+    TEST_ASSERT_EQUAL_size_t(3, s.written.size());  // the last byte handed over
+    TEST_ASSERT_FALSE(dataIn->drained());           // the last byte is still on its way out
+    TEST_ASSERT_FALSE(tape.player.atEnd());         // issue #126: the record is not over yet
     motor.motor = false;
-    TEST_ASSERT_FALSE(dataIn->drained());  // the last byte is still on its way out
     int held = 0;
     DataInChange change = DataInChange::None;
     for (int i = 0; i < 200 && change == DataInChange::None; ++i) {
@@ -502,11 +503,12 @@ struct SharedChain {
             (void)step();
         }
         TEST_ASSERT_TRUE(arbiter.owner() == DataInOwner::Tape);
-        for (int i = 0; i < 20000 && !tape.player.atEnd(); ++i) {
+        for (int i = 0; i < 20000 && s.written.size() < 3; ++i) {
             (void)step();
         }
-        TEST_ASSERT_TRUE(tape.player.atEnd());
-        TEST_ASSERT_FALSE(dataIn->drained());  // the last byte is still on its way out
+        TEST_ASSERT_EQUAL_size_t(3, s.written.size());  // the last byte handed over
+        TEST_ASSERT_FALSE(dataIn->drained());           // the last byte is still on its way out
+        TEST_ASSERT_FALSE(tape.player.atEnd());         // issue #126: the record is not over yet
         motor.motor = false;
         commandLow = true;
         TEST_ASSERT_TRUE(step() == DataInChange::ReleaseRequested);

@@ -295,6 +295,9 @@ target_link_libraries(test_fsk_loader PRIVATE rb_cassette)
 # The player: records with MOTOR, FSK runs through the loader, MOTOR drop in a run (cassette-cas C104).
 rb_add_host_test(test_rb_cassette_player cassette/test_cassette_player.cpp)
 target_link_libraries(test_rb_cassette_player PRIVATE rb_cassette)
+# Issue #126 (H-A): inside a record the UART never goes idle between two bytes. RED in this branch.
+rb_add_host_test(test_record_continuity cassette/test_record_continuity.cpp)
+target_link_libraries(test_record_continuity PRIVATE rb_cassette)
 # `cas mount|status|eject|rewind`: a bad file keeps the tape, closing waits for the producer (cassette-cas C105).
 rb_add_host_test(test_cassette_commands cassette/test_cassette_commands.cpp)
 target_link_libraries(test_cassette_commands PRIVATE rb_cassette)

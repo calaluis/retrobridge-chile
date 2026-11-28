@@ -128,10 +128,16 @@ previa al envío. La incidencia de `60ac6e4` (`err_tx 3`) es otra observación y
 montar con C no la presta por sí solo, y el menú se atiende antes que el árbitro en el bucle. Que esa misma
 pulsación cause la falla sería circular. Queda como hipótesis un préstamo **anterior** o un estado heredado
 (UART aparcada).
-**SIO +5V 4780 mV:** `SioPowerWatch` solo declara apagado con menos de 1000 mV durante 100 ms, así que con
-4780 mV es coherente que no saliera el resumen. La contradicción con el 65XE indicado como apagado está sin
-aclarar, y `command_pegado` puede incluir tiempo con el Atari apagado. Hay que aclararla antes de
-interpretar la prueba.
+**SIO +5V 4780 mV (aclarado con el responsable, 2026-11-28):** no hubo contradicción. El 65XE estuvo
+encendido desde que el responsable lo conectó hasta la lectura de `sio status`. El botón «Listo, apagado»
+lo redactó el asistente con el sentido de «probé y apagué», y el responsable lo usó para avisar que iba a
+probar. Error de redacción del asistente. Con eso cuadra todo: 4780 mV es el valor con el Atari encendido;
+no salió el resumen porque no hubo apagado (`SioPowerWatch` lo exige con menos de 1000 mV durante 100 ms);
+`ordenes 1` corresponde a un solo arranque; y `command_pegado` no incluye tiempo con el Atari apagado.
+**El interruptor del 65XE es físico, no lógico:** corta la alimentación del equipo. No hay apagado por
+software ni modo de espera; ni el firmware ni el asistente pueden encenderlo, apagarlo ni consultar su
+posición. La placa solo infiere el estado por el pin +5V del SIO. Cada encendido o apagado es una acción
+manual del responsable, y una instrucción debe decir de forma explícita cuándo hacerla y cuándo avisarla.
 **Siguiente medición propuesta (sin aplicar):** registrar con marca de tiempo, antes y después de pulsar C,
 el dueño del árbitro, `parked()`, MOTOR, COMMAND, el estado de apagado y los deltas de `frames`,
 `shortFrames`, `stuckLows`, `menuCommands`, `menuRetries` y `err_rx/tx`, con los eventos Take/Release/ToDisk.

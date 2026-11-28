@@ -166,6 +166,30 @@ una cesión breve que ya se revirtió. Los contadores son acumulados y no llevan
 `check_atomic_calls` confirma un almacenamiento con barrera en el objeto, no la secuencia de cada contador
 nuevo por separado.
 
+**Prueba física con `f93ad2e` (2026-11-27, solo USB y SIO, 65XE operado por el responsable):** el error
+**no se reprodujo** en ninguna variante.
+
+| Variante | Qué se hizo | Resultado |
+|---|---|---|
+| A–C | menú, montar con C, ciclos repetidos | 14 órdenes, deltas 0 tras C |
+| D (variante 1) | apagar y encender el 65XE, luego U y C | 30 órdenes completas; Δcortas +2, Δpegado +1814, lecturas_aparcada 0 |
+| E (variante 2) | montar `.cas`, cargar el juego entero (~4 min), apagar, encender, montar con C | 38 órdenes completas; Δcortas +2, Δpegado +3849, Δlecturas_aparcada +2 |
+
+En todas: `envio_fallido`, `ack_fallido`, `checksum_malo`, `err_rx`, `err_tx` y fallos de UART en 0.
+
+**Observado en E:** DATA IN pasó a la cinta en 22 ms con MOTOR encendido. Tras la carga, MOTOR se apagó y
+la cinta **siguió siendo dueña de DATA IN unos 63 s**; volvió al disco solo al apagar el 65XE (cambios 5 y
+6). Cada apagado registra pasos de transporte fallidos (13 en D, 10 en E) justo antes de «65XE off».
+
+**Regla del equipo (responsable):** tras cargar un juego en RAM, la única forma de volver al menú es
+apagar y encender el 65XE con su interruptor físico. Por eso el menú no se usa mientras la cinta tiene
+DATA IN: el apagado se la devuelve al disco.
+
+**Acotado:** las tramas cortas y los COMMAND pegados coinciden con los encendidos y apagados del 65XE. Que
+expliquen el error visto con `3863461` es hipótesis, no está demostrado. Que el error no se reproduzca no
+prueba que esté resuelto; el issue #125 sigue abierto. La retención de DATA IN tras la carga queda medida,
+sin efecto visible en el menú en estas pruebas.
+
 ## Scope
 
 - Paso 1 (este commit): diagnóstico que solo registra. `EspDataIn::hardwareFree()` guarda qué condición

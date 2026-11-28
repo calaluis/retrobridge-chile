@@ -268,6 +268,38 @@ antes de leer COMMAND para `g_arbiter.step()`; un pulso de COMMAND durante ese p
 árbitro. Es hipótesis de lectura estática. La prueba de host de ese pulso queda pendiente, en evaluación
 aparte. Cambiar el criterio **no** descarta ese riesgo.
 
+## H2 en el host: pulso de COMMAND dentro del paso SIO (rama `test/issue-125-command-pulse`, 2026-11-28)
+
+Investigación pedida por el responsable. La rama parte de `7dac5a1` y **no** toca la PR #124. Solo añade
+una prueba de host; el comportamiento de producción no cambia.
+
+*Prueba:* `test/host/esp_sio/test_command_pulse.cpp` (`test_command_pulse`). Modela el orden de
+`sioTask()` en `main/menu_sio.cpp`: primero la ventana COMMAND (`SioLineTransport::waitCommandFrame` con
+`SioSession::kPollTimeoutUs`), después `commandHigh()` y `DataInArbiter::step()`. Usa la `EspSioUart`,
+la `SioLineTransport`, el `UartDiskLine` y el `DataInArbiter` reales sobre el tiempo de `fake_idf`
+(1 tick = 1 ms, como `CONFIG_FREERTOS_HZ=1000`). La cinta es un stub que siempre acepta.
+
+*Resultado (RED):*
+
+| Prueba | Resultado |
+|---|---|
+| pulso de 3 ms, MOTOR apagado, la cinta dueña | **FALLA**: el árbitro sigue en `Tape`; la ventana sí contó una trama corta |
+| 14 reintentos de 3 ms, MOTOR apagado | **FALLA**: sigue en `Tape`; 14 tramas cortas |
+| control: COMMAND bajo más que la ventana (como al apagar) | pasa: el árbitro devuelve DATA IN |
+| control: pulso de 3 ms con MOTOR encendido | pasa: la cinta se queda (regla 2) |
+
+*Mecanismo en el modelo:* con la UART aparcada, la lectura de la ventana espera `kFrameReadUs` (6 ms) y no
+toma nada; un COMMAND de unos 3 ms ya subió cuando el árbitro mira. El árbitro lee COMMAND como nivel, no
+como flanco, así que no ve la orden. Solo un COMMAND bajo más de unos 8 ms (lectura de 6 ms más la espera
+de liberación de 2 ms) llega al árbitro, como en el apagado de las variantes E y F.
+
+*Límites:* es un modelo del orden del bucle, no `sioTask()` ni el `SioSession` completo; no corre el
+despachador, el transporte del menú ni la tarea de la casetera. La duración de 3 ms del pulso es la de una
+trama de 5 bytes a 19200 baudios más t0/t1, no una medición en el 65XE. **No** demuestra que esta sea la
+causa de «EL HOST NO RESPONDE» de `3863461` ni de `47e5f56`. Con el flujo real (carga, apagado físico,
+encendido), el apagado devuelve la línea antes del menú, como se vio en E y F. H2 **no** queda resuelto:
+queda reproducido en el modelo de host, con corrección pendiente de decisión y revisión.
+
 ## Riesgos pendientes antes de fusionar la PR #124
 
 Registro expreso (2026-11-28, pedido del responsable). La fusión la decide el responsable; nada de esta
@@ -280,7 +312,7 @@ fusión); **no aprobado** (fuera de esta PR).
 | Riesgo | Dónde se sigue | Tipo para la decisión de fusión |
 |---|---|---|
 | Punto 3 de #125: primera orden relevante tras el encendido, no verificable con los registros actuales | #125 | Impide aceptar #125 |
-| H2: un pulso de COMMAND durante `g_station->step()` que el árbitro no ve | #125, prueba de host aparte | Impide aceptar #125 |
+| H2: un pulso de COMMAND durante `g_station->step()` que el árbitro no ve | #125; RED en el host en la rama `test/issue-125-command-pulse` | Impide aceptar #125 |
 | Punto 4 de #125: evidencia favorable de la variante F, revisada independientemente (una prueba) | #125 | Favorable; no basta para aceptar #125 sola |
 | BOOT ERROR en el primer intento de `international_karate.cas` | #126, con su propio criterio | Incidente externo, riesgo residual |
 | `envio_fallido 2` y respuesta cortada entre E1 y F0, sin registro | #127, con su propio criterio | Incidente externo, riesgo residual |

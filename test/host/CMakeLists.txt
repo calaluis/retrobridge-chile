@@ -397,6 +397,13 @@ rb_add_host_test(test_esp_sio_uart esp_sio/test_esp_sio_uart.cpp ${rb_root}/comp
 target_include_directories(test_esp_sio_uart PRIVATE ${rb_root}/components/rb_esp_sio/include)
 target_link_libraries(test_esp_sio_uart PRIVATE fake_idf)
 
+# Issue #125 H2: a COMMAND pulse inside the SIO step, then the arbiter, in main/menu_sio.cpp's order.
+rb_add_host_test(test_command_pulse esp_sio/test_command_pulse.cpp ${rb_root}/components/rb_esp_sio/src/esp_sio_uart.cpp
+                 ${rb_root}/main/sio_disk_line.cpp ${rb_root}/components/rb_menu/src/data_in_arbiter.cpp)
+target_include_directories(test_command_pulse PRIVATE ${rb_root}/components/rb_esp_sio/include
+                           ${rb_root}/components/rb_menu/include ${rb_root}/main)
+target_link_libraries(test_command_pulse PRIVATE fake_idf)
+
 
 rb_add_host_test(test_tnfs_folder menu/test_tnfs_folder.cpp ${rb_root}/components/rb_menu/src/tnfs_folder.cpp
                  ${rb_root}/components/rb_menu/src/menu_catalog.cpp)

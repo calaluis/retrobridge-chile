@@ -320,6 +320,26 @@ void test_motor_off_in_a_record_hands_nothing_more()
     }
 }
 
+// Review H1 of PR #128: a late tick (200 ms at 600 baud, about 12 slots) must not hand the missed bytes over at
+// once. At most kLeadBytes + 1 bytes are ever on their way; the missed time is not owed (the tape went slower
+// while the loop was late), and every byte of the record still goes out once, in order.
+void test_a_late_tick_hands_over_no_burst()
+{
+    Deck d(tape(600, 0, 40));
+    TEST_ASSERT_EQUAL_UINT32(2, d.uart.line.size());  // no gap: the two sync bytes at once
+    d.tickAt(200000);                                  // the loop comes back 200 ms late
+    TEST_ASSERT_TRUE_MESSAGE(d.uart.line.size() <= 4, "a burst after a late tick");
+    TEST_ASSERT_TRUE(d.uart.mostOnTheWay <= CassettePlayer::kLeadBytes + 1);
+    d.run(200000 + kLoopUs);
+    TEST_ASSERT_TRUE(d.player.atEnd());
+    TEST_ASSERT_TRUE(d.uart.mostOnTheWay <= CassettePlayer::kLeadBytes + 1);
+    const Bytes want = record(40, 0x10);
+    TEST_ASSERT_EQUAL_UINT32(want.size(), d.uart.line.size());
+    for (std::size_t i = 0; i < want.size(); ++i) {
+        TEST_ASSERT_EQUAL_UINT8(want[i], d.uart.line[i].value);
+    }
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -331,5 +351,6 @@ int main()
     RUN_TEST(test_next_gap_starts_after_the_last_byte_has_left);
     RUN_TEST(test_bytes_on_their_way_stay_bounded);
     RUN_TEST(test_motor_off_in_a_record_hands_nothing_more);
+    RUN_TEST(test_a_late_tick_hands_over_no_burst);
     return UNITY_END();
 }

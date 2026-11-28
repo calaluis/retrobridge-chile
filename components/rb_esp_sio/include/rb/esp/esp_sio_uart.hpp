@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -32,6 +33,22 @@ public:
     // (T9a.7). write() ends at the same line time with it: it still waits for uart_wait_tx_done().
     static constexpr int kSharedTxRing = 2048;
     static constexpr uint32_t kTxDoneMarginMs = 20;
+
+    // Issue #125 (PR #124): why write() failed, for the console. Written by the SIO task only, read by
+    // the console task: atomics, each field read on its own (review of PR #124, H1). Only aligned 32-bit
+    // loads and stores; lock-freedom is checked on the host only, as in data_in_handover.hpp.
+    struct WriteFailures {
+        std::atomic<uint32_t> notReady{0};    // not installed, or parked for the cassette
+        std::atomic<uint32_t> shortWrite{0};  // uart_write_bytes() took fewer bytes
+        std::atomic<uint32_t> txNotDone{0};   // the bytes were not out within the line time + kTxDoneMarginMs
+        std::atomic<uint32_t> lastBytes{0};   // the size of the last failed write
+        std::atomic<uint32_t> lastWaitMs{0};  // how long the last shortWrite or txNotDone write() took
+        std::atomic<uint32_t> maxWriteMs{0};  // the longest write(), failed or not; not a command's latency
+        // Issue #125: a read() while parked returns 0 bytes (counted as a short frame upstream).
+        std::atomic<uint32_t> readsWhileParked{0};
+        std::atomic<uint32_t> parkedNow{0};  // 1 while parked, published for the console
+    };
+    const WriteFailures& writeFailures() const noexcept { return failures_; }
 
     explicit EspSioUart(Pins pins, int txRing = kUartTxBuffer) noexcept : pins_(pins), txRing_(txRing) {}
     EspSioUart(const EspSioUart&) = delete;
@@ -67,6 +84,7 @@ private:
     int txRing_;
     bool ready_ = false;
     bool parked_ = false;
+    WriteFailures failures_{};
 };
 
 }  // namespace rb::esp

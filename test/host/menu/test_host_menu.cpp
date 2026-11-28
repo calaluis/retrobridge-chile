@@ -238,7 +238,7 @@ void test_menu_disk_is_a_valid_single_density_atr_with_the_program()
     std::array<uint8_t, 128> sector{};
     TEST_ASSERT_TRUE(image.value().readSector(rb::domain::SectorNumber::from(1).value(), Span<uint8_t>{sector}).ok());
     TEST_ASSERT_EQUAL_UINT8_ARRAY(MenuImage::block().data(), sector.data(), 128);
-    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuLoadSectors, sector[1]);
+    TEST_ASSERT_EQUAL_UINT8(rb::host::kMenuBootSectors, sector[1]);  // the loader (fix-cinta-data-in-65xe)
     TEST_ASSERT_TRUE(image.value().readSector(rb::domain::SectorNumber::from(720).value(), Span<uint8_t>{sector}).ok());
     for (uint8_t byte : sector) {
         TEST_ASSERT_EQUAL_UINT8(0, byte);
@@ -526,6 +526,70 @@ void test_key_command_gets_ack_then_the_screen_in_blocks_with_checksum()
     TEST_ASSERT_EQUAL_UINT(1, rig.transport.stats().menuCommands);
 }
 
+// Issue #125 (PR #124): the two silent ends of a menu command are counted, and the time of the reply
+// (end of the ACK to the last byte out) is kept, so the console can say which one the Atari met.
+void test_a_menu_frame_with_a_bad_checksum_is_counted_and_not_answered()
+{
+    DecoratorRig rig;
+    auto bad = frame(0x5A, 0x4B, K1);
+    bad[4] = static_cast<uint8_t>(bad[4] ^ 0xFF);
+    rig.inner.push_frame(bad);
+    TEST_ASSERT_FALSE(rig.transport.waitCommandFrame(20000).ok());
+    TEST_ASSERT_EQUAL_UINT(0, rig.inner.sends());
+    TEST_ASSERT_EQUAL_UINT(1, rig.transport.stats().menuBadChecksums);
+    TEST_ASSERT_EQUAL_UINT(0, rig.transport.stats().menuCommands);
+}
+
+// Review of PR #124 (H2): an ACK that cannot be sent is counted apart from a reply block.
+void test_an_ack_that_cannot_be_sent_is_counted_and_nothing_follows()
+{
+    DecoratorRig rig;
+    rig.inner.fail_send(0);  // the ACK
+    rig.inner.push_frame(frame(0x5A, 0x4B, K1));
+    TEST_ASSERT_FALSE(rig.transport.waitCommandFrame(20000).ok());
+    TEST_ASSERT_EQUAL_UINT(1, rig.transport.stats().menuAckFailures);
+    TEST_ASSERT_EQUAL_UINT(0, rig.transport.stats().menuSendFailures);
+    TEST_ASSERT_EQUAL_UINT(0, rig.inner.sends());  // the ACK failed (not recorded): no reply follows
+}
+
+void test_a_reply_block_that_cannot_be_sent_is_counted()
+{
+    DecoratorRig rig;
+    rig.inner.fail_send(2);  // ACK (0) and the first block (1) go out; the second block fails
+    rig.inner.push_frame(frame(0x5A, 0x4B, K1));
+    TEST_ASSERT_FALSE(rig.transport.waitCommandFrame(20000).ok());
+    TEST_ASSERT_EQUAL_UINT(1, rig.transport.stats().menuSendFailures);
+    TEST_ASSERT_EQUAL_UINT(0, rig.transport.stats().menuAckFailures);
+    TEST_ASSERT_EQUAL_UINT(2, rig.inner.sends());  // nothing after the failed block
+}
+
+// Review of PR #124 (M2): a reply cut off by a failed block is not a complete reply. Its time goes to
+// its own counter, so the complete-reply times stay what a whole screen takes.
+void test_an_interrupted_reply_is_not_timed_as_a_complete_one()
+{
+    DecoratorRig rig;
+    rig.inner.fail_send(2);
+    rig.inner.push_frame(frame(0x5A, 0x4B, K1));
+    TEST_ASSERT_FALSE(rig.transport.waitCommandFrame(20000).ok());
+    TEST_ASSERT_EQUAL_UINT32(0, rig.transport.stats().lastReplyUs);
+    TEST_ASSERT_EQUAL_UINT32(0, rig.transport.stats().maxReplyUs);
+    TEST_ASSERT_TRUE(rig.transport.stats().lastInterruptedUs > 0);
+}
+
+void test_the_reply_time_covers_the_whole_screen()
+{
+    DecoratorRig rig;
+    TEST_ASSERT_EQUAL_UINT32(0, rig.transport.stats().maxReplyUs);
+    rig.inner.push_frame(frame(0x5A, 0x4B, K1));
+    TEST_ASSERT_FALSE(rig.transport.waitCommandFrame(20000).ok());
+    const auto& stats = rig.transport.stats();
+    // 964 bytes at 19200 baud: about 502 ms, plus the delay before COMPLETE.
+    TEST_ASSERT_TRUE(stats.lastReplyUs >= rb::test::sio_byte_time_us(964));
+    TEST_ASSERT_TRUE(stats.lastReplyUs < rb::test::sio_byte_time_us(964) + 2000);
+    TEST_ASSERT_EQUAL_UINT32(stats.lastReplyUs, stats.maxReplyUs);
+    TEST_ASSERT_EQUAL_UINT(0, stats.menuSendFailures);
+}
+
 // Collects the 964 bytes of one reply (sends first..first+3).
 std::array<uint8_t, 964> replyStream(const rb::test::ScriptedSioTransport& inner, unsigned first)
 {
@@ -726,6 +790,11 @@ int main()
     RUN_TEST(test_second_request_while_one_is_in_flight_is_refused);
     RUN_TEST(test_shift_and_control_do_not_change_a_key);
     RUN_TEST(test_key_command_gets_ack_then_the_screen_in_blocks_with_checksum);
+    RUN_TEST(test_a_menu_frame_with_a_bad_checksum_is_counted_and_not_answered);
+    RUN_TEST(test_an_ack_that_cannot_be_sent_is_counted_and_nothing_follows);
+    RUN_TEST(test_a_reply_block_that_cannot_be_sent_is_counted);
+    RUN_TEST(test_an_interrupted_reply_is_not_timed_as_a_complete_one);
+    RUN_TEST(test_the_reply_time_covers_the_whole_screen);
     RUN_TEST(test_a_key_repeated_by_siov_is_answered_again_but_applied_once);
     RUN_TEST(test_a_mount_whose_reply_was_lost_to_break_is_applied_once_then_break_shows_main);
     RUN_TEST(test_a_redraw_forgets_the_last_key);

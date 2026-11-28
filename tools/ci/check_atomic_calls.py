@@ -69,7 +69,28 @@ PROGRESS = {
     "rb::menusio::ProgressSink::publish(": "store",
     "rb::menusio::tapeEnded(": "load",
 }
-PROFILES = {"handover": REQUIRED, "progress": PROGRESS}
+# fix-cinta-data-in-65xe (review PR #124, H1): the take diagnostics, written by the cassette task and read
+# by the SIO task. "probe": EspDataIn's hardwareFree() counters (esp_data_in.cpp). "tick": the cassette
+# loop's last tick (cassette_service.cpp).
+PROBE = {
+    "rb::esp::EspDataIn::hardwareFree(": "store",
+    "rb::esp::EspDataIn::hardwareProbeCalls(": "load",
+}
+TICK = {
+    "rb::esp::CassetteService::loop(": "store",
+    "rb::esp::CassetteService::lastTickUs(": "load",
+}
+# fix-cinta-data-in-65xe (review PR #124, M1): the issue #125 counters, written by the SIO task and read by
+# the console. "uart": EspSioUart's write failures (esp_sio_uart.cpp); "menu": MenuSioTransport's counters
+# (menu_sio_transport.cpp). A key may list alternatives with "|": the release store is in the function
+# itself, or in the file's bump() helper when the compiler does not inline it.
+UART = {
+    "rb::esp::EspSioUart::write(|rb::esp::(anonymous namespace)::bump(": "store",
+}
+MENU = {
+    "rb::host::MenuSioTransport::|rb::host::(anonymous namespace)::bump(": "store",
+}
+PROFILES = {"handover": REQUIRED, "progress": PROGRESS, "probe": PROBE, "tick": TICK, "uart": UART, "menu": MENU}
 FUNCTION = re.compile(r"^[0-9a-f]+ <(.+)>:$")
 INSTRUCTION = re.compile(r"^\s*[0-9a-f]+:\s+[0-9a-f]+\s+([a-z0-9.]+)")
 
@@ -105,7 +126,8 @@ def missing_accesses(disassembly, required=None):
     found = functions(disassembly)
     problems = []
     for prefix, kind in (REQUIRED if required is None else required).items():
-        names = [name for name in found if name.startswith(prefix)]
+        alternatives = tuple(prefix.split("|"))
+        names = [name for name in found if name.startswith(alternatives)]
         if not names:
             problems.append(f"{prefix}...) no está en el objeto")
         elif not any(has_access(found[name], kind) for name in names):

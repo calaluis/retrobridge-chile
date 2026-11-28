@@ -151,8 +151,70 @@ class ProgressAccesses(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("tapeEnded", problems[0])
 
+    def test_the_take_diagnostic_profiles_do_not_accept_the_progress_object(self):
+        # fix-cinta-data-in-65xe: each new profile names its own functions; another object fails them all.
+        self.assertEqual(len(cac.missing_accesses(PROGRESS, cac.PROFILES["probe"])), 2)
+        self.assertEqual(len(cac.missing_accesses(PROGRESS, cac.PROFILES["tick"])), 2)
+
     def test_the_byte_accesses_are_counted(self):
         self.assertEqual(cac.plain_accesses(PROGRESS), {"l32i.n": 1, "memw": 2, "s8i": 1, "l8ui": 1})
+
+
+# fix-cinta-data-in-65xe (review PR #124, M1): the issue #125 counters. Synthetic listings in the shape of
+# the real ones: the release store is in write() itself, or in the bump() helper when it is not inlined.
+UART_WRITE = """
+00000000 <rb::esp::EspSioUart::write(rb::core::Span<unsigned char const>)>:
+   0:	004136        	entry	a1, 32
+  23:	0020c0        	memw
+  26:	0289      	s32i.n	a8, a2, 0
+  2d:	f01d      	retw.n
+"""
+
+UART_BUMP = """
+00000000 <rb::esp::(anonymous namespace)::bump(std::atomic<unsigned long>&)>:
+   0:	004136        	entry	a1, 32
+   3:	0288      	l32i.n	a8, a2, 0
+   6:	0020c0        	memw
+   9:	0289      	s32i.n	a8, a2, 0
+   d:	f01d      	retw.n
+
+00000000 <rb::esp::EspSioUart::write(rb::core::Span<unsigned char const>)>:
+   0:	004136        	entry	a1, 32
+   6:	0008e0        	callx8	a8
+   d:	f01d      	retw.n
+"""
+
+MENU_SERVE = """
+00000000 <rb::host::MenuSioTransport::serveMenu(rb::app::CommandBytes const&)>:
+   0:	004136        	entry	a1, 32
+  23:	0020c0        	memw
+  26:	0289      	s32i.n	a8, a2, 0
+  2d:	f01d      	retw.n
+"""
+
+
+class IssueCounters(unittest.TestCase):
+    def test_the_uart_counters_pass_when_write_stores_with_a_barrier(self):
+        self.assertEqual(cac.missing_accesses(UART_WRITE, cac.PROFILES["uart"]), [])
+
+    def test_the_uart_counters_pass_when_the_store_is_in_bump(self):
+        self.assertEqual(cac.missing_accesses(UART_BUMP, cac.PROFILES["uart"]), [])
+
+    def test_the_menu_counters_pass_when_serve_menu_stores_with_a_barrier(self):
+        self.assertEqual(cac.missing_accesses(MENU_SERVE, cac.PROFILES["menu"]), [])
+
+    def test_a_store_without_its_barrier_fails_the_uart_profile(self):
+        broken = UART_WRITE.replace("  23:\t0020c0        \tmemw\n", "")
+        self.assertNotEqual(broken, UART_WRITE)
+        self.assertEqual(len(cac.missing_accesses(broken, cac.PROFILES["uart"])), 1)
+
+    def test_another_object_fails_the_counter_profiles(self):
+        self.assertEqual(len(cac.missing_accesses(PROGRESS, cac.PROFILES["uart"])), 1)
+        self.assertEqual(len(cac.missing_accesses(PROGRESS, cac.PROFILES["menu"])), 1)
+        self.assertEqual(len(cac.missing_accesses(UART_WRITE, cac.PROFILES["menu"])), 1)
+
+    def test_a_libatomic_call_in_the_counters_object_is_caught(self):
+        self.assertTrue(cac.lock_calls(UART_WRITE + LIBATOMIC))
 
 
 if __name__ == "__main__":

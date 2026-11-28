@@ -209,6 +209,12 @@ class Menu6502:
                 self.compare(self.y, self.read(ab)); pc += 3
             elif op == 0xCD:
                 self.compare(self.a, self.read(ab)); pc += 3
+            elif op == 0xA0:
+                self.y = imm; self.flags(self.y); pc += 2
+            elif op == 0x88:
+                self.y = (self.y - 1) & 0xFF; self.flags(self.y); pc += 1
+            elif op == 0x91:
+                self.mem[self.word(zp) + self.y] = self.a; pc += 2
             elif op == 0xB9:
                 self.a = self.read(ab + self.y); self.flags(self.a); pc += 3
             else:
@@ -1001,6 +1007,92 @@ class MenuProgramTest(unittest.TestCase):
         self.assertEqual(make_menu.screen_line("A a!")[:4], bytes([0x21, 0x00, 0x61, 0x01]))
         with self.assertRaises(ValueError):
             make_menu.screen_line("x" * 41)
+
+
+class MenuLoaderTest(unittest.TestCase):
+    """fix-cinta-data-in-65xe: from the first command to the menu, the 65XE shows LOADER_TEXT.
+
+    D1 starts with the loader's sectors (boot record at LOADER_ORG, in page 6, which the menu
+    never uses), then the menu block exactly as before. The OS loads only the loader and runs it
+    at LOADER_ORG + 6. It writes the text on the OS screen (SAVMSC), reads every sector of the
+    menu block to MENU_ORG, in order, and jumps to the menu. A sector that cannot be read goes to
+    the OS cold start, which boots D1 again.
+    """
+
+    OS_SCREEN = 0xBC40  # where SAVMSC points during the boot of a 65XE (any address will do here)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.menu, cls.labels = make_menu.menu_program()
+        cls.disk = make_menu.disk_block()
+        cls.boot = cls.disk[1]
+
+    def boot_menu(self, fail_sector=None):
+        reads, seen = [], []
+        holder = {}  # cpu; and "menu": the block in memory when the menu asks its first screen
+
+        def siov(dcb):
+            if dcb["device"] == make_menu.DISK_DEVICE:
+                cpu = holder["cpu"]
+                seen.append(bytes(cpu.mem[self.OS_SCREEN:self.OS_SCREEN + 40]))
+                sector = dcb["aux1"] | dcb["aux2"] << 8
+                reads.append((sector, dcb["buffer"], dcb["command"], dcb["unit"], dcb["dstats"], dcb["length"]))
+                if sector == fail_sector:
+                    return None
+                return self.disk[(sector - 1) * 128:sector * 128]
+            holder.setdefault("menu", bytes(holder["cpu"].mem[ORG:ORG + len(self.menu)]))
+            return host_reply(0, 0)
+
+        cpu = Menu6502(b"", [], siov, self.labels)
+        holder["cpu"] = cpu
+        loader = self.disk[:self.boot * 128]
+        cpu.mem[make_menu.LOADER_ORG:make_menu.LOADER_ORG + len(loader)] = loader
+        cpu.mem[make_menu.SAVMSC] = self.OS_SCREEN & 0xFF
+        cpu.mem[make_menu.SAVMSC + 1] = self.OS_SCREEN >> 8
+        result = cpu.run_until_idle(make_menu.LOADER_ORG + 6)
+        self.at_menu = holder.get("menu")
+        return cpu, result, reads, seen
+
+    def test_d1_is_the_loader_then_the_menu_block_unchanged(self):
+        self.assertEqual(self.disk[0], 0x00)
+        self.assertEqual(self.disk[2] | self.disk[3] << 8, make_menu.LOADER_ORG)
+        self.assertEqual(make_menu.LOADER_ORG >> 8, 0x06)
+        init = self.disk[4] | self.disk[5] << 8
+        self.assertEqual(self.disk[init - make_menu.LOADER_ORG], 0x60)  # RTS (DOSINI)
+        self.assertEqual(self.disk[self.boot * 128:], self.menu)
+        self.assertEqual(len(self.disk) % 128, 0)
+        self.assertLessEqual(make_menu.LOADER_ORG + self.boot * 128, make_menu.MENU_ORG)
+
+    def test_the_text_is_on_the_screen_before_the_first_sector_is_read(self):
+        _, _, reads, seen = self.boot_menu()
+        self.assertTrue(reads)
+        self.assertEqual(make_menu.LOADER_TEXT, "Cargando RetroBridge...")
+        expected = make_menu.screen_codes(make_menu.LOADER_TEXT, len(make_menu.LOADER_TEXT))
+        column = make_menu.LOADER_COLUMN
+        self.assertEqual(seen[0][column:column + len(expected)], expected)
+        self.assertEqual(seen[0][:column], bytes(column))  # nothing written left of the text
+
+    def test_the_loader_reads_the_menu_block_in_order_and_starts_the_menu(self):
+        cpu, result, reads, _ = self.boot_menu()
+        menu_sectors = len(self.menu) // 128
+        self.assertEqual([(r[0], r[1]) for r in reads],
+                         [(self.boot + n, ORG + (n - 1) * 128) for n in range(1, menu_sectors + 1)])
+        for _, _, command, unit, dstats, length in reads:
+            self.assertEqual((command, unit, dstats, length), (make_menu.DISK_READ, 1, 0x40, 128))
+        # The menu writes its own variables before it asks; the code and data it loaded are the block's.
+        loaded = bytearray(self.at_menu)
+        for name in ("seq", "fire_down", "stick_prev"):
+            loaded[self.labels[name] - ORG] = self.menu[self.labels[name] - ORG]
+        self.assertEqual(bytes(loaded[:self.labels["send"] - ORG]), self.menu[:self.labels["send"] - ORG])
+        self.assertEqual(result, "waiting")
+        menu_calls = [c for c in cpu.siov_calls if c["device"] == make_menu.MENU_DEVICE]
+        self.assertEqual(len(menu_calls), 1, "the menu asks the host for its screen once")
+
+    def test_a_sector_that_cannot_be_read_boots_again(self):
+        cpu, result, reads, _ = self.boot_menu(fail_sector=self.boot + 2)
+        self.assertEqual(result, "coldstart")
+        self.assertEqual(reads[-1][0], self.boot + 2)
+        self.assertFalse([c for c in cpu.siov_calls if c["device"] == make_menu.MENU_DEVICE])
 
 
 if __name__ == "__main__":

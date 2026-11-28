@@ -118,6 +118,16 @@ public:
     // The UART could not take DATA IN back: the pin is reset (no output) and everything is refused.
     bool faulted() const noexcept { return faulted_; }
     uint32_t pinFaults() const noexcept { return pinFaults_; }  // times the UART refused the pin
+
+    // Diagnostics (fix-cinta-data-in-65xe, review PR #124 H1): hardwareFree() counts its calls and its
+    // refusals and keeps the last call's busy bits (kBusy*). Only the cassette task writes them (plain
+    // 32-bit loads and stores, no read-modify-write); any task reads them. Out of line, in
+    // esp_data_in.cpp, so tools/ci/check_atomic_calls.py checks the object.
+    static constexpr uint32_t kBusyDisabled = 1, kBusyFaulted = 2, kBusyChannel = 4, kBusyReleasePending = 8,
+                              kBusySending = 16, kBusyFeed = 32, kBusyTx = 64;
+    uint32_t hardwareProbeCalls() const noexcept;
+    uint32_t hardwareProbeRefusals() const noexcept;
+    uint32_t hardwareProbeLastBusy() const noexcept;
     // Explicit recovery: gives the pin back to the UART. True when not (or no longer) faulted. Shared mode:
     // true only once the GPIO matrix reads UART2 TX with the output on; otherwise the pin is reset again.
     bool recover() noexcept;
@@ -173,6 +183,9 @@ private:
     bool discardFeed_ = false;   // a cancelled or dropped run: clear the feed once the RMT is disabled
     CallTrace trace_ = nullptr;
     uint32_t lastSize_ = 0;     // feed size at the previous pump()
+    mutable std::atomic<uint32_t> probeCalls_{0};     // diagnostics only: see hardwareProbeCalls()
+    mutable std::atomic<uint32_t> probeRefusals_{0};
+    mutable std::atomic<uint32_t> probeLastBusy_{0};
     uint8_t dummy_ = 0;         // rmt_transmit() wants a payload; the encoder reads the feed
     uint32_t slots_[kFeedPortions] = {};
     rb::cassette::FskSymbolFeed feed_;

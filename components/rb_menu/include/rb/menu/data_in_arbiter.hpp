@@ -91,7 +91,11 @@ enum class DataInChange {
 class DataInArbiter {
 public:
     static constexpr uint64_t kRetryUs = 100000;         // a failed or expired request, again after 100 ms
-    static constexpr uint64_t kTakeTimeoutUs = 20000;    // 10 cassette ticks (plan §2.4)
+    // Plan §2.4, fix-cinta-data-in-65xe: with MOTOR on the 65XE sends no COMMAND frame, so the SIO task
+    // steps only after a whole 20 ms poll (SioSession::kPollTimeoutUs). 20 ms expired every take on the
+    // 65XE although the cassette confirmed in 2 ms. 60 ms covers two idle SIO steps (main/menu_sio.cpp
+    // checks it at compile time); an ack at or after the deadline is still ignored.
+    static constexpr uint64_t kTakeTimeoutUs = 60000;
     static constexpr uint64_t kReleaseTimeoutUs = 600000;  // 32 bytes at 600 baud + RMT + margin (decision 3)
 
     DataInArbiter(DiskLine& disk, TapeLine& tape) noexcept : disk_(disk), tape_(tape) {}

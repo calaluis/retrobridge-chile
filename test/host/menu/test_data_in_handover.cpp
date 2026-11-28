@@ -170,6 +170,26 @@ struct Rig {
                                   "the disk serves frames only while the arbiter says Disk");
     }
 
+    // The 65XE with MOTOR on sends no COMMAND frame: each SIO step waits its whole poll (20 ms,
+    // SioSession::kPollTimeoutUs) plus the step's own work, while the cassette ticks every 2 ms.
+    DataInChange stepAfterIdlePoll(const DataInInputs& in, uint64_t sioPeriodUs)
+    {
+        const uint64_t until = now + sioPeriodUs;
+        while (now + kTickUs <= until) {
+            now += kTickUs;
+            cassette.tick();
+        }
+        now = until;
+        g_counting = true;
+        const DataInChange change = arbiter.step(in, now);
+        g_counting = false;
+        check();
+        if (change != DataInChange::None) {
+            ++changes;
+        }
+        return change;
+    }
+
     // Steps until `change` is returned; fails after `limit` steps.
     void stepUntil(const DataInInputs& in, DataInChange change, int limit = 2000)
     {
@@ -284,6 +304,26 @@ void test_a_take_waits_for_the_cassette_with_no_transmitter()
     TEST_ASSERT_TRUE(rig.cassette.driving);
 }
 
+// fix-cinta-data-in-65xe (65XE, e286c35): with MOTOR on the Atari only listens, so the SIO task steps
+// every ~21.5 ms (20 ms poll + work). The cassette confirmed in 2 ms, yet every take expired at 21-22 ms:
+// the deadline is checked before the ack. A take confirmed in time must reach Tape on the next step.
+void test_a_take_confirmed_in_time_reaches_the_tape_when_the_sio_step_waits_a_whole_poll()
+{
+    constexpr uint64_t kIdleSioStepUs = 20000 + 1500;  // SioSession::kPollTimeoutUs + the step's work
+    Rig rig;
+    rig.cassette.takeDelay = 1;  // the cassette's next tick: free, confirmed
+    TEST_ASSERT_TRUE(rig.stepAfterIdlePoll(playing(), kIdleSioStepUs) == DataInChange::TakeRequested);
+    TEST_ASSERT_TRUE(rig.stepAfterIdlePoll(playing(), kIdleSioStepUs) == DataInChange::ToTape);
+    TEST_ASSERT_TRUE(rig.arbiter.owner() == DataInOwner::Tape);
+    TEST_ASSERT_TRUE(rig.cassette.driving);
+}
+
+// The deadline covers two whole idle SIO steps, so one late step never expires a confirmed take.
+void test_the_take_deadline_covers_two_idle_sio_steps()
+{
+    TEST_ASSERT_TRUE(DataInArbiter::kTakeTimeoutUs > 2 * (20000 + 1500));
+}
+
 // A full load: take, MOTOR pauses, end of the tape -> ReleasePending -> Disk, resume() once.
 void test_a_release_resumes_the_disk_only_after_the_cassette_confirms_disk()
 {
@@ -304,7 +344,7 @@ void test_a_release_resumes_the_disk_only_after_the_cassette_confirms_disk()
     TEST_ASSERT_EQUAL(1, rig.disk.resumes);
 }
 
-// A confirmation with another sequence is not ours: Done never comes; the take expires at 20 ms.
+// A confirmation with another sequence is not ours: Done never comes; the take expires at its deadline.
 void test_a_confirmation_with_another_sequence_is_ignored()
 {
     Rig rig;
@@ -324,10 +364,10 @@ void test_a_confirmation_with_another_sequence_is_ignored()
 void test_an_expired_take_becomes_a_release_and_a_late_tape_ack_is_ignored()
 {
     Rig rig;
-    rig.cassette.takeDelay = 15;  // 30 ms: after the 20 ms deadline
+    rig.cassette.takeDelay = static_cast<int>(DataInArbiter::kTakeTimeoutUs / kTickUs) + 5;  // after the deadline
     rig.cassette.releaseDelay = 2;
     TEST_ASSERT_TRUE(rig.step(playing()) == DataInChange::TakeRequested);
-    rig.stepUntil(playing(), DataInChange::TakeTimedOut, 20);
+    rig.stepUntil(playing(), DataInChange::TakeTimedOut, 40);
     TEST_ASSERT_TRUE(rig.arbiter.owner() == DataInOwner::ReleasePending);
     TEST_ASSERT_EQUAL(0, rig.disk.resumes);
     // The cassette now sees the release (a new sequence) and answers it; the old take is never answered.
@@ -346,11 +386,11 @@ void test_an_expired_take_becomes_a_release_and_a_late_tape_ack_is_ignored()
 void test_a_tape_ack_racing_the_deadline_never_resumes_the_disk_under_the_tape()
 {
     Rig rig;
-    rig.cassette.takeDelay = 10;  // exactly at the deadline: the SIO task has already moved on
+    rig.cassette.takeDelay = static_cast<int>(DataInArbiter::kTakeTimeoutUs / kTickUs);  // exactly at the deadline
     rig.cassette.releaseDelay = 3;
     rig.step(playing());
-    rig.stepUntil(playing(), DataInChange::TakeTimedOut, 20);
-    rig.stepUntil(playing(), DataInChange::ToDisk, 20);
+    rig.stepUntil(playing(), DataInChange::TakeTimedOut, 40);
+    rig.stepUntil(playing(), DataInChange::ToDisk, 40);
     TEST_ASSERT_TRUE(rig.arbiter.owner() == DataInOwner::Disk);
     TEST_ASSERT_FALSE(rig.cassette.driving);
 }
@@ -533,6 +573,8 @@ int main(void)
     RUN_TEST(test_the_tape_line_publishes_once_and_polls);
     RUN_TEST(test_an_abandoned_request_ignores_its_late_ack);
     RUN_TEST(test_a_take_waits_for_the_cassette_with_no_transmitter);
+    RUN_TEST(test_a_take_confirmed_in_time_reaches_the_tape_when_the_sio_step_waits_a_whole_poll);
+    RUN_TEST(test_the_take_deadline_covers_two_idle_sio_steps);
     RUN_TEST(test_a_release_resumes_the_disk_only_after_the_cassette_confirms_disk);
     RUN_TEST(test_a_confirmation_with_another_sequence_is_ignored);
     RUN_TEST(test_an_expired_take_becomes_a_release_and_a_late_tape_ack_is_ignored);

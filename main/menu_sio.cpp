@@ -44,9 +44,12 @@
 #include "rb/menu/startup_flags.hpp"
 #include "rb/menu/storage_reason.hpp"
 #include "rb/sio/sio_line_transport.hpp"
+#include "rb/sio/sio_session.hpp"
 
 #include "esp_pthread.h"
 #include "esp_tape_deck.hpp"
+#include "data_in_diag.hpp"
+#include "sio_loop_diag.hpp"
 #include "tape_gates.hpp"
 #include "tnfs_link.hpp"
 #include "tnfs_loader.hpp"
@@ -54,6 +57,11 @@
 #include "wifi_station.hpp"
 
 namespace rb::menusio {
+
+// fix-cinta-data-in-65xe: a take confirmed in time must never expire while the SIO task waits a whole
+// idle poll (MOTOR on: the 65XE sends no COMMAND frame). Two idle polls, plus their work, fit in the deadline.
+static_assert(rb::host::DataInArbiter::kTakeTimeoutUs > 2u * (rb::sio::SioSession::kPollTimeoutUs + 5000u),
+              "the DATA IN take deadline must cover two idle SIO steps");
 
 namespace {
 
@@ -146,6 +154,7 @@ std::atomic<bool> g_catalogApplied{false};  // written by the SIO task only
 
 // Boot timing (esp_timer: microseconds since the application started; the ROM and the bootloader come first).
 int64_t g_readyUs = 0;                     // D1 served
+std::atomic<uint32_t> g_dataInOwner{0};  // issue #125: g_arbiter.owner(), published by the SIO task
 std::atomic<int64_t> g_firstFrameUs{0};    // first COMMAND frame from the Atari (complete or short)
 int g_boot5vMv = -1;                       // SIO +5V at start(); -1: not readable
 rb::hwdiag::BootRecord g_boot{};
@@ -170,6 +179,7 @@ constexpr int64_t kPowerSampleUs = 50000;  // plan §4: the SIO task samples the
 // (review of PR #85): with the plan seen the deck is seen too, gives the deck to the controller between
 // two frames and only then applies the plan, so the restore of C: always has it; and pumps it every step.
 const rb::board::BoardProfile* g_board = nullptr;  // start(): the gates come from it
+const rb::esp::CassetteService* g_cassetteDiag = nullptr;  // diagnostics only (fix-cinta-data-in-65xe)
 EspTapeDeck* g_tape = nullptr;                     // finish() creates it; then the SIO task only
 bool g_tapeApplied = false;                        // SIO task only
 rb::host::StartupFlags g_startup;                  // finish(): publishTape(), then publishPlan()
@@ -398,6 +408,125 @@ void driveSaveTask(void*)
     }
 }
 
+// Diagnostics (fix-cinta-data-in-65xe, 65XE test of 2026-11-26): why the tape's take of DATA IN expires.
+// Logs only; it changes no decision. Per take (review PR #124, H1 and H2): the hardwareFree() counters
+// just before the arbiter step that asks it, and when it ended, so the verdict is this take's (TakeDiag and
+// stepWithTakeBaseline, main/data_in_diag.hpp). `lastBusy` is indicative (three separate atomics). Also how
+// old the cassette loop's last tick is. While DATA IN is not the disk's, the state every 2 s. Expired
+// takes: the first 10, then every 50th.
+rb::menusio::TakeDiag g_takeDiag;  // SIO task only
+rb::menusio::SioLoopDiag g_loopDiag;  // SIO task only: failed steps and slow phases (PR #124)
+
+rb::menusio::StepKind stepKindOf(rb::sio::StepOutcome outcome) noexcept
+{
+    switch (outcome) {
+    case rb::sio::StepOutcome::Idle:
+        return rb::menusio::StepKind::Idle;
+    case rb::sio::StepOutcome::Completed:
+        return rb::menusio::StepKind::Completed;
+    case rb::sio::StepOutcome::Ignored:
+        return rb::menusio::StepKind::Ignored;
+    case rb::sio::StepOutcome::Nacked:
+        return rb::menusio::StepKind::Nacked;
+    case rb::sio::StepOutcome::TransportFailed:
+        return rb::menusio::StepKind::TransportFailed;
+    default:
+        return rb::menusio::StepKind::Other;
+    }
+}
+
+// Logs a phase of the SIO loop that kept the bus unattended longer than SioLoopDiag::kSlowUs.
+void notePhase(rb::menusio::LoopPhase phase, int64_t startUs)
+{
+    const int64_t end = esp_timer_get_time();
+    if (g_loopDiag.notePhase(phase, end - startUs)) {
+        ESP_LOGW(kTag, "SIO diag: fase %s lenta, %lld ms, a %lld ms", rb::menusio::SioLoopDiag::name(phase),
+                 (end - startUs) / 1000, end / 1000);
+    }
+}
+
+rb::menusio::HardwareProbe probeOf(const rb::esp::EspDataIn& dataIn) noexcept
+{
+    rb::menusio::HardwareProbe probe;
+    probe.calls = dataIn.hardwareProbeCalls();  // first, with acquire: the other two are at least as new
+    probe.refusals = dataIn.hardwareProbeRefusals();
+    probe.lastBusy = dataIn.hardwareProbeLastBusy();
+    return probe;
+}
+
+void logDataInDiag(rb::host::DataInChange change, const rb::host::DataInReadings& readings, int64_t now)
+{
+    static uint32_t expired = 0;
+    static int64_t lastPeriodicUs = 0;
+    if (g_cassetteDiag == nullptr) {
+        return;
+    }
+    const rb::esp::EspDataIn& dataIn = g_cassetteDiag->dataIn();
+    const uint32_t tickAgeUs = static_cast<uint32_t>(now) - g_cassetteDiag->lastTickUs();  // modulo 2^32
+    const char* what = nullptr;
+    switch (change) {
+    case rb::host::DataInChange::TakeRequested:
+        return;  // its baseline was taken before the arbiter step (stepWithTakeBaseline, review PR #124 H2)
+    case rb::host::DataInChange::TakeFailed:
+    case rb::host::DataInChange::ReleaseRequested:
+        g_takeDiag.cancelled();  // a take that never reached Tape or expired: forget its baseline
+        break;
+    default:
+        break;
+    }
+    switch (change) {
+    case rb::host::DataInChange::ToTape:
+    case rb::host::DataInChange::TakeTimedOut: {
+        const bool confirmed = change == rb::host::DataInChange::ToTape;
+        if (!confirmed) {
+            ++expired;
+        }
+        const rb::menusio::TakeDiag::Result r = g_takeDiag.ended(now, probeOf(dataIn));
+        if (!confirmed && !(expired <= 10 || expired % 50 == 0)) {
+            return;
+        }
+        if (!r.hasRequest) {
+            ESP_LOGW(kTag, "DATA IN diag: %s sin pedido visto (N/D); vencidas %lu",
+                     confirmed ? "toma confirmada" : "toma vencida", static_cast<unsigned long>(expired));
+            return;
+        }
+        ESP_LOGW(kTag,
+                 "DATA IN diag: %s tras %lld ms, vencidas %lu; en esta toma: %lu consultas, %lu negativas, ultimo "
+                 "0x%02lx (%s); tick de la casetera hace %lu us; MOTOR %s, COMMAND %s",
+                 confirmed ? "toma confirmada" : "toma vencida", msOf(r.elapsedUs), static_cast<unsigned long>(expired),
+                 static_cast<unsigned long>(r.calls), static_cast<unsigned long>(r.refusals),
+                 static_cast<unsigned long>(r.lastBusy), rb::menusio::takeVerdictName(r.verdict),
+                 static_cast<unsigned long>(tickAgeUs), readings.motorOn ? "on" : "off",
+                 readings.commandHigh ? "alto" : "bajo");
+        return;
+    }
+    case rb::host::DataInChange::ToDisk:
+        if (!(expired <= 10 || expired % 50 == 0)) {
+            return;
+        }
+        what = "disco de vuelta";
+        break;
+    case rb::host::DataInChange::None:
+        if (g_arbiter.owner() == rb::host::DataInOwner::Disk || now - lastPeriodicUs < 2000000) {
+            return;
+        }
+        what = "linea fuera del disco";
+        break;
+    default:
+        what = "cambio";
+        break;
+    }
+    lastPeriodicUs = now;
+    const rb::menusio::HardwareProbe probe = probeOf(dataIn);
+    ESP_LOGW(kTag,
+             "DATA IN diag: %s, duenio %s; hardwareFree: %lu consultas, %lu negativas, ultimo 0x%02lx; tick de la "
+             "casetera hace %lu us; MOTOR %s, COMMAND %s",
+             what, rb::host::dataInOwnerName(g_arbiter.owner()), static_cast<unsigned long>(probe.calls),
+             static_cast<unsigned long>(probe.refusals), static_cast<unsigned long>(probe.lastBusy),
+             static_cast<unsigned long>(tickAgeUs), readings.motorOn ? "on" : "off",
+             readings.commandHigh ? "alto" : "bajo");
+}
+
 void sioTask(void*)
 {
     bool wasMenu = true;
@@ -441,11 +570,53 @@ void sioTask(void*)
                 ESP_LOGW(kTag, "cas: la cinta aun no toma DATA IN (T9); DATA IN queda para el disco");
             }
         }
+        int64_t phaseStart = esp_timer_get_time();
         serviceDriveMemory(g_station->controller(), published.plan, planSeen, restoreLogged);
+        notePhase(rb::menusio::LoopPhase::DriveMemory, phaseStart);
 
+        phaseStart = esp_timer_get_time();
         const rb::sio::StepOutcome stepped = g_station->step();
+        notePhase(rb::menusio::LoopPhase::Step, phaseStart);
+        {
+            // Issue #125: what the Atari sees as "EL HOST NO RESPONDE", said when it happens.
+            static uint32_t sendFailuresSeen = 0;
+            static uint32_t ackFailuresSeen = 0;
+            static uint32_t badChecksumsSeen = 0;
+            const rb::host::MenuTransportStats& m = g_station->stats();
+            const uint32_t sendFailures = m.menuSendFailures.load(std::memory_order_relaxed);
+            const uint32_t ackFailures = m.menuAckFailures.load(std::memory_order_relaxed);
+            const uint32_t badChecksums = m.menuBadChecksums.load(std::memory_order_relaxed);
+            // Review of PR #124 (H2): a failed ACK is said too, not only a failed reply block.
+            if (sendFailures != sendFailuresSeen || ackFailures != ackFailuresSeen ||
+                badChecksums != badChecksumsSeen) {
+                const rb::esp::EspSioUart::WriteFailures& w = g_line->writeFailures();
+                ESP_LOGW(kTag,
+                         "SIO diag: menu ack_fallido %u envio_fallido %u checksum_malo %u; uart no_lista %u corta %u "
+                         "sin_terminar %u (ultima %u B, %u ms); respuesta completa %u ms, cortada %u ms; err_rx %u",
+                         static_cast<unsigned>(ackFailures), static_cast<unsigned>(sendFailures),
+                         static_cast<unsigned>(badChecksums),
+                         static_cast<unsigned>(w.notReady), static_cast<unsigned>(w.shortWrite),
+                         static_cast<unsigned>(w.txNotDone), static_cast<unsigned>(w.lastBytes),
+                         static_cast<unsigned>(w.lastWaitMs), static_cast<unsigned>(m.lastReplyUs / 1000),
+                         static_cast<unsigned>(m.lastInterruptedUs / 1000),
+                         static_cast<unsigned>(g_transport->stats().receiveErrors));
+                sendFailuresSeen = sendFailures;
+                ackFailuresSeen = ackFailures;
+                badChecksumsSeen = badChecksums;
+            }
+        }
+        {
+            // The 65XE is on once it has sent a frame and no power-off was seen since.
+            const rb::menusio::StepKind kind = stepKindOf(stepped);
+            if (g_loopDiag.noteStep(kind, !g_atariOff && framesSoFar() > 0)) {
+                ESP_LOGW(kTag, "SIO diag: paso %s (n=%u) a %lld ms", rb::menusio::SioLoopDiag::name(kind),
+                         static_cast<unsigned>(g_loopDiag.count(kind)), esp_timer_get_time() / 1000);
+            }
+        }
         if (g_tapeApplied) {
+            phaseStart = esp_timer_get_time();
             g_tape->deck().pump();  // takes `cas` replies and sends what waits; never blocks
+            notePhase(rb::menusio::LoopPhase::Pump, phaseStart);
         }
 
         const bool down = gpio_get_level(kButtonA) == 0;
@@ -459,6 +630,33 @@ void sioTask(void*)
             if (readSio5v(pinMv, sioMv, false)) {
                 switch (power.sample(sioMv, static_cast<uint64_t>(now))) {
                 case rb::host::SioPowerWatch::Event::PoweredOff:
+                    // Review PR #124 (M2): the totals and the slowest phases, also when no line was logged.
+                    ESP_LOGI(kTag,
+                             "SIO diag resumen: ignored %u, nak %u, transport %u; lineas %u/%u; max ms: "
+                             "drive-memory %lld, step %lld, pump %lld, data-in %lld",
+                             static_cast<unsigned>(g_loopDiag.count(rb::menusio::StepKind::Ignored)),
+                             static_cast<unsigned>(g_loopDiag.count(rb::menusio::StepKind::Nacked)),
+                             static_cast<unsigned>(g_loopDiag.count(rb::menusio::StepKind::TransportFailed)),
+                             static_cast<unsigned>(g_loopDiag.lines()),
+                             static_cast<unsigned>(rb::menusio::SioLoopDiag::kMaxLines),
+                             g_loopDiag.slowest(rb::menusio::LoopPhase::DriveMemory) / 1000,
+                             g_loopDiag.slowest(rb::menusio::LoopPhase::Step) / 1000,
+                             g_loopDiag.slowest(rb::menusio::LoopPhase::Pump) / 1000,
+                             g_loopDiag.slowest(rb::menusio::LoopPhase::DataIn) / 1000);
+                    ESP_LOGI(kTag,
+                             "SIO diag resumen menu: ordenes %u reintentos %u ack_fallido %u envio_fallido %u "
+                             "checksum_malo %u "
+                             "respuesta maxima %u ms; linea err_rx %u err_tx %u cortas %u",
+                             static_cast<unsigned>(g_station->stats().menuCommands),
+                             static_cast<unsigned>(g_station->stats().menuRetries),
+                             static_cast<unsigned>(g_station->stats().menuAckFailures),
+                             static_cast<unsigned>(g_station->stats().menuSendFailures),
+                             static_cast<unsigned>(g_station->stats().menuBadChecksums),
+                             static_cast<unsigned>(g_station->stats().maxReplyUs / 1000),
+                             static_cast<unsigned>(g_transport->stats().receiveErrors),
+                             static_cast<unsigned>(g_transport->stats().sendErrors),
+                             static_cast<unsigned>(g_transport->stats().shortFrames));
+                    g_loopDiag.poweredOn();  // the same totals are not reported twice
                     g_station->returnToMenu();  // ready before the next power-on reads D1; drives kept
                     poweredOnUs = 0;
                     g_atariOff = true;  // the arbiter gives DATA IN back to the disk (rule 3)
@@ -469,6 +667,7 @@ void sioTask(void*)
                     poweredOnUs = now;
                     g_atariOff = false;
                     framesAtPowerOn = framesSoFar();
+                    g_loopDiag.poweredOn();
                     ESP_LOGI(kTag, "65XE on at %lld ms (SIO +5V %d mV)", msOf(now), sioMv);
                     break;
                 case rb::host::SioPowerWatch::Event::None:
@@ -486,12 +685,24 @@ void sioTask(void*)
             readings.tapeOnC = g_tape->deck().loaded()[0] != '\0';
             readings.atariOff = g_atariOff;
             readings.tapeEnded = tapeEnded(g_progress);  // the cassette task's last publish
-            const rb::host::DataInChange change =
-                g_arbiter.step(rb::host::dataInInputs(readings), static_cast<uint64_t>(now));
+            // Diagnostics: the take's baseline BEFORE the step, which publishes the take (review PR #124, H2).
+            phaseStart = esp_timer_get_time();
+            const rb::host::DataInChange change = rb::menusio::stepWithTakeBaseline(
+                g_takeDiag, now,
+                []() {
+                    return g_cassetteDiag != nullptr ? probeOf(g_cassetteDiag->dataIn()) : rb::menusio::HardwareProbe{};
+                },
+                [&readings, now]() {
+                    return g_arbiter.step(rb::host::dataInInputs(readings), static_cast<uint64_t>(now));
+                },
+                [](rb::host::DataInChange c) { return c == rb::host::DataInChange::TakeRequested; });
             if (change != rb::host::DataInChange::None) {
                 ESP_LOGW(kTag, "DATA IN: cambio %d, ahora %s", static_cast<int>(change),
                          rb::host::dataInOwnerName(g_arbiter.owner()));
             }
+            logDataInDiag(change, readings, now);
+            g_dataInOwner.store(static_cast<uint32_t>(g_arbiter.owner()), std::memory_order_release);
+            notePhase(rb::menusio::LoopPhase::DataIn, phaseStart);
         }
         if (poweredOnUs != 0 && framesSoFar() != framesAtPowerOn) {
             ESP_LOGI(kTag, "first COMMAND frame after power-on at %lld ms (%lld ms after +5V)", msOf(now),
@@ -619,6 +830,25 @@ int sioCommand(int argc, char** argv)
     std::printf("menu: ordenes %lu reintentos %lu nak %lu descartadas_tras_vuelta %lu\n",
                 static_cast<unsigned long>(m.menuCommands), static_cast<unsigned long>(m.menuRetries),
                 static_cast<unsigned long>(m.menuNaks), static_cast<unsigned long>(m.droppedAfterReset));
+    // Issue #125 (PR #124): the ends of a menu command the Atari sees as "EL HOST NO RESPONDE".
+    const rb::esp::EspSioUart::WriteFailures& w = g_line->writeFailures();
+    std::printf("menu: checksum_malo %lu ack_fallido %lu envio_fallido %lu respuesta ultima %lu ms, maxima %lu ms, "
+                "cortada ultima %lu ms\n",
+                static_cast<unsigned long>(m.menuBadChecksums), static_cast<unsigned long>(m.menuAckFailures),
+                static_cast<unsigned long>(m.menuSendFailures),
+                static_cast<unsigned long>(m.lastReplyUs / 1000), static_cast<unsigned long>(m.maxReplyUs / 1000),
+                static_cast<unsigned long>(m.lastInterruptedUs / 1000));
+    std::printf("uart tx: no_lista %lu escritura_corta %lu sin_terminar %lu (ultima %lu B, %lu ms) "
+                "escritura_maxima %lu ms\n",
+                static_cast<unsigned long>(w.notReady), static_cast<unsigned long>(w.shortWrite),
+                static_cast<unsigned long>(w.txNotDone), static_cast<unsigned long>(w.lastBytes),
+                static_cast<unsigned long>(w.lastWaitMs), static_cast<unsigned long>(w.maxWriteMs));
+    // Issue #125: were the short frames read while the line was lent to the tape?
+    std::printf("data in: duenio %s, aparcada %s, lecturas_aparcada %lu\n",
+                rb::host::dataInOwnerName(static_cast<rb::host::DataInOwner>(
+                    g_dataInOwner.load(std::memory_order_acquire))),
+                w.parkedNow.load(std::memory_order_acquire) != 0 ? "si" : "no",
+                static_cast<unsigned long>(w.readsWhileParked.load(std::memory_order_acquire)));
     int pinMv = 0;
     int sioMv = 0;
     if (readSio5v(pinMv, sioMv)) {
@@ -807,6 +1037,7 @@ static void startCassette(bool sdMounted, rb::esp::CassetteService& cassette, rb
         ESP_LOGW(kTag, "cas: MOTOR %s, DATA IN %s: la cinta no se ofrece", cassette.motorEnabled() ? "listo" : "sin configurar",
                  cassette.outputEnabled() ? "listo" : "sin configurar");
     }
+    g_cassetteDiag = &cassette;
     g_tape = createOnce<EspTapeDeck>(cassette, gatesOpen);
     if (g_tape == nullptr) {
         ESP_LOGE(kTag, "cas: sin memoria para el deck; C: dice CASETERA NO DISPONIBLE");

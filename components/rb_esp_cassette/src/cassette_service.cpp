@@ -92,6 +92,8 @@ void CassetteService::release() noexcept
     tableB_ = nullptr;
 }
 
+uint32_t CassetteService::lastTickUs() const noexcept { return lastTickUs_.load(std::memory_order_acquire); }
+
 bool CassetteService::start() noexcept
 {
     if (started() || attempted_) {
@@ -237,7 +239,9 @@ void CassetteService::loop() noexcept
             continue;
         }
 #endif
-        tick_.tick(static_cast<uint64_t>(esp_timer_get_time()));  // play, pump, publish, answer the lender
+        const int64_t tickUs = esp_timer_get_time();
+        lastTickUs_.store(static_cast<uint32_t>(tickUs), std::memory_order_release);
+        tick_.tick(static_cast<uint64_t>(tickUs));  // play, pump, publish, answer the lender
         vTaskDelay(kLoopPeriod);
     }
 }

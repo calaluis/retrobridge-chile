@@ -28,6 +28,7 @@
 // Memory (ADR-011): the loader bank and the two segment tables are reserved once in PSRAM by
 // start(); nothing is allocated afterwards.
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -98,6 +99,10 @@ public:
     bool start() noexcept;
     bool started() const noexcept { return commands_ != nullptr; }
     bool motorEnabled() const noexcept { return motor_.enabled(); }
+    // Diagnostics (fix-cinta-data-in-65xe): the DATA IN driver, read only, and when the loop last ticked.
+    const EspDataIn& dataIn() const noexcept { return dataIn_; }
+    // The low 32 bits of esp_timer_get_time(): a 64-bit atomic would take a lock on the ESP32.
+    uint32_t lastTickUs() const noexcept;  // out of line: tools/ci/check_atomic_calls.py checks the object
     bool outputEnabled() const noexcept { return driving_; }
 
     // Console task: runs `cas <args>` on the cassette loop and copies the reply.
@@ -131,6 +136,7 @@ private:
     rb::cassette::CassetteTick tick_{player_, outputs_, motor_};
     rb::cassette::DataInLender* lender_ = nullptr;
     bool driving_ = false;  // dataIn_ is the live output (exclusive, or lent in shared mode)
+    std::atomic<uint32_t> lastTickUs_{0};  // diagnostics only: see lastTickUs()
 #if CONFIG_RB_CAS_ENGINE_FUJINET
     class TaskPause final : public rb::fujinet::Pause {
     public:

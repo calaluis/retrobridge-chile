@@ -402,6 +402,71 @@ void test_a_new_begin_is_not_parked()
     TEST_ASSERT_TRUE(line.write(Span<const uint8_t>{answer, 1}).ok());
 }
 
+// Issue #125 (PR #124), minimal measurement: a read while parked is counted, and the console sees whether
+// the line is parked now. A read that is not parked is not counted.
+void test_reads_while_parked_are_counted_and_parked_is_published()
+{
+    EspSioUart& line = sharedLine();
+    auto& s = fake_idf::state();
+    const uint32_t before = line.writeFailures().readsWhileParked;
+    uint8_t got[5] = {};
+    s.rx = {0x31, 0x52, 0x01, 0x00, 0x84};
+    TEST_ASSERT_TRUE(line.read(Span<uint8_t>{got, 5}, 3000).ok());
+    TEST_ASSERT_EQUAL_UINT32(before, line.writeFailures().readsWhileParked);
+    TEST_ASSERT_EQUAL_UINT32(0, line.writeFailures().parkedNow);
+    TEST_ASSERT_TRUE(line.park());
+    TEST_ASSERT_EQUAL_UINT32(1, line.writeFailures().parkedNow);
+    TEST_ASSERT_TRUE(line.read(Span<uint8_t>{got, 5}, 3000).ok());
+    TEST_ASSERT_TRUE(line.read(Span<uint8_t>{got, 5}, 3000).ok());
+    TEST_ASSERT_EQUAL_UINT32(before + 2, line.writeFailures().readsWhileParked);
+    s.rx.clear();
+    TEST_ASSERT_TRUE(line.resume());
+    TEST_ASSERT_EQUAL_UINT32(0, line.writeFailures().parkedNow);
+}
+
+// Review of aa8ee49 (M1): the whole transport over a parked line. A parked read gives 0 bytes; whether the
+// window then counts as a short frame or as COMMAND stuck depends on COMMAND's release, not on the read.
+namespace {
+rb::sio::SioLineStats parkedWindow(int64_t commandLowForUs, bool& ok, uint32_t& parkedReads)
+{
+    EspSioUart line{kPins};
+    TEST_ASSERT_TRUE(line.begin());
+    TEST_ASSERT_TRUE(line.park());
+    auto& s = fake_idf::state();
+    s.nowUs = 0;
+    s.commandLowFromUs = 100;
+    s.commandLowUntilUs = 100 + commandLowForUs;
+    IdfClock clock;
+    rb::sio::SioLineTransport transport{line, clock};
+    ok = transport.waitCommandFrame(20000).ok();
+    parkedReads = line.writeFailures().readsWhileParked;
+    return transport.stats();
+}
+}  // namespace
+
+void test_a_parked_read_with_command_released_is_a_short_frame()
+{
+    bool ok = false;
+    uint32_t parkedReads = 0;
+    const rb::sio::SioLineStats st = parkedWindow(3000, ok, parkedReads);  // released during the read wait
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL_UINT32(1, parkedReads);
+    TEST_ASSERT_EQUAL_UINT32(1, st.shortFrames);
+    TEST_ASSERT_EQUAL_UINT32(0, st.stuckLows);
+    TEST_ASSERT_EQUAL_UINT32(0, st.frames);
+}
+
+void test_a_parked_read_with_command_stuck_is_not_a_short_frame()
+{
+    bool ok = true;
+    uint32_t parkedReads = 0;
+    const rb::sio::SioLineStats st = parkedWindow(1000000, ok, parkedReads);  // still low after the read
+    TEST_ASSERT_FALSE(ok);
+    TEST_ASSERT_EQUAL_UINT32(1, parkedReads);
+    TEST_ASSERT_EQUAL_UINT32(0, st.shortFrames);
+    TEST_ASSERT_EQUAL_UINT32(1, st.stuckLows);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -417,6 +482,9 @@ int main()
     RUN_TEST(test_write_ends_at_the_same_line_time_with_the_tx_ring);
     RUN_TEST(test_park_waits_for_an_empty_tx);
     RUN_TEST(test_a_parked_line_neither_writes_nor_reads_frames);
+    RUN_TEST(test_reads_while_parked_are_counted_and_parked_is_published);
+    RUN_TEST(test_a_parked_read_with_command_released_is_a_short_frame);
+    RUN_TEST(test_a_parked_read_with_command_stuck_is_not_a_short_frame);
     RUN_TEST(test_resume_restores_and_checks_the_disk_line);
     RUN_TEST(test_resume_accepts_the_divisor_but_not_a_wrong_rate);
     RUN_TEST(test_a_failed_resume_keeps_the_disk_parked);

@@ -147,9 +147,30 @@ bool EspDataIn::sharedRoom(std::size_t bytes) const noexcept
 
 bool EspDataIn::hardwareFree() const noexcept
 {
-    return enabled() && !faulted_ && channel_ == nullptr && !releasePending_ && !sending_ && feed_.empty() &&
-           txEmpty();
+    // Same conditions and order as before; txEmpty() is still asked only when all the others hold.
+    uint32_t busy = 0;
+    busy |= enabled() ? 0 : kBusyDisabled;
+    busy |= faulted_ ? kBusyFaulted : 0;
+    busy |= channel_ != nullptr ? kBusyChannel : 0;
+    busy |= releasePending_ ? kBusyReleasePending : 0;
+    busy |= sending_ ? kBusySending : 0;
+    busy |= feed_.empty() ? 0 : kBusyFeed;
+    if (busy == 0 && !txEmpty()) {
+        busy = kBusyTx;
+    }
+    // Single writer (the cassette task): load + store, never a read-modify-write (no libatomic, no lock).
+    probeLastBusy_.store(busy, std::memory_order_relaxed);
+    if (busy != 0) {
+        probeRefusals_.store(probeRefusals_.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+    }
+    // Last, with release: a reader that sees the new count also sees this call's bits and refusal.
+    probeCalls_.store(probeCalls_.load(std::memory_order_relaxed) + 1, std::memory_order_release);
+    return busy == 0;
 }
+
+uint32_t EspDataIn::hardwareProbeCalls() const noexcept { return probeCalls_.load(std::memory_order_acquire); }
+uint32_t EspDataIn::hardwareProbeRefusals() const noexcept { return probeRefusals_.load(std::memory_order_relaxed); }
+uint32_t EspDataIn::hardwareProbeLastBusy() const noexcept { return probeLastBusy_.load(std::memory_order_relaxed); }
 
 EspDataIn::GiveBack EspDataIn::giveBack() noexcept
 {

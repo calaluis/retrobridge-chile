@@ -11,6 +11,12 @@
 namespace rb::esp {
 
 namespace {
+// The SIO task is the only writer of the failure counters (review of PR #124, H1): load and store.
+void bump(std::atomic<uint32_t>& counter) noexcept
+{
+    counter.store(counter.load(std::memory_order_relaxed) + 1, std::memory_order_release);
+}
+
 
 constexpr const char* kTag = "rb_sio_line";
 constexpr uart_port_t kUart = UART_NUM_2;
@@ -64,6 +70,7 @@ void EspSioUart::end() noexcept
         (void)uart_driver_delete(kUart);
         ready_ = false;
         parked_ = false;
+        failures_.parkedNow.store(0, std::memory_order_release);
     }
 }
 
@@ -74,6 +81,7 @@ bool EspSioUart::park() noexcept
         return false;
     }
     parked_ = true;
+    failures_.parkedNow.store(1, std::memory_order_release);  // issue #125
     return true;
 }
 
@@ -101,6 +109,7 @@ bool EspSioUart::resume() noexcept
         return false;
     }
     parked_ = false;
+    failures_.parkedNow.store(0, std::memory_order_release);
     return true;
 }
 
@@ -134,6 +143,7 @@ rb::core::Result<std::size_t> EspSioUart::read(rb::core::Span<uint8_t> out, uint
         return rb::core::Failure{rb::core::ErrorCode::TransportError};
     }
     if (parked_) {  // the tape owns DATA IN: no frame is the disk's; wait as a read would, take nothing
+        bump(failures_.readsWhileParked);  // issue #125: a short frame upstream, counted here
         vTaskDelay(ticksFor(timeoutUs));
         return std::size_t{0};
     }
@@ -147,12 +157,23 @@ rb::core::Result<std::size_t> EspSioUart::read(rb::core::Span<uint8_t> out, uint
 rb::core::Result<void> EspSioUart::write(rb::core::Span<const uint8_t> bytes)
 {
     if (!ready_ || parked_) {  // parked: never transmit over the tape
+        bump(failures_.notReady);
+        failures_.lastBytes.store(static_cast<uint32_t>(bytes.size()), std::memory_order_release);
         return rb::core::Failure{rb::core::ErrorCode::TransportError};
     }
+    const int64_t start = esp_timer_get_time();
     const int n = uart_write_bytes(kUart, bytes.data(), bytes.size());
     const uint32_t lineMs = (rb::sio::SioLineTransport::byteTimeUs(bytes.size()) + 999u) / 1000u;
-    if (n != static_cast<int>(bytes.size()) ||
-        uart_wait_tx_done(kUart, pdMS_TO_TICKS(lineMs + kTxDoneMarginMs)) != ESP_OK) {
+    const bool written = n == static_cast<int>(bytes.size());
+    const bool done = written && uart_wait_tx_done(kUart, pdMS_TO_TICKS(lineMs + kTxDoneMarginMs)) == ESP_OK;
+    const uint32_t tookMs = static_cast<uint32_t>((esp_timer_get_time() - start) / 1000);
+    if (tookMs > failures_.maxWriteMs.load(std::memory_order_relaxed)) {
+        failures_.maxWriteMs.store(tookMs, std::memory_order_release);
+    }
+    if (!written || !done) {
+        bump(written ? failures_.txNotDone : failures_.shortWrite);
+        failures_.lastBytes.store(static_cast<uint32_t>(bytes.size()), std::memory_order_release);
+        failures_.lastWaitMs.store(tookMs, std::memory_order_release);
         return rb::core::Failure{rb::core::ErrorCode::TransportError};
     }
     return {};

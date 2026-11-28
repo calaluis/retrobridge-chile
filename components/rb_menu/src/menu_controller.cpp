@@ -512,7 +512,11 @@ void MenuController::onList(uint8_t key)
     chosen_ = entry;
     view_ = View::Pick;
     driveLine_ = 0;
-    say(" UNIDAD PARA: %s", catalog_.name(entry));
+    if (hasCasExtension(catalog_.name(entry))) {
+        say(" CINTA, PULSA C: %s", catalog_.name(entry));  // PR #124: a tape goes on C:, said up front
+    } else {
+        say(" UNIDAD PARA: %s", catalog_.name(entry));
+    }
 }
 
 MenuController::EntryIndex MenuController::listKey(Cursor& cursor, std::size_t count, uint8_t key) noexcept
@@ -667,7 +671,7 @@ void MenuController::onPick(int digit)
     const char* name = catalog_.name(entry);
     if (hasCasExtension(name)) {
         // menu-cinta (AC3): a tape never goes on a disk drive; C: takes it (T2).
-        say(" UNA CINTA VA EN C:");
+        say(" UNA CINTA VA EN C: (ELIGELA Y PULSA C)");  // PR #124: the key that mounts it
         char detail[MenuCatalog::kMaxName + 48];
         std::snprintf(detail, sizeof detail, "D%d name=%s refused: a tape only goes on C:", digit, name);
         event("menu_select", detail);

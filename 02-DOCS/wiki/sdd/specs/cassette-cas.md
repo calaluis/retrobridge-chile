@@ -139,10 +139,16 @@ SIO.
 - **Unir.** Bloques `fsk ` seguidos, el segundo y siguientes sin pausa, forman una sola tirada (como máximo 64).
 - **Reproducir.** Con MOTOR encendido: cada pausa es silencio; cada `data` sale como bytes a su `baud`; cada tirada
   `fsk ` sale como señal, con sus duraciones exactas.
+- **Bytes seguidos (enmienda propuesta, issue #126).** Dentro de un `data`, desde su primer byte hasta el último, la
+  línea no queda en reposo entre dos bytes, aunque el bucle de la casetera se atrase hasta 40 ms. El primer byte
+  empieza al terminar la pausa, y la pausa siguiente se cuenta desde que sale el último byte. *Por qué:* el sistema
+  operativo y los cargadores como STAC miden la velocidad con los dos `0x55` del principio; un reposo entre ellos
+  falsea la medida.
 - **Cargar de a poco.** Una tirada larga no se carga entera en memoria. Se lee de la SD en bloques; la señal empieza
   cuando hay 20 s de margen leídos.
 - **MOTOR.** Al apagarse, la cinta se detiene. Una tirada `fsk ` se corta en un punto seguro, no a mitad de un nivel.
-  Al volver a encenderse, sigue desde ahí.
+  Al volver a encenderse, sigue desde ahí. En un `data` (enmienda propuesta, issue #126) pueden salir todavía los
+  bytes ya entregados a la salida, como máximo los de 40 ms; al volver, la cinta sigue con el byte siguiente.
 - **Fin de cinta.** Tras el último bloque la cinta queda al final; un nuevo MOTOR no envía nada.
 - **Reinicio en frío o `cas rewind`.** La cinta sigue montada y vuelve al principio.
 - **Fallos.** Sin `FUJI`, bloque cortado, `baud` 0 o `pwm*` → mensaje en la consola; la cinta montada no cambia.
@@ -167,6 +173,11 @@ Fase 1 — portable, prueba del host:
   carpeta).
 - **AC8** — La consola del ESP32 acepta `cas mount`, `cas status`, `cas eject` y `cas rewind` (prueba del host sobre
   el componente de consola).
+- **AC14 (enmienda propuesta, issue #126)** — Dado un `data` a 600 o a 750 baudios y un bucle que avanza a 2 ms con
+  cualquier fase, cuando se reproduce, entonces la salida no queda en reposo entre dos bytes del registro, incluidos
+  los dos `0x55`; la pausa siguiente dura lo que dice el archivo, contada desde el fin del último byte; y con el MOTOR
+  apagado a mitad del registro no salen más bytes que los de 40 ms, sin perder ni repetir ninguno al volver. Prueba:
+  `test_record_continuity` (hoy en rojo, `fc9ec2a`) y las pruebas del reproductor reescritas a este contrato.
 
 Fase 2 — ESP32, tras M3a:
 
@@ -228,3 +239,9 @@ Siempre:
 - 2026-11-20 — C003 falló. Replanteo: ESP32, código FSK propio, cintas reales, fases tras M3a y H4. Vuelve a
   borrador.
 - 2026-11-20 — aprobada por el responsable («Aprobada, a plan»).
+- 2026-11-28 — **Enmienda propuesta, pendiente de aprobación (issue #126).** `test_record_continuity` (`fc9ec2a`)
+  muestra en un modelo de host que el reproductor deja la UART en reposo entre bytes de un registro: 1333 us entre
+  los dos `0x55` a 600 baudios y 666 us a 750. Se proponen «Bytes seguidos», el ajuste de «MOTOR» y AC14. Cambia el
+  contrato de dos pruebas actuales (`test_gap_then_rate_then_paced_bytes`, que entrega un byte por tiempo cumplido,
+  y `test_motor_off_freezes_a_record_and_resumes`, que congela en el byte exacto); se reescriben al contrato nuevo,
+  sin debilitarlas. **No** está demostrado que el reposo cause los BOOT ERROR ni los CORRECCION de la #126.

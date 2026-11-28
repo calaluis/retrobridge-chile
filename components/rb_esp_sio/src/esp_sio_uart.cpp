@@ -70,6 +70,7 @@ void EspSioUart::end() noexcept
         (void)uart_driver_delete(kUart);
         ready_ = false;
         parked_ = false;
+        failures_.parkedNow.store(0, std::memory_order_release);
     }
 }
 
@@ -80,6 +81,7 @@ bool EspSioUart::park() noexcept
         return false;
     }
     parked_ = true;
+    failures_.parkedNow.store(1, std::memory_order_release);  // issue #125
     return true;
 }
 
@@ -107,6 +109,7 @@ bool EspSioUart::resume() noexcept
         return false;
     }
     parked_ = false;
+    failures_.parkedNow.store(0, std::memory_order_release);
     return true;
 }
 
@@ -140,6 +143,7 @@ rb::core::Result<std::size_t> EspSioUart::read(rb::core::Span<uint8_t> out, uint
         return rb::core::Failure{rb::core::ErrorCode::TransportError};
     }
     if (parked_) {  // the tape owns DATA IN: no frame is the disk's; wait as a read would, take nothing
+        bump(failures_.readsWhileParked);  // issue #125: a short frame upstream, counted here
         vTaskDelay(ticksFor(timeoutUs));
         return std::size_t{0};
     }

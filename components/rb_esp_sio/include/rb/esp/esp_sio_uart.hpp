@@ -44,6 +44,9 @@ public:
         std::atomic<uint32_t> lastBytes{0};   // the size of the last failed write
         std::atomic<uint32_t> lastWaitMs{0};  // how long the last shortWrite or txNotDone write() took
         std::atomic<uint32_t> maxWriteMs{0};  // the longest write(), failed or not; not a command's latency
+        // Issue #125: a read() while parked returns 0 bytes (counted as a short frame upstream).
+        std::atomic<uint32_t> readsWhileParked{0};
+        std::atomic<uint32_t> parkedNow{0};  // 1 while parked, published for the console
     };
     const WriteFailures& writeFailures() const noexcept { return failures_; }
 

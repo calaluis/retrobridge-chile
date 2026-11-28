@@ -154,6 +154,7 @@ std::atomic<bool> g_catalogApplied{false};  // written by the SIO task only
 
 // Boot timing (esp_timer: microseconds since the application started; the ROM and the bootloader come first).
 int64_t g_readyUs = 0;                     // D1 served
+std::atomic<uint32_t> g_dataInOwner{0};  // issue #125: g_arbiter.owner(), published by the SIO task
 std::atomic<int64_t> g_firstFrameUs{0};    // first COMMAND frame from the Atari (complete or short)
 int g_boot5vMv = -1;                       // SIO +5V at start(); -1: not readable
 rb::hwdiag::BootRecord g_boot{};
@@ -700,6 +701,7 @@ void sioTask(void*)
                          rb::host::dataInOwnerName(g_arbiter.owner()));
             }
             logDataInDiag(change, readings, now);
+            g_dataInOwner.store(static_cast<uint32_t>(g_arbiter.owner()), std::memory_order_release);
             notePhase(rb::menusio::LoopPhase::DataIn, phaseStart);
         }
         if (poweredOnUs != 0 && framesSoFar() != framesAtPowerOn) {
@@ -841,6 +843,12 @@ int sioCommand(int argc, char** argv)
                 static_cast<unsigned long>(w.notReady), static_cast<unsigned long>(w.shortWrite),
                 static_cast<unsigned long>(w.txNotDone), static_cast<unsigned long>(w.lastBytes),
                 static_cast<unsigned long>(w.lastWaitMs), static_cast<unsigned long>(w.maxWriteMs));
+    // Issue #125: were the short frames read while the line was lent to the tape?
+    std::printf("data in: duenio %s, aparcada %s, lecturas_aparcada %lu\n",
+                rb::host::dataInOwnerName(static_cast<rb::host::DataInOwner>(
+                    g_dataInOwner.load(std::memory_order_acquire))),
+                w.parkedNow.load(std::memory_order_acquire) != 0 ? "si" : "no",
+                static_cast<unsigned long>(w.readsWhileParked.load(std::memory_order_acquire)));
     int pinMv = 0;
     int sioMv = 0;
     if (readSio5v(pinMv, sioMv)) {

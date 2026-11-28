@@ -86,6 +86,12 @@ aceptación.
   COMMAND que ya terminó** antes del siguiente paso (B1). No es una corrección de aserciones de prueba:
   es comportamiento nuevo, y necesita aprobación antes de cualquier diseño. Las demás condiciones de
   devolución y las invariantes de seguridad quedan intactas.
+- **D2 alcanza también al COMMAND sostenido (H1 de la revisión de `ec9837a`).** La regla 3 actual
+  devuelve con MOTOR apagado y COMMAND bajo **en el paso**, sin saber cómo estaba MOTOR cuando cayó
+  COMMAND. Con D2, la regla 3 ampliada queda así: con MOTOR apagado en el paso, devuelve DATA IN una
+  aserción de COMMAND (terminada o todavía baja) que **cayó con MOTOR apagado**. Una aserción que cayó
+  con MOTOR encendido no devuelve, aunque siga baja con MOTOR ya apagado. Esto **cambia** la conducta
+  actual en ese caso; no es equivalente a «como hoy».
 - **R1, exclusión eléctrica:** UART2 no se reanuda mientras la casetera pueda manejar GPIO21. Con
   `release()` en `Pending`, `Failed` o vencido, el disco sigue aparcado (`ReleasePending`, `Fault`).
 - Regla 1 (toma por estado), regla 2 (pausas de MOTOR conservan la cinta), regla 3 (apagado visto,
@@ -115,7 +121,10 @@ hardware puede mostrar se lista aparte y **no** se declara demostrado por el hos
 - **B4.** La detección se consume cuando comienza la devolución (`ReleaseRequested`). Las aserciones
   durante `ReleasePending`, `Fault`, `Released` o `DiskFault` no adelantan nada.
 - **B5.** Con el dueño en `Disk`, el árbitro no reacciona a COMMAND (camino normal de la sesión SIO).
-- **B6.** COMMAND sostenido, que sigue bajo al consultar, se comporta como hoy.
+- **B6.** COMMAND sostenido, que sigue bajo al consultar, también se rige por B7 y D2. Si cayó con
+  MOTOR apagado y MOTOR sigue apagado en el paso, devuelve DATA IN, como hoy. Si cayó con MOTOR
+  encendido, **no** devuelve, aunque MOTOR esté apagado en el paso. En ese caso prevalece B7 y D2
+  sobre la regla 3 por nivel.
 - **B7 (decisión D2 del responsable).** Una aserción cuenta como COMMAND visto solo si MOTOR estaba
   apagado **en el instante de la aserción y también en el paso** del árbitro que la procesa. Una aserción
   ocurrida con MOTOR encendido no devuelve DATA IN, aunque MOTOR ya esté apagado en el paso (regla 2:
@@ -182,6 +191,11 @@ Todos en el host (H). Los marcados como HW **no** se dan por demostrados en el h
 6. (H) Dado un pulso de 3 ms con MOTOR encendido, entonces la cinta conserva DATA IN (B7). Ya existe
    como GREEN y sigue GREEN. **Y** (H, prueba dedicada nueva, D2) dado un pulso que cae con MOTOR
    encendido, y MOTOR apagado antes del paso que lo procesa, entonces la cinta conserva DATA IN.
+   **Y** (H, prueba dedicada nueva, B6) dado un COMMAND **sostenido** que cae con MOTOR encendido y
+   sigue bajo en el paso, con MOTOR ya apagado, entonces la cinta conserva DATA IN. Controles inversos
+   (deben devolver DATA IN): un pulso breve con MOTOR apagado en la aserción y en el paso, y un COMMAND
+   sostenido que empieza con MOTOR apagado (cubierto hoy por los pulsos de 10 y 20 ms, GREEN). Ninguno
+   se vuelve GREEN silenciando B7.
 7. (H, prueba específica) Dada una trama que empieza con la UART aparcada y termina tras `ToDisk`,
    entonces no hay respuesta (B12). Si resulta GREEN sin cambios, se registra como **control** y no como
    corrección.
@@ -190,7 +204,11 @@ Todos en el host (H). Los marcados como HW **no** se dan por demostrados en el h
 9. (H, invariante) En todos los pasos de todos los casos, nunca `parkedNow` = 0 mientras el dueño no es
    `Disk`, y nunca hay TX de UART2 con el dueño distinto de `Disk`.
 10. (H, sin regresiones) Las 12 GREEN actuales de `test_command_pulse`, el resto de `ctest`,
-    `check_layering` y `check_notices` siguen OK. Ningún RED se debilita para pasar.
+    `check_layering` y `check_notices` siguen OK. Ningún RED se debilita para pasar. Caso particular:
+    `test_command_with_motor_off_gives_the_line_back_to_the_disk` (`test_data_in_arbiter.cpp`) pasa de
+    un paso con MOTOR encendido a otro con MOTOR apagado y COMMAND bajo, y las muestras por paso no dicen
+    qué pasó primero. Con D2, esa prueba conserva su expectativa (`ToDisk`) y se hace explícito que MOTOR
+    se apagó **antes** de caer COMMAND. Nunca se cambia lo que espera.
 11. (HW, fuera del host) Ancho real de COMMAND en el 65XE, ruido o falsos flancos en la línea, el
     comportamiento eléctrico de GPIO21, si H2 ocurre físicamente y su relación con «EL HOST NO RESPONDE».
     Cualquier prueba física necesita una autorización expresa aparte.
@@ -223,6 +241,10 @@ Todos en el host (H). Los marcados como HW **no** se dan por demostrados en el h
   `EspSioUart::resume()` exige `flushed()` antes de quitar el aparcado. Es evidencia de la protección
   existente, **no** demostración de B12 en todas las condiciones: por ejemplo, una reanudación con
   COMMAND todavía bajo. Por eso el criterio 7 se conserva como prueba específica.
+- **suposición tomada** — En `test_command_with_motor_off_gives_the_line_back_to_the_disk`, MOTOR se
+  apagó antes de caer COMMAND. *Base:* su comentario, «the Atari wants the disk». *Riesgo:* con D2, el
+  árbitro necesita saber cómo estaba MOTOR en la aserción; las entradas de hoy (`DataInInputs`) no lo
+  dicen. Cómo obtenerlo es decisión de diseño, después de aprobar la spec.
 - **decisión diferida** — Que el Atari reintente y cuántas veces. *Base:* no se da por real ningún
   número de reintentos del Atari; los 10 pulsos son simulados.
 - **área no formulable** — El ruido real de COMMAND en el 65XE durante una pausa de MOTOR. Se vuelve
@@ -247,3 +269,9 @@ la alternativa «no construir» sigue abierta para el responsable.
   abierta hasta una medición física autorizada; **D2** exige MOTOR apagado en la aserción y en el paso
   (B7 y criterio 6, con prueba dedicada), y reemplaza la suposición anterior de MOTOR solo en el paso.
   **M1**: H4 no aprobada en general, puertas solo bajo el perfil autorizado. Sigue en `draft`.
+- 2026-11-28 — Revisión independiente de `ec9837a` (comentario 7235137865): D1, D2 y M1 conformes;
+  H1, contradicción entre B6 («como hoy») y B7/D2 para COMMAND sostenido. Corrección autorizada por el
+  responsable: B6 y la regla 3 ampliada siguen D2 también con COMMAND sostenido; el criterio 6 añade la
+  prueba dedicada del caso sostenido y dos controles inversos; el criterio 10 fija el orden «MOTOR
+  apagado y luego COMMAND» de la prueba existente del árbitro sin cambiar su expectativa. Sigue en
+  `draft`; D1 sigue abierta.

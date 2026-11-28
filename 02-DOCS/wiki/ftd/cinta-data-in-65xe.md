@@ -204,13 +204,23 @@ con la cinta todavía dueña de DATA IN, sin apagado entre medio; ese flujo no o
 
 1. DATA IN vuelve al disco: `DATA IN: cambio 6, ahora disco` y `sio status` con `data in: duenio disco`.
 2. La UART deja de estar aparcada: `sio status` con `aparcada no`.
-3. La primera orden SIO después del encendido recibe respuesta: el menú aparece en pantalla y `ordenes`
-   sube sin `envio_fallido` ni `ack_fallido`.
+3. La primera orden SIO después del encendido recibe respuesta. *Evidencia exigida (revisión de
+   `1a2c1da`, M1):* el registro del primer intento después de `+5V alto` (primer COMMAND, trama y resultado)
+   y los deltas de fallos y reintentos en esa ventana. Que el menú aparezca y `ordenes` suba no basta: es
+   compatible con un primer intento perdido seguido de otro correcto. La primera trama SIO observada no es
+   lo mismo que la primera orden dirigida a RetroBridge/D1: el punto 3 trata de la segunda.
 4. Después, desmontar `C:` (U) y montar otra cinta en `C:` (C) funciona sin «EL HOST NO RESPONDE».
+   *Evidencia exigida (M2):* dos archivos `.cas` distintos, identificados por nombre (sin datos privados).
+   Secuencia completa en una misma sesión: cargar el primero, apagar físicamente, encender físicamente,
+   U y C con el segundo, con la respuesta del menú y sin el error. Montar con C la misma cinta no cumple
+   este punto.
 
-*Estado:* **pendiente.** La variante E de `f93ad2e` da evidencia de 1–3 en una prueba, reportada por
-Claude y el responsable. El punto 4, con otra cinta distinta, falta verificarlo. #125 sigue abierta hasta
-tener evidencia suficiente de los cuatro puntos.
+*Estado:* **pendiente.** La variante E de `f93ad2e`, reportada por Claude y el responsable, da evidencia
+de 1 y 2. Punto 3: «respuesta del menú después del encendido demostrada; primera orden relevante no
+verificable». La primera trama SIO tras el encendido ocurrió 1571 ms después de `+5V` y el paso la
+clasificó `ignored`; el registro no dice a qué dispositivo iba y no se le atribuye ninguno. El punto 3 no
+se marca aprobado ni fallido. Punto 4: pendiente, sin evidencia. H2 sigue como riesgo independiente. #125
+sigue abierta hasta tener evidencia suficiente de los cuatro puntos en una misma prueba.
 
 *Observado en el registro de E, sin concluir causa:* al apagar, fallan dos pasos de transporte, uno con
 la cinta aún dueña de DATA IN (1109698 ms) y otro durante la devolución (1109737 ms). La devolución la

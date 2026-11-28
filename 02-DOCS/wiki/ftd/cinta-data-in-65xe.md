@@ -341,9 +341,21 @@ Fuera: H4, las puertas y los paquetes. Flashear y probar en el 65XE necesitan ap
   de la primera lectura; el cargador lee los sectores 3-20 a $0700 en orden y arranca el menú; un sector
   que falla vuelve al arranque en frío; D1 es el cargador y luego el bloque del menú sin cambios. RED
   (`disk_block` no existía) → GREEN; `tools/tests` 345 OK; `ctest` 109/109.
-- [ ] CI y paquete con el cargador; flasheo (aprobado por el responsable) y prueba en el 65XE: el mensaje
+- [x] CI y paquete con el cargador; flasheo (aprobado por el responsable) y prueba en el 65XE: el mensaje
   se ve; cargar el juego, apagar y encender, desmontar `C:` (U, C), montar otro `.cas` en `C:`; `.cas` en
-  D8 dice «UNA CINTA VA EN C:».
+  D8 dice «UNA CINTA VA EN C:». Evidencia, subpunto por subpunto:
+  - CI de `7dac5a1`: 6/6 trabajos exitosos (ejecución 46098681840). Entre `f93ad2e` (instalado) y
+    `7dac5a1` solo cambió esta FTD; `f93ad2e` contiene el cargador (`10a1a92`).
+  - Mensaje de carga, prueba corta del 2026-11-28 con `f93ad2e`, autorizada por el responsable: apagado
+    unos 3 s y encendido; el responsable vio «Cargando RetroBridge...» y luego el menú principal.
+  - Cargar el juego, apagar y encender, U y C, y montar otro `.cas` en `C:`: variante F (A =
+    `international_karate.cas`, B = Night Knight), con `f93ad2e`, sin error (ver la sección de la
+    issue #125).
+  - `.cas` en D8, misma prueba corta: el responsable eligió un `.cas` y pulsó 8; mensaje literal
+    «UNA CINTA VA EN C: (ELIGELA Y PULSA C)», igual al de `menu_controller.cpp`; D8 quedó vacía.
+  - *Límites:* una sola ejecución de cada subpunto; la evidencia es la observación del responsable en
+    pantalla, sin foto ni registro de consola (no se usó COM3). Esta casilla no cubre el punto 3 de la
+    issue #125 (primera orden relevante tras el encendido, no verificable), ni H2, #126 o #127.
 - [x] Limpiar `TakeDiag` al cancelar una toma (`TakeFailed` o `ReleaseRequested`) — prueba:
   `test_a_cancelled_take_leaves_no_baseline`; con `cancelled()` vacío falla (mutante muerto); 10/10.
 

@@ -219,8 +219,43 @@ con la cinta todavía dueña de DATA IN, sin apagado entre medio; ese flujo no o
 de 1 y 2. Punto 3: «respuesta del menú después del encendido demostrada; primera orden relevante no
 verificable». La primera trama SIO tras el encendido ocurrió 1571 ms después de `+5V` y el paso la
 clasificó `ignored`; el registro no dice a qué dispositivo iba y no se le atribuye ninguno. El punto 3 no
-se marca aprobado ni fallido. Punto 4: pendiente, sin evidencia. H2 sigue como riesgo independiente. #125
+se marca aprobado ni fallido. Punto 4: evidencia en una prueba (variante F, abajo); falta la revisión independiente. H2 sigue como riesgo independiente. #125
 sigue abierta hasta tener evidencia suficiente de los cuatro puntos en una misma prueba.
+
+*Prueba física del punto 4, variante F (2026-11-28, `f93ad2e`, solo USB y SIO, autorizada por el
+responsable).* A = `international_karate.cas`, B = `Night Knight.cas`; los dos en la microSD (`sd ls`),
+con nombre y tamaño distintos.
+
+1. Primer intento de A: **BOOT ERROR** a unos 22 s de carga; el 65XE pasó a SELF TEST. En ese momento
+   el registro muestra una ráfaga de unas 40 tramas en medio segundo (23 pasos `transport`, 19
+   `ignored`) con la cinta todavía dueña de DATA IN y MOTOR encendido. No se sabe la causa del BOOT ERROR.
+2. Apagado físico: DATA IN vuelve al disco (`cambio 6`), D1 al menú.
+3. Segundo intento de A: toma en 22 ms; carga completa sin pasos `transport` fallidos; el juego corre.
+4. Apagado físico: `cambio 6`, D1 al menú. Encendido físico: «65XE on»; primera trama 1570 ms después,
+   `ignored`.
+5. U y C con B: dos guardados de la memoria de unidades; **sin «EL HOST NO RESPONDE»** (pantalla,
+   reportado por el responsable).
+
+| Contador (`sio status`) | F0 (antes) | F1 (después) | Δ |
+|---|---|---|---|
+| `ordenes` | 46 | 77 | +31 |
+| `envio_fallido` / `ack_fallido` | 2 / 0 | 2 / 0 | 0 / 0 |
+| `cortas` | 13 | 35 | +22 |
+| `command_pegado` | 6237 | 13197 | +6960 |
+| `lecturas_aparcada` | 2 | 47 | +45 |
+| `duenio` / `aparcada` | disco / no | disco / no | — |
+
+*Acotado:* las +45 lecturas aparcadas no tienen hora; no se afirma que vengan de la ráfaga del primer
+intento. El punto 3 sigue no verificable: la primera trama tras el encendido es `ignored`, sin dispositivo
+registrado.
+
+*Hallazgo aparte, sin registro de consola:* F0 ya traía `envio_fallido 2`, `sin_terminar 2` y una
+respuesta cortada de 514 ms (máxima 707 ms), que no estaban en E1 (`envio_fallido 0`). Ocurrieron entre E1
+y F0, cuando no corría ningún registro. Una respuesta del menú se cortó y no se sabe cuándo ni si se vio
+el error en pantalla.
+
+*BOOT ERROR del primer intento:* hallazgo nuevo. El plazo de 60 ms (`d1eb418`) lo había corregido en las
+pruebas anteriores con la misma cinta. Queda abierto, sin causa atribuida.
 
 *Observado en el registro de E, sin concluir causa:* al apagar, fallan dos pasos de transporte, uno con
 la cinta aún dueña de DATA IN (1109698 ms) y otro durante la devolución (1109737 ms). La devolución la

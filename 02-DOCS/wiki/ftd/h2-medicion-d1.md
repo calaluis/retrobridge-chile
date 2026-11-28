@@ -136,3 +136,8 @@ pidió H1, H2 y M1 antes de cualquier plan. Esas correcciones **no se aplican**,
 decidió **no construir H2 por ahora**, y con eso no se mide D1 en esta etapa. Si H2 se retoma, esta
 propuesta se reanuda desde esa revisión. No se ejecutó ningún paso: no hubo código, flasheo, COM3,
 conexión al SIO ni escenarios físicos.
+
+**Aviso para retomar (M2 de la revisión 7235353440):** este documento es un antecedente archivado. Ni la
+recomendación A/B ni la regla «cero espurios, sin filtro» están aprobadas. Antes de usarlo hay que:
+incorporar completa la revisión de `b988018` (H1, H2 y M1); verificar los niveles reales de COMMAND, la
+fiabilidad del etiquetado y la errata GPIO-3.11 en esta placa; y volver a pedir aprobación al responsable.

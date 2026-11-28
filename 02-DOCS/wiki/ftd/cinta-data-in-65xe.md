@@ -102,6 +102,28 @@ reiniciar la placa); después apagar el 65XE para el resumen.
 - M3 (limitación conocida): cada contador se lee por separado; una lectura de `sio status` no es una
   instantánea de todos a la vez.
 
+**Medición física con `3863461` (2026-11-27, autorizada por el responsable):**
+- Instalación: la placa tenía `60ac6e4` (verify 3/3). Paquete `menu-sio-cinta` de la CI 46081235582, zip
+  `0b0c43b7…` igual al digest del artefacto; `write_flash` y `verify_flash` 3/3. Flasheo solo con USB,
+  65XE apagado y SIO desconectado; NVS sin tocar.
+- Prueba (USB y SIO a la vez): el menú aparece y funciona; al montar un `.cas` con C sale «EL HOST NO
+  RESPONDE» (lo vio el responsable).
+- `sio status` después: `ordenes 1` (la primera pantalla, completa en 504 ms); `tramas 22 cortas 16
+  command_pegado 4803`; `err_rx 0 err_tx 0`; `checksum_malo 0 ack_fallido 0 envio_fallido 0`, `cortada
+  ultima 0 ms`; `uart tx: no_lista 0 escritura_corta 0 sin_terminar 0`, `escritura_maxima 133 ms`. No hubo
+  línea «SIO diag» de fallo.
+- Evidencia: `D:\GitHub\Respaldos\FujiNet-RB-menu-sio-cinta-3863461` (consola y `sio status`, con
+  `MANIFEST.sha256`).
+
+**Qué demuestra:** en esta ocurrencia la placa no falló al enviar. La orden de montar no llegó como trama
+completa: llegaron tramas de menos de 5 bytes (descartadas) y COMMAND siguió en bajo tras la trama. Mover
+la barra del menú es local en el Atari, así que la orden de montar era la siguiente orden al host.
+**Descarta aquí:** H1 (TX sin terminar o UART no lista) y que la respuesta de 962 bytes venza el plazo.
+**Hipótesis nueva, sin probar:** al montar la cinta la placa presta una línea del SIO (DATA IN) y eso
+afecta la recepción de la orden siguiente. La medición de `60ac6e4` (`err_tx 3`) puede ser otra causa.
+**Sin explicar:** al leer `sio status` el pin +5V del SIO marcaba 4780 mV y no salió el resumen de
+apagado, aunque el responsable había indicado que el 65XE estaba apagado. Queda por confirmar.
+
 ## Scope
 
 - Paso 1 (este commit): diagnóstico que solo registra. `EspDataIn::hardwareFree()` guarda qué condición

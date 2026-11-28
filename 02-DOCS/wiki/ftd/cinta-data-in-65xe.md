@@ -115,14 +115,27 @@ reiniciar la placa); después apagar el 65XE para el resumen.
 - Evidencia: `D:\GitHub\Respaldos\FujiNet-RB-menu-sio-cinta-3863461` (consola y `sio status`, con
   `MANIFEST.sha256`).
 
-**Qué demuestra:** en esta ocurrencia la placa no falló al enviar. La orden de montar no llegó como trama
-completa: llegaron tramas de menos de 5 bytes (descartadas) y COMMAND siguió en bajo tras la trama. Mover
-la barra del menú es local en el Atari, así que la orden de montar era la siguiente orden al host.
-**Descarta aquí:** H1 (TX sin terminar o UART no lista) y que la respuesta de 962 bytes venza el plazo.
-**Hipótesis nueva, sin probar:** al montar la cinta la placa presta una línea del SIO (DATA IN) y eso
-afecta la recepción de la orden siguiente. La medición de `60ac6e4` (`err_tx 3`) puede ser otra causa.
-**Sin explicar:** al leer `sio status` el pin +5V del SIO marcaba 4780 mV y no salió el resumen de
-apagado, aunque el responsable había indicado que el 65XE estaba apagado. Queda por confirmar.
+**Qué muestra (acotado por la revisión de `7adabf8`):** en esta captura no consta la recepción ni el
+proceso de un segundo comando de menú completo, y las transmisiones que sí se intentaron no registraron
+fallos. Abundan las tramas cortas y las ventanas COMMAND sin liberar. **Falta correlación temporal con la
+orden C:** los contadores son acumulados desde el arranque; `cortas 16` y `command_pegado 4803` no se pueden
+atribuir a esa orden ni entre sí (`SioLineTransport::waitCommandFrame` cuenta uno u otro, y vacía la entrada
+antes de cada ventana).
+**H1:** sin apoyo en esta ocurrencia para un `write()` fallido, porque no consta un intento de respuesta a
+la orden C. No se descarta una línea aparcada (`read()` devuelve 0 con `parked_`) ni una indisponibilidad
+previa al envío. La incidencia de `60ac6e4` (`err_tx 3`) es otra observación y sigue abierta.
+**Préstamo de DATA IN:** el árbitro solo cede DATA IN a la cinta con MOTOR encendido y la cinta preparada;
+montar con C no la presta por sí solo, y el menú se atiende antes que el árbitro en el bucle. Que esa misma
+pulsación cause la falla sería circular. Queda como hipótesis un préstamo **anterior** o un estado heredado
+(UART aparcada).
+**SIO +5V 4780 mV:** `SioPowerWatch` solo declara apagado con menos de 1000 mV durante 100 ms, así que con
+4780 mV es coherente que no saliera el resumen. La contradicción con el 65XE indicado como apagado está sin
+aclarar, y `command_pegado` puede incluir tiempo con el Atari apagado. Hay que aclararla antes de
+interpretar la prueba.
+**Siguiente medición propuesta (sin aplicar):** registrar con marca de tiempo, antes y después de pulsar C,
+el dueño del árbitro, `parked()`, MOTOR, COMMAND, el estado de apagado y los deltas de `frames`,
+`shortFrames`, `stuckLows`, `menuCommands`, `menuRetries` y `err_rx/tx`, con los eventos Take/Release/ToDisk.
+Si la consola no los expone, requiere un commit de diagnóstico acotado con RED→GREEN y revisión aparte.
 
 ## Scope
 

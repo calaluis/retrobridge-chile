@@ -7,13 +7,25 @@ timestamp: 2026-11-28T06:00:00Z
 topic: sdd
 slug: h2-command-pulse
 branch: test/issue-125-command-pulse
-status: draft
+status: deferred
 ---
 
 # Spec — Pulso COMMAND breve con la cinta dueña de DATA IN (H2, issue #125)
 
-**Estado:** borrador para revisión independiente. **No** está aprobada, no elige técnica y **no** resuelve
-H2. Rama de investigación `test/issue-125-command-pulse`, a partir de `0644ad3`. No toca la PR #124 ni
+**Decisión del responsable (2026-11-28): no construir H2 por ahora.** No es un defecto corregido ni
+una propuesta descartada: es una decisión de **no implementar en esta etapa**. Motivos:
+- H2 se reproduce **solo en el modelo de host**.
+- No hay evidencia de que cause «EL HOST NO RESPONDE» en el 65XE.
+- El ciclo físico de apagado y encendido recupera DATA IN en el flujo de uso aceptado.
+- D1 sigue sin evidencia física suficiente, y la medición propuesta tiene riesgos y límites (errata
+  GPIO-3.11, revisión 7235266322 en la #125).
+
+La spec y las 11 pruebas RED de `test_command_pulse` se conservan en `test/issue-125-command-pulse` como
+**investigación histórica**, sin fusionar a `main` y sin debilitarse. Se puede retomar con evidencia
+física nueva y una decisión expresa del responsable.
+
+**Estado anterior:** borrador revisado hasta `4740c75`. **No** está aprobada, no elige técnica y
+**no** resuelve H2. Rama de investigación `test/issue-125-command-pulse`, a partir de `0644ad3`. No toca la PR #124 ni
 `main`.
 
 ## Problema y por qué
@@ -288,3 +300,6 @@ la alternativa «no construir» sigue abierta para el responsable.
   sobre el orden de la prueba existente se declara no demostrada, y el criterio 10 exige modelar los dos
   órdenes. M2: B6 aclara que una aserción iniciada con MOTOR encendido nunca se revalida tarde; solo una
   aserción nueva puede pedir la devolución. Sigue en `draft`; D1 sigue abierta.
+- 2026-11-28 — Decisión del responsable: **no construir H2 por ahora** (motivos en la cabecera). La spec
+  pasa a `deferred` y queda como investigación histórica. D1 sigue abierta y sin medir. El punto 3 de
+  la #125 y los demás criterios pendientes no cambian.

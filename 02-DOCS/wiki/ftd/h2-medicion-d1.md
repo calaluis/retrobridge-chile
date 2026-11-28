@@ -5,12 +5,13 @@ description: Plan de medición, solo documental, para obtener la evidencia físi
 tags: [ftd, medicion, sio, command, h2, issue-125]
 timestamp: 2026-11-28T06:30:00Z
 branch: test/issue-125-command-pulse
-status: propuesta
+status: aplazada
 ---
 
 # Propuesta — Medir el ancho y el ruido de COMMAND en el 65XE (D1 de H2)
 
-**Estado:** propuesta para revisión. **No** está autorizada. No se escribe código, no se flashea, no se
+**Estado:** **aplazada**, porque H2 no se construye por ahora (decisión del responsable del
+2026-11-28, motivos en la spec `h2-command-pulse`). **No** está autorizada. No se escribe código, no se flashea, no se
 usa COM3, no se toca el cableado ni se hace ninguna prueba física con este documento.
 
 ## Intent
@@ -127,3 +128,11 @@ Nada de esto contiene SSID, IP, claves ni MAC sin enmascarar.
 ## Next
 
 Revisión independiente en la issue #125. Hasta tener autorización expresa no se ejecuta nada.
+
+## Decisión (2026-11-28)
+
+La revisión independiente de `b988018` (comentario 7235266322 en la #125) confirmó la errata GPIO-3.11 y
+pidió H1, H2 y M1 antes de cualquier plan. Esas correcciones **no se aplican**, porque el responsable
+decidió **no construir H2 por ahora**, y con eso no se mide D1 en esta etapa. Si H2 se retoma, esta
+propuesta se reanuda desde esa revisión. No se ejecutó ningún paso: no hubo código, flasheo, COM3,
+conexión al SIO ni escenarios físicos.

@@ -263,6 +263,13 @@ bool CassettePlayer::playBytes(const CasSegment& segment, ByteOut& bytes) noexce
     scaled_ += budgetUs_ * segment.baud;
     budgetUs_ = 0;
     scaled_ = scaled_ < endScaled ? scaled_ : endScaled;
+    if (sentInRecord_ < length) {
+        // Review H1 of PR #128: the slot of the next byte to hand over has already begun, so the line ran dry
+        // (the loop was late). The missed time is not owed: the record goes on from now, at most
+        // kLeadBytes + 1 bytes on their way, never a burst. The next byte cannot start in the past.
+        const uint64_t nextSlot = static_cast<uint64_t>(sentInRecord_) * kByteCost;
+        scaled_ = scaled_ < nextSlot ? scaled_ : nextSlot;
+    }
     while (sentInRecord_ < length) {
         const uint64_t begun = scaled_ / kByteCost + 1;  // bytes whose slot has begun
         uint64_t target = begun + kLeadBytes;

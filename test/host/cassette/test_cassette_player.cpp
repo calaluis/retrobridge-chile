@@ -238,6 +238,16 @@ struct Rig {
         now += us;
         tickOnce();
     }
+    // `us` of tape time as the cassette loop plays it: a tick every `step` us (kLoopPeriod, 2 ms). A single
+    // advance() over many byte slots is a late loop, which costs tape time (review H1 of PR #128).
+    void play(uint64_t us, uint64_t step = 2000)
+    {
+        while (us > 0) {
+            const uint64_t d = us < step ? us : step;
+            advance(d);
+            us -= d;
+        }
+    }
 };
 
 bool readFile(const std::string& path, Bytes& out)
@@ -374,7 +384,7 @@ void test_failed_read_does_not_move_the_tape()
 void test_sends_are_at_most_512_bytes()
 {
     Rig rig(fuji() + chunk("data", 0, Bytes(1000, 0xAA)));
-    rig.advance(1000 * kByte600);
+    rig.play(1000 * kByte600);
     TEST_ASSERT_EQUAL_UINT32(1000, rig.bytes.sent.size());
     TEST_ASSERT_TRUE(rig.bytes.largestSend <= 512);
 }
@@ -382,15 +392,11 @@ void test_sends_are_at_most_512_bytes()
 void test_pacing_does_not_drift()
 {
     Rig rig(fuji() + chunk("data", 0, Bytes(600, 0x11)));
-    for (int i = 0; i < 50; ++i) {
-        rig.advance(99999);
-    }
+    rig.play(4999950, 1999);  // ticks that never divide a slot
     TEST_ASSERT_EQUAL_UINT32(301, rig.bytes.sent.size());  // 4 999 950 us: the 300th slot begun, one ahead
     rig.advance(50);                                         // 5 000 000 us: exactly 300 slots
     TEST_ASSERT_EQUAL_UINT32(302, rig.bytes.sent.size());
-    for (int i = 0; i < 50; ++i) {
-        rig.advance(99999);
-    }
+    rig.play(4999950, 1999);
     TEST_ASSERT_EQUAL_UINT32(600, rig.bytes.sent.size());
     TEST_ASSERT_FALSE(rig.player.atEnd());  // 9 999 950 us: 600 bytes take exactly 10 s
     rig.advance(50);
@@ -413,7 +419,8 @@ void test_refused_time_is_not_sent_as_a_burst()
 void test_clock_going_back_counts_nothing()
 {
     Rig rig(fuji() + chunk("data", 100, Bytes(10, 0x33)));
-    rig.advance(100000 + kByte600);
+    rig.advance(100000);
+    rig.play(kByte600);
     TEST_ASSERT_EQUAL_UINT32(3, rig.bytes.sent.size());
     rig.now -= 5 * kByte600;
     rig.tickOnce();
@@ -927,12 +934,12 @@ Bytes counting(uint8_t n)
 void test_switch_mid_record_splits_no_byte()
 {
     Rig rig(fuji() + chunk("data", 0, counting(10)));
-    rig.advance(4 * kByte600);
+    rig.play(4 * kByte600);
     TEST_ASSERT_EQUAL_UINT32(6, rig.bytes.sent.size());
     FakeBytes live;
     FakeWave liveWave;
     rig.switchTo(live, liveWave);
-    rig.advance(6 * kByte600);
+    rig.play(6 * kByte600);
     TEST_ASSERT_TRUE(rig.bytes.sent == counting(6));
     const Bytes tail{6, 7, 8, 9};
     TEST_ASSERT_TRUE(live.sent == tail);
@@ -1070,6 +1077,15 @@ struct Deck {
         rig.now += us;
         rig.player.tick(rig.now, motor, outs.bytes(), outs.wave());
     }
+    // As Rig::play: the cassette loop's 2 ms ticks.
+    void play(uint64_t us)
+    {
+        while (us > 0) {
+            const uint64_t d = us < 2000 ? us : 2000;
+            step(d);
+            us -= d;
+        }
+    }
 };
 
 // A record with no gap, MOTOR on, the take still pending (TakePending): nothing goes to discard and
@@ -1124,12 +1140,12 @@ void test_without_live_outputs_the_tape_moves_into_discard()
 void test_switch_from_discard_mid_record_replays_the_record()
 {
     Rig rig(fuji() + chunk("data", 0, counting(6)));
-    rig.advance(2 * kByte600);
+    rig.play(2 * kByte600);
     TEST_ASSERT_EQUAL_UINT32(4, rig.bytes.sent.size());
     FakeBytes live;
     FakeWave liveWave;
     rig.switchTo(live, liveWave, false);
-    rig.advance(6 * kByte600);
+    rig.play(6 * kByte600);
     TEST_ASSERT_TRUE(live.sent == counting(6));
     TEST_ASSERT_EQUAL_UINT32(1, live.bauds.size());
 }
@@ -1163,7 +1179,7 @@ void test_player_outputs_take_release_and_take_again_mid_record()
     TEST_ASSERT_TRUE(d.outs.select(true, d.rig.player));  // the same choice again changes nothing
     d.step(1);  // the take: the two first bytes at once
     TEST_ASSERT_TRUE(d.live.sent == counting(2));
-    d.step(2 * kByte600);
+    d.play(2 * kByte600);
     TEST_ASSERT_TRUE(d.live.sent == counting(4));
     TEST_ASSERT_TRUE(d.outs.select(false, d.rig.player));  // release
     TEST_ASSERT_TRUE(&d.outs.bytes() == &d.rig.bytes);
@@ -1172,7 +1188,7 @@ void test_player_outputs_take_release_and_take_again_mid_record()
     TEST_ASSERT_EQUAL_UINT32(4, d.live.sent.size());
     TEST_ASSERT_TRUE(d.outs.select(true, d.rig.player));  // taken again
     d.step(1);
-    d.step(6 * kByte600);
+    d.play(6 * kByte600);
     const Bytes expected{0, 1, 2, 3, 0, 1, 2, 3, 4, 5};
     TEST_ASSERT_TRUE(d.live.sent == expected);
     TEST_ASSERT_EQUAL_UINT32(2, d.live.bauds.size());

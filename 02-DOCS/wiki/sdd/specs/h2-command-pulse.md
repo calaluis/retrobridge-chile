@@ -66,7 +66,10 @@ definido; elegir esta alternativa sigue siendo válido.
 Con una cinta montada en `C:` que ya tomó DATA IN, y con MOTOR apagado, el Atari podrá enviar una orden
 SIO a un disco de RetroBridge. Si esa orden se pierde mientras la línea vuelve al disco, el Atari podrá
 reenviarla, y una orden posterior será contestada. Condición previa: puertas M3a y H4 abiertas para el
-paquete; sin ellas el árbitro nunca mueve la línea (regla 4) y nada de esto aplica.
+paquete; sin ellas el árbitro nunca mueve la línea (regla 4) y nada de esto aplica. **M1:** esas puertas
+valen solo bajo las excepciones y el perfil físico ya autorizados por el responsable (FN32ROV-1.3-Q24,
+paquete `menu-sio-cinta`). **H4 no está aprobada en general**, y aprobar esta spec no amplía ninguna
+aceptación.
 
 ## Qué resultado obtiene
 
@@ -113,8 +116,11 @@ hardware puede mostrar se lista aparte y **no** se declara demostrado por el hos
   durante `ReleasePending`, `Fault`, `Released` o `DiskFault` no adelantan nada.
 - **B5.** Con el dueño en `Disk`, el árbitro no reacciona a COMMAND (camino normal de la sesión SIO).
 - **B6.** COMMAND sostenido, que sigue bajo al consultar, se comporta como hoy.
-- **B7.** MOTOR se evalúa como hoy, por estado en el mismo paso. Un COMMAND visto con MOTOR encendido
-  no devuelve DATA IN (regla 2).
+- **B7 (decisión D2 del responsable).** Una aserción cuenta como COMMAND visto solo si MOTOR estaba
+  apagado **en el instante de la aserción y también en el paso** del árbitro que la procesa. Una aserción
+  ocurrida con MOTOR encendido no devuelve DATA IN, aunque MOTOR ya esté apagado en el paso (regla 2:
+  las pausas de MOTOR conservan la cinta). Esto cambia la B7 anterior, que evaluaba MOTOR solo en el
+  paso.
 
 ### 2. Devolución segura
 
@@ -173,8 +179,9 @@ Todos en el host (H). Los marcados como HW **no** se dan por demostrados en el h
    entonces ese pulso no la devuelve (B3).
 5. (H, nuevo) Dados pulsos durante `ReleasePending` con `release()` = `Pending`, entonces `parkedNow`
    sigue en 1 y no hay TX hasta `Done` (B4 y B9).
-6. (H, nuevo) Dado un pulso de 3 ms con MOTOR encendido, entonces la cinta conserva DATA IN (B7). Ya
-   existe como GREEN y sigue GREEN.
+6. (H) Dado un pulso de 3 ms con MOTOR encendido, entonces la cinta conserva DATA IN (B7). Ya existe
+   como GREEN y sigue GREEN. **Y** (H, prueba dedicada nueva, D2) dado un pulso que cae con MOTOR
+   encendido, y MOTOR apagado antes del paso que lo procesa, entonces la cinta conserva DATA IN.
 7. (H, prueba específica) Dada una trama que empieza con la UART aparcada y termina tras `ToDisk`,
    entonces no hay respuesta (B12). Si resulta GREEN sin cambios, se registra como **control** y no como
    corrección.
@@ -205,10 +212,10 @@ Todos en el host (H). Los marcados como HW **no** se dan por demostrados en el h
   COMMAND en el 65XE. Las RED de 1 ms exigen contar 1 ms. Si el responsable aprobara un filtro más ancho,
   el criterio 1 se revisa **en esta spec** antes de implementar, nunca debilitando la prueba en silencio.
   Usar el mismo criterio de nivel que hoy usa el camino SIO es una opción a evaluar, no una decisión
-  aprobada. Decide el responsable.
-- **suposición tomada** — MOTOR se evalúa en el paso, no en el instante del pulso (B7). *Base:* regla 1
-  y regla 2 por estado. *Riesgo:* un pulso con MOTOR encendido seguido de MOTOR apagado en el mismo paso
-  devolvería la línea.
+  aprobada. **Decisión D1 del responsable (2026-11-28):** queda abierta hasta tener una medición física
+  del ancho y del ruido de COMMAND, con su propia autorización expresa. Mientras siga abierta, esta spec
+  no se aprueba para implementar.
+
 - **suposición tomada** — En `TakePending`, un COMMAND visto según B1 pide la devolución como hoy lo hace
   COMMAND bajo. *Base:* `step()` ya llama a `givesBack()` en `TakePending`.
 - **suposición tomada** — B12 puede estar ya cubierto. *Base (C4):* dos vaciados de la entrada UART.
@@ -235,3 +242,8 @@ la alternativa «no construir» sigue abierta para el responsable.
   (`receiveErrors`). C2: el criterio 2 acepta agrupar pulsos (B2 y B4). C3: H2 se declara una
   ampliación de la regla 3, y el ancho mínimo y el filtro siguen abiertos. C4: los dos vaciados de la
   entrada se citan como evidencia parcial de B12, y el criterio 7 se conserva. Sigue en `draft`.
+- 2026-11-28 — Revisión independiente de `ee10638` (comentario 7235075213 en la #125): C1–C4
+  conformes; pide resolver D1 y D2 y mantener explícito M1. Decisiones del responsable: **D1** queda
+  abierta hasta una medición física autorizada; **D2** exige MOTOR apagado en la aserción y en el paso
+  (B7 y criterio 6, con prueba dedicada), y reemplaza la suposición anterior de MOTOR solo en el paso.
+  **M1**: H4 no aprobada en general, puertas solo bajo el perfil autorizado. Sigue en `draft`.

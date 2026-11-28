@@ -219,7 +219,8 @@ con la cinta todavía dueña de DATA IN, sin apagado entre medio; ese flujo no o
 de 1 y 2. Punto 3: «respuesta del menú después del encendido demostrada; primera orden relevante no
 verificable». La primera trama SIO tras el encendido ocurrió 1571 ms después de `+5V` y el paso la
 clasificó `ignored`; el registro no dice a qué dispositivo iba y no se le atribuye ninguno. El punto 3 no
-se marca aprobado ni fallido. Punto 4: evidencia en una prueba (variante F, abajo); falta la revisión independiente. H2 sigue como riesgo independiente. #125
+se marca aprobado ni fallido. Punto 4: evidencia favorable de la variante F (abajo), revisada independientemente (revisión de
+`1373aba`); una sola prueba, sin cierre. H2 sigue como riesgo independiente. #125
 sigue abierta hasta tener evidencia suficiente de los cuatro puntos en una misma prueba.
 
 *Prueba física del punto 4, variante F (2026-11-28, `f93ad2e`, solo USB y SIO, autorizada por el
@@ -272,14 +273,18 @@ aparte. Cambiar el criterio **no** descarta ese riesgo.
 Registro expreso (2026-11-28, pedido del responsable). La fusión la decide el responsable; nada de esta
 lista está cerrado.
 
-| Riesgo | Dónde se sigue | ¿Afecta un criterio de aceptación? |
+Tipos (revisión de `f17d774`, M3): **impide aceptar #125**; **incidente externo** (seguimiento en otra
+issue, con riesgo residual: abrir la issue es disposición trazable, no prueba de corrección ni permiso de
+fusión); **no aprobado** (fuera de esta PR).
+
+| Riesgo | Dónde se sigue | Tipo para la decisión de fusión |
 |---|---|---|
-| Punto 3 de #125: primera orden relevante tras el encendido, no verificable con los registros actuales | #125 | Sí: el punto 3 de #125, sin aprobar ni fallar |
-| H2: un pulso de COMMAND durante `g_station->step()` que el árbitro no ve | #125, prueba de host aparte | Sí: es el riesgo que #125 conserva junto a sus cuatro puntos |
-| Punto 4 de #125: evidencia favorable en una sola prueba (variante F) | #125 | Sí: favorable, sin cerrar el criterio 1–4 |
-| BOOT ERROR en el primer intento de `international_karate.cas` | trasladado a #126 | Sí: el criterio de #126 (reproducir o descartar en N cargas) |
-| `envio_fallido 2` y respuesta cortada entre E1 y F0, sin registro | trasladado a #127 | Sí: el criterio de #127 |
-| H3 (caché de `baud_`), H4 y GPIO36 | fuera de esta PR | No: siguen sin aprobar; ninguna prueba de aquí es aprobación eléctrica |
+| Punto 3 de #125: primera orden relevante tras el encendido, no verificable con los registros actuales | #125 | Impide aceptar #125 |
+| H2: un pulso de COMMAND durante `g_station->step()` que el árbitro no ve | #125, prueba de host aparte | Impide aceptar #125 |
+| Punto 4 de #125: evidencia favorable de la variante F, revisada independientemente (una prueba) | #125 | Favorable; no basta para aceptar #125 sola |
+| BOOT ERROR en el primer intento de `international_karate.cas` | #126, con su propio criterio | Incidente externo, riesgo residual |
+| `envio_fallido 2` y respuesta cortada entre E1 y F0, sin registro | #127, con su propio criterio | Incidente externo, riesgo residual |
+| H3 (caché de `baud_`), H4 y GPIO36 | fuera de esta PR | No aprobado; ninguna prueba de aquí es aprobación eléctrica |
 
 Lo que esta PR sí aporta, con evidencia: el plazo de toma de 60 ms (`d1eb418`) y la instrumentación de
 #125. Ninguna de las dos cierra #125, #126 ni #127.
@@ -327,7 +332,9 @@ Fuera: H4, las puertas y los paquetes. Flashear y probar en el 65XE necesitan ap
   segmento 36): contrastar con la especificación las transiciones reales (COMMAND, `tapeEnded`, dueño del
   árbitro, Release) con los registros `DATA IN diag:`. Criterio de aceptación revisado (2026-11-27): ver
   «Criterio de aceptación de #125, revisado» arriba; el criterio anterior queda ahí como antecedente.
-  Pendiente: punto 4 (U y C con otra cinta) y la prueba H2. El plazo de 60 ms no lo corrige por sí solo.
+  Estado: punto 4, evidencia favorable de la variante F, revisada independientemente; punto 3 no
+  verificable; H2 pendiente;
+  #125 sin cierre. El plazo de 60 ms no lo corrige por sí solo.
 - Fuera de alcance: H4 y la medición de GPIO36 siguen pendientes; ni la CI ni esta carga son aprobación
   eléctrica.
 - [x] Mensaje de carga — prueba: `test_menu_program` `MenuLoaderTest` (4): el texto está en pantalla antes

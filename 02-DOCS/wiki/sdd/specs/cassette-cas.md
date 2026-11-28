@@ -140,15 +140,19 @@ SIO.
 - **Reproducir.** Con MOTOR encendido: cada pausa es silencio; cada `data` sale como bytes a su `baud`; cada tirada
   `fsk ` sale como señal, con sus duraciones exactas.
 - **Bytes seguidos (enmienda propuesta, issue #126).** Dentro de un `data`, desde su primer byte hasta el último, la
-  línea no queda en reposo entre dos bytes, aunque el bucle de la casetera se atrase hasta 40 ms. El primer byte
-  empieza al terminar la pausa, y la pausa siguiente se cuenta desde que sale el último byte. *Por qué:* el sistema
+  línea no queda en reposo entre dos bytes mientras el bucle de la casetera se atrase menos de un byte (16,7 ms a
+  600 baudios, 13,3 ms a 750): cada byte se entrega al empezar su turno, con **un** byte de adelanto. El primer byte
+  empieza al terminar la pausa, junto con el segundo. La pausa siguiente se cuenta desde que el último byte salió
+  físicamente de DATA IN, y dura lo del archivo más, como mucho, un periodo del bucle (2 ms). *Por qué:* el sistema
   operativo y los cargadores como STAC miden la velocidad con los dos `0x55` del principio; un reposo entre ellos
   falsea la medida.
 - **Cargar de a poco.** Una tirada larga no se carga entera en memoria. Se lee de la SD en bloques; la señal empieza
   cuando hay 20 s de margen leídos.
 - **MOTOR.** Al apagarse, la cinta se detiene. Una tirada `fsk ` se corta en un punto seguro, no a mitad de un nivel.
-  Al volver a encenderse, sigue desde ahí. En un `data` (enmienda propuesta, issue #126) pueden salir todavía los
-  bytes ya entregados a la salida, como máximo los de 40 ms; al volver, la cinta sigue con el byte siguiente.
+  Al volver a encenderse, sigue desde ahí. En un `data` (enmienda propuesta, issue #126) no se entrega ningún byte
+  más; pueden salir todavía los ya entregados, como máximo 2 (33,3 ms a 600 baudios, 26,7 ms a 750), muy por debajo
+  de los 32 bytes en tránsito que admite DATA IN compartido. Al volver, la cinta sigue con el byte siguiente. Si el
+  MOTOR se apaga con todos los bytes entregados, el registro termina cuando el último sale de DATA IN.
 - **Fin de cinta.** Tras el último bloque la cinta queda al final; un nuevo MOTOR no envía nada.
 - **Reinicio en frío o `cas rewind`.** La cinta sigue montada y vuelve al principio.
 - **Fallos.** Sin `FUJI`, bloque cortado, `baud` 0 o `pwm*` → mensaje en la consola; la cinta montada no cambia.
@@ -175,9 +179,10 @@ Fase 1 — portable, prueba del host:
   el componente de consola).
 - **AC14 (enmienda propuesta, issue #126)** — Dado un `data` a 600 o a 750 baudios y un bucle que avanza a 2 ms con
   cualquier fase, cuando se reproduce, entonces la salida no queda en reposo entre dos bytes del registro, incluidos
-  los dos `0x55`; la pausa siguiente dura lo que dice el archivo, contada desde el fin del último byte; y con el MOTOR
-  apagado a mitad del registro no salen más bytes que los de 40 ms, sin perder ni repetir ninguno al volver. Prueba:
-  `test_record_continuity` (hoy en rojo, `fc9ec2a`) y las pruebas del reproductor reescritas a este contrato.
+  los dos `0x55`; el primer byte sale al terminar la pausa; la pausa siguiente dura lo del archivo (más 2 ms como
+  mucho), contada desde el fin físico del último byte; nunca hay más de 2 bytes en camino; y con el MOTOR apagado a
+  mitad del registro no se entrega ningún byte más, sin perder ni repetir ninguno al volver. Prueba:
+  `test_record_continuity` y las pruebas del reproductor y de `CassetteTick` reescritas a este contrato.
 
 Fase 2 — ESP32, tras M3a:
 
@@ -245,3 +250,6 @@ Siempre:
   contrato de dos pruebas actuales (`test_gap_then_rate_then_paced_bytes`, que entrega un byte por tiempo cumplido,
   y `test_motor_off_freezes_a_record_and_resumes`, que congela en el byte exacto); se reescriben al contrato nuevo,
   sin debilitarlas. **No** está demostrado que el reposo cause los BOOT ERROR ni los CORRECCION de la #126.
+- 2026-11-28 — Revisión técnica de `420ad61`: el adelanto pasa de 40 ms a **1 byte** (40 ms eran 2,4 bytes a 600
+  y 3,0 a 750, no «unos 3» en ambos); la pausa se cuenta desde el fin físico del último byte; como máximo 2 bytes en
+  camino, dentro del límite de 32 de DATA IN compartido. Implementado con pruebas RED → GREEN en esta rama.

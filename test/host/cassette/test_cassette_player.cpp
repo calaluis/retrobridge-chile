@@ -205,14 +205,16 @@ struct Rig {
     ByteOut* useBytes = nullptr;  // other outputs (T9a.3); null: bytes and wave
     WaveOut* useWave = nullptr;
 
-    explicit Rig(const Bytes& tape, std::size_t bank = sizeof g_bank) : file(tape), source(file)
+    explicit Rig(const Bytes& tape, std::size_t bank = sizeof g_bank, bool motorAtLoad = true) : file(tape), source(file)
     {
+        motor.motor = motorAtLoad;
         const CasIndexResult index = CasIndex::build(source, Span<CasSegment>(g_table, 1024));
         TEST_ASSERT_EQUAL(static_cast<int>(CasStatus::Ok), static_cast<int>(index.status));
         count = index.count;
         loader.bind(Span<uint8_t>(g_bank, bank));
         player.load(source, Span<const CasSegment>(g_table, count), wave);
         player.tick(now, motor, bytes, wave);
+        motor.motor = true;
     }
     void tickOnce()
     {
@@ -265,15 +267,18 @@ void test_gap_then_rate_then_paced_bytes()
     Rig rig(fuji() + chunk("data", 100, {0x55, 0x55, 0xFC}));
     rig.advance(99999);
     TEST_ASSERT_EQUAL_UINT32(0, rig.bytes.sent.size());
-    rig.advance(1);  // gap over
+    rig.advance(1);  // gap over: the rate, then the two sync bytes at once (issue #126)
     TEST_ASSERT_EQUAL_UINT32(1, rig.bytes.bauds.size());
     TEST_ASSERT_EQUAL_UINT32(600, rig.bytes.bauds[0]);
-    TEST_ASSERT_EQUAL_UINT32(0, rig.bytes.sent.size());
-    rig.advance(kByte600);
-    TEST_ASSERT_EQUAL_UINT32(1, rig.bytes.sent.size());
-    rig.advance(2 * kByte600);
+    TEST_ASSERT_EQUAL_UINT32(2, rig.bytes.sent.size());
+    TEST_ASSERT_EQUAL_UINT8(0x55, rig.bytes.sent[0]);
+    TEST_ASSERT_EQUAL_UINT8(0x55, rig.bytes.sent[1]);
+    rig.advance(kByte600);  // the second slot has begun: the third byte, one ahead
     TEST_ASSERT_EQUAL_UINT32(3, rig.bytes.sent.size());
     TEST_ASSERT_EQUAL_UINT8(0xFC, rig.bytes.sent[2]);
+    TEST_ASSERT_FALSE(rig.player.atEnd());  // three bytes take 3 x 16667 us
+    rig.advance(2 * kByte600);
+    TEST_ASSERT_EQUAL_UINT32(3, rig.bytes.sent.size());
     TEST_ASSERT_TRUE(rig.player.atEnd());
 }
 
@@ -281,31 +286,34 @@ void test_rate_change_between_records()
 {
     Rig rig(fuji() + chunk("data", 0, {1}) + chunk("baud", 800, {}) + chunk("data", 0, {2, 3}) +
             chunk("data", 0, {4}));
-    rig.advance(kByte600);
-    TEST_ASSERT_EQUAL_UINT32(1, rig.bytes.sent.size());
-    rig.advance(kByte800);
-    TEST_ASSERT_EQUAL_UINT32(2, rig.bytes.sent.size());
-    rig.advance(2 * kByte800);
-    TEST_ASSERT_EQUAL_UINT32(4, rig.bytes.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1, rig.bytes.sent.size());  // no gap: the first record's byte at once
+    rig.advance(kByte600);  // its time has passed: the next record, at 800, both bytes at once
+    TEST_ASSERT_EQUAL_UINT32(3, rig.bytes.sent.size());
     TEST_ASSERT_EQUAL_UINT32(2, rig.bytes.bauds.size());
     TEST_ASSERT_EQUAL_UINT32(800, rig.bytes.bauds[1]);
+    rig.advance(kByte800);  // one of its two slots over: nothing more
+    TEST_ASSERT_EQUAL_UINT32(3, rig.bytes.sent.size());
+    rig.advance(2 * kByte800);
+    TEST_ASSERT_EQUAL_UINT32(4, rig.bytes.sent.size());
+    TEST_ASSERT_EQUAL_UINT8(4, rig.bytes.sent[3]);
 }
 
 // AC5: MOTOR off in the middle of a record freezes it; on again, it goes on from there.
 void test_motor_off_freezes_a_record_and_resumes()
 {
-    Rig rig(fuji() + chunk("data", 0, {1, 2, 3, 4}));
-    rig.advance(2 * kByte600);
-    TEST_ASSERT_EQUAL_UINT32(2, rig.bytes.sent.size());
+    Rig rig(fuji() + chunk("data", 0, {1, 2, 3, 4, 5, 6, 7, 8}));
+    rig.advance(2 * kByte600);  // the third slot has begun: four bytes handed over
+    TEST_ASSERT_EQUAL_UINT32(4, rig.bytes.sent.size());
     rig.motor.motor = false;
     rig.advance(10000000);
-    TEST_ASSERT_EQUAL_UINT32(2, rig.bytes.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(4, rig.bytes.sent.size());
     rig.motor.motor = true;
     rig.advance(1);  // the stopped time does not count
-    TEST_ASSERT_EQUAL_UINT32(2, rig.bytes.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(4, rig.bytes.sent.size());
     rig.advance(kByte600);
-    TEST_ASSERT_EQUAL_UINT32(3, rig.bytes.sent.size());
-    TEST_ASSERT_EQUAL_UINT8(3, rig.bytes.sent[2]);
+    TEST_ASSERT_EQUAL_UINT32(5, rig.bytes.sent.size());
+    const Bytes upTo5{1, 2, 3, 4, 5};
+    TEST_ASSERT_TRUE(rig.bytes.sent == upTo5);  // none lost, none twice
 }
 
 void test_motor_off_freezes_the_gap()
@@ -334,27 +342,33 @@ void test_end_of_tape_sends_nothing_more()
 
 void test_failed_send_does_not_move_the_tape()
 {
-    Rig rig(fuji() + chunk("data", 0, {9, 8}));
+    Rig rig(fuji() + chunk("data", 10, {9, 8}));
     rig.bytes.failSend = true;
-    rig.advance(kByte600);
+    rig.advance(10000 + kByte600);
     TEST_ASSERT_EQUAL_UINT32(0, rig.bytes.sent.size());
     rig.bytes.failSend = false;
     rig.advance(1);
-    TEST_ASSERT_EQUAL_UINT32(1, rig.bytes.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(2, rig.bytes.sent.size());
     TEST_ASSERT_EQUAL_UINT8(9, rig.bytes.sent[0]);
+    rig.advance(kByte600);
+    TEST_ASSERT_FALSE(rig.player.atEnd());  // the refused time did not count: 2 slots from the retry
+    rig.advance(kByte600);
+    TEST_ASSERT_TRUE(rig.player.atEnd());
 }
 
 // A failed read of the tape does not move it either.
 void test_failed_read_does_not_move_the_tape()
 {
-    Rig rig(fuji() + chunk("data", 0, {9, 8}));
+    Rig rig(fuji() + chunk("data", 10, {9, 8}));
     rig.source.fail = true;
-    rig.advance(kByte600);
+    rig.advance(10000 + kByte600);
     TEST_ASSERT_EQUAL_UINT32(0, rig.bytes.sent.size());
     rig.source.fail = false;
     rig.advance(1);
-    TEST_ASSERT_EQUAL_UINT32(1, rig.bytes.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(2, rig.bytes.sent.size());
     TEST_ASSERT_EQUAL_UINT8(9, rig.bytes.sent[0]);
+    rig.advance(kByte600);
+    TEST_ASSERT_FALSE(rig.player.atEnd());  // the failed time did not count
 }
 
 void test_sends_are_at_most_512_bytes()
@@ -368,36 +382,44 @@ void test_sends_are_at_most_512_bytes()
 void test_pacing_does_not_drift()
 {
     Rig rig(fuji() + chunk("data", 0, Bytes(600, 0x11)));
-    for (int i = 0; i < 100; ++i) {
+    for (int i = 0; i < 50; ++i) {
         rig.advance(99999);
     }
-    TEST_ASSERT_EQUAL_UINT32(599, rig.bytes.sent.size());
-    rig.advance(100);
+    TEST_ASSERT_EQUAL_UINT32(301, rig.bytes.sent.size());  // 4 999 950 us: the 300th slot begun, one ahead
+    rig.advance(50);                                         // 5 000 000 us: exactly 300 slots
+    TEST_ASSERT_EQUAL_UINT32(302, rig.bytes.sent.size());
+    for (int i = 0; i < 50; ++i) {
+        rig.advance(99999);
+    }
     TEST_ASSERT_EQUAL_UINT32(600, rig.bytes.sent.size());
+    TEST_ASSERT_FALSE(rig.player.atEnd());  // 9 999 950 us: 600 bytes take exactly 10 s
+    rig.advance(50);
+    TEST_ASSERT_TRUE(rig.player.atEnd());
 }
 
 void test_refused_time_is_not_sent_as_a_burst()
 {
     Rig rig(fuji() + chunk("data", 0, Bytes(100, 0x22)));
+    TEST_ASSERT_EQUAL_UINT32(2, rig.bytes.sent.size());  // no gap: the two first bytes at once
     rig.bytes.failSend = true;
     rig.advance(1000000);
     rig.bytes.failSend = false;
     rig.advance(1);
-    TEST_ASSERT_EQUAL_UINT32(1, rig.bytes.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(4, rig.bytes.sent.size());  // the next one and one ahead, not 60 at once
     rig.advance(kByte600);
-    TEST_ASSERT_EQUAL_UINT32(2, rig.bytes.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(5, rig.bytes.sent.size());
 }
 
 void test_clock_going_back_counts_nothing()
 {
     Rig rig(fuji() + chunk("data", 100, Bytes(10, 0x33)));
     rig.advance(100000 + kByte600);
-    TEST_ASSERT_EQUAL_UINT32(1, rig.bytes.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(3, rig.bytes.sent.size());
     rig.now -= 5 * kByte600;
     rig.tickOnce();
     rig.now += 5 * kByte600;
     rig.tickOnce();
-    TEST_ASSERT_EQUAL_UINT32(1, rig.bytes.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(3, rig.bytes.sent.size());
 }
 
 void test_rewind_restarts_the_tape()
@@ -407,8 +429,9 @@ void test_rewind_restarts_the_tape()
     TEST_ASSERT_TRUE(rig.player.atEnd());
     rig.player.rewind(rig.wave);
     rig.advance(kByte600);
-    TEST_ASSERT_EQUAL_UINT32(3, rig.bytes.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(4, rig.bytes.sent.size());
     TEST_ASSERT_EQUAL_UINT8(1, rig.bytes.sent[2]);
+    TEST_ASSERT_EQUAL_UINT8(2, rig.bytes.sent[3]);
     TEST_ASSERT_EQUAL_UINT32(2, rig.bytes.bauds.size());  // the rate is sent again
 }
 
@@ -905,13 +928,13 @@ void test_switch_mid_record_splits_no_byte()
 {
     Rig rig(fuji() + chunk("data", 0, counting(10)));
     rig.advance(4 * kByte600);
-    TEST_ASSERT_EQUAL_UINT32(4, rig.bytes.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(6, rig.bytes.sent.size());
     FakeBytes live;
     FakeWave liveWave;
     rig.switchTo(live, liveWave);
     rig.advance(6 * kByte600);
-    TEST_ASSERT_TRUE(rig.bytes.sent == counting(4));
-    const Bytes tail{4, 5, 6, 7, 8, 9};
+    TEST_ASSERT_TRUE(rig.bytes.sent == counting(6));
+    const Bytes tail{6, 7, 8, 9};
     TEST_ASSERT_TRUE(live.sent == tail);
     TEST_ASSERT_EQUAL_UINT32(1, live.bauds.size());
     TEST_ASSERT_EQUAL_UINT32(600, live.bauds[0]);
@@ -921,20 +944,21 @@ void test_switch_mid_record_splits_no_byte()
 // A send the old output refused is not lost: the same byte goes to the new output, once.
 void test_switch_after_a_refused_send_loses_nothing()
 {
-    Rig rig(fuji() + chunk("data", 0, {9, 8}));
+    Rig rig(fuji() + chunk("data", 10, {9, 8}));
     rig.bytes.failSend = true;
-    rig.advance(kByte600);
+    rig.advance(10000 + kByte600);
     TEST_ASSERT_EQUAL_UINT32(0, rig.bytes.sent.size());
     FakeBytes live;
     FakeWave liveWave;
     rig.switchTo(live, liveWave);
     rig.advance(1);
     TEST_ASSERT_EQUAL_UINT32(1, live.bauds.size());
-    TEST_ASSERT_EQUAL_UINT32(1, live.sent.size());
-    TEST_ASSERT_EQUAL_UINT8(9, live.sent[0]);
-    rig.advance(kByte600);
     TEST_ASSERT_EQUAL_UINT32(2, live.sent.size());
+    TEST_ASSERT_EQUAL_UINT8(9, live.sent[0]);
     TEST_ASSERT_EQUAL_UINT8(8, live.sent[1]);
+    rig.advance(2 * kByte600);
+    TEST_ASSERT_EQUAL_UINT32(2, live.sent.size());  // once each
+    TEST_ASSERT_TRUE(rig.player.atEnd());
 }
 
 // A run still playing on the old output (queued, not idle) is cut there and played again, whole, from
@@ -1033,7 +1057,7 @@ struct Deck {
     PlayerOutputs outs{rig.bytes, rig.wave};  // the Rig's own outputs stand for discard
     GatedMotor motor{rig.motor, outs};
 
-    explicit Deck(const Bytes& tape, bool withLive = true) : rig(tape)
+    explicit Deck(const Bytes& tape, bool withLive = true) : rig(tape, sizeof g_bank, false)
     {
         if (withLive) {
             outs.setLive(live, liveWave);
@@ -1090,6 +1114,7 @@ void test_a_fsk_run_ending_during_take_pending_is_not_lost()
 void test_without_live_outputs_the_tape_moves_into_discard()
 {
     Deck d(fuji() + chunk("data", 0, {1, 2, 3}), false);
+    d.step(1);  // the first tick with MOTOR on counts nothing (the Deck loads with MOTOR off)
     d.step(3 * kByte600);
     TEST_ASSERT_EQUAL_UINT32(3, d.rig.bytes.sent.size());
 }
@@ -1100,7 +1125,7 @@ void test_switch_from_discard_mid_record_replays_the_record()
 {
     Rig rig(fuji() + chunk("data", 0, counting(6)));
     rig.advance(2 * kByte600);
-    TEST_ASSERT_EQUAL_UINT32(2, rig.bytes.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(4, rig.bytes.sent.size());
     FakeBytes live;
     FakeWave liveWave;
     rig.switchTo(live, liveWave, false);
@@ -1136,18 +1161,19 @@ void test_player_outputs_take_release_and_take_again_mid_record()
     TEST_ASSERT_TRUE(d.outs.select(true, d.rig.player));  // take
     TEST_ASSERT_TRUE(&d.outs.bytes() == &d.live);
     TEST_ASSERT_TRUE(d.outs.select(true, d.rig.player));  // the same choice again changes nothing
-    d.step(1);
-    d.step(2 * kByte600);
+    d.step(1);  // the take: the two first bytes at once
     TEST_ASSERT_TRUE(d.live.sent == counting(2));
+    d.step(2 * kByte600);
+    TEST_ASSERT_TRUE(d.live.sent == counting(4));
     TEST_ASSERT_TRUE(d.outs.select(false, d.rig.player));  // release
     TEST_ASSERT_TRUE(&d.outs.bytes() == &d.rig.bytes);
     TEST_ASSERT_TRUE(&d.outs.wave() == &d.rig.wave);
     d.step(5 * kByte600);
-    TEST_ASSERT_EQUAL_UINT32(2, d.live.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(4, d.live.sent.size());
     TEST_ASSERT_TRUE(d.outs.select(true, d.rig.player));  // taken again
     d.step(1);
     d.step(6 * kByte600);
-    const Bytes expected{0, 1, 0, 1, 2, 3, 4, 5};
+    const Bytes expected{0, 1, 2, 3, 0, 1, 2, 3, 4, 5};
     TEST_ASSERT_TRUE(d.live.sent == expected);
     TEST_ASSERT_EQUAL_UINT32(2, d.live.bauds.size());
     TEST_ASSERT_EQUAL_UINT32(0, d.rig.bytes.sent.size());
@@ -1197,6 +1223,23 @@ void test_player_outputs_release_mid_run_stops_the_live_signal()
 
 // ---- the end of the tape, as TapeProgress publishes it (menu-cinta T9a.4) ----
 
+// Issue #126: MOTOR off right after the last byte was handed over, with the byte still in the UART. The
+// record is not over while the byte is out; once it has left, the tape ends with MOTOR still off.
+void test_motor_off_after_the_last_handover_ends_once_the_byte_is_out()
+{
+    Rig rig(fuji() + chunk("data", 0, {1, 2}));
+    TEST_ASSERT_EQUAL_UINT32(2, rig.bytes.sent.size());
+    rig.bytes.busy = true;
+    rig.motor.motor = false;
+    rig.advance(kByte600);
+    TEST_ASSERT_FALSE(rig.player.atEnd());
+    rig.bytes.busy = false;
+    rig.advance(1);
+    TEST_ASSERT_TRUE(rig.player.atEnd());
+    TEST_ASSERT_TRUE(rig.player.ended(rig.bytes, rig.wave));
+    TEST_ASSERT_EQUAL_UINT32(2, rig.bytes.sent.size());
+}
+
 // A tape of two parts: not ended after the first; at the end of the last, ended only once its bytes
 // have left DATA IN.
 void test_ended_only_after_the_last_part_and_its_bytes_out()
@@ -1208,9 +1251,11 @@ void test_ended_only_after_the_last_part_and_its_bytes_out()
     TEST_ASSERT_FALSE(rig.player.ended(rig.bytes, rig.wave));
     rig.bytes.busy = true;  // the last byte still in the UART
     rig.advance(kByte600);
-    TEST_ASSERT_TRUE(rig.player.atEnd());
+    TEST_ASSERT_FALSE(rig.player.atEnd());  // issue #126: the record is not over while its byte is out
     TEST_ASSERT_FALSE(rig.player.ended(rig.bytes, rig.wave));
     rig.bytes.busy = false;
+    rig.advance(1);
+    TEST_ASSERT_TRUE(rig.player.atEnd());
     TEST_ASSERT_TRUE(rig.player.ended(rig.bytes, rig.wave));
 }
 
@@ -1293,6 +1338,7 @@ int main()
     RUN_TEST(test_player_outputs_without_live_cannot_take);
     RUN_TEST(test_player_outputs_release_mid_run_stops_the_live_signal);
     RUN_TEST(test_ended_only_after_the_last_part_and_its_bytes_out);
+    RUN_TEST(test_motor_off_after_the_last_handover_ends_once_the_byte_is_out);
     RUN_TEST(test_ended_waits_for_the_last_run_to_play);
     RUN_TEST(test_ended_is_false_again_after_rewind_or_eject);
     return UNITY_END();

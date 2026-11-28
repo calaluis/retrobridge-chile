@@ -6,7 +6,10 @@
 // - The tape moves only while MOTOR is on. Each segment waits its gap first.
 // - Data: the rate is sent when it changes, then the record's bytes paced at 10 bits per
 //   byte by the clock (start bit, 8 data bits, stop bit), at most 512 per send, read from
-//   the tape as they go. MOTOR off freezes the record where it is; it goes on from there.
+//   the tape as they go. A byte is handed over when its slot begins, kLeadBytes ahead, so the
+//   line is never idle inside a record (issue #126); the next gap starts once the record's time
+//   has passed and its last byte has left DATA IN. MOTOR off freezes the record where it is: at
+//   most kLeadBytes + 1 bytes were already handed over; it goes on from the next one.
 //   A refused send does not move the tape and the refused time is not owed.
 //   (Logic of C002, by the same author.)
 // - Fsk: the run's loader starts as the gap begins; after the gap the signal waits for the

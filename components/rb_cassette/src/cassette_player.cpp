@@ -109,6 +109,16 @@ void CassettePlayer::tick(uint64_t nowUs, const MotorIn& motor, ByteOut& bytes, 
         // Load during the gap, even with MOTOR off (the owner preloads before playing).
         (void)startLoader(first);
     }
+    if (!on && phase_ == PlayerPhase::Bytes && sentInRecord_ == first.length && bytes.drained()) {
+        // MOTOR off after the record's last byte was handed over (issue #126): once it has left DATA IN the
+        // record is over, and its time has passed too (the line is never faster than the rate). Without
+        // this the end of the tape would wait for MOTOR to come back.
+        budgetUs_ = 0;
+        nextSegment();
+        if (atEnd()) {
+            return;
+        }
+    }
     if (!on || blocked_) {
         return;  // MOTOR off: the stopped time never counts
     }
@@ -235,7 +245,11 @@ void CassettePlayer::changeOutputs(WaveOut& previous, bool previousDrove) noexce
     }
 }
 
-// Sends the record's bytes the clock allows. True once the whole record is out.
+// Sends the record's bytes the clock allows, kLeadBytes ahead of the one whose slot has begun (spec
+// cassette-cas, Bytes seguidos, issue #126): the UART is never dry inside a record while the loop is less
+// than one byte late, and the two sync bytes go out together. `scaled_` is the time spent in the record
+// (us * baud). True once the record's time has passed and its last byte has left DATA IN: the next gap is
+// counted from there, so no time past the record's end is carried into it.
 bool CassettePlayer::playBytes(const CasSegment& segment, ByteOut& bytes) noexcept
 {
     if (sentBaud_ != segment.baud) {
@@ -244,26 +258,35 @@ bool CassettePlayer::playBytes(const CasSegment& segment, ByteOut& bytes) noexce
         }
         sentBaud_ = segment.baud;
     }
+    const uint64_t length = segment.length;
+    const uint64_t endScaled = length * kByteCost;
     scaled_ += budgetUs_ * segment.baud;
     budgetUs_ = 0;
-    while (sentInRecord_ < segment.length) {
-        const uint64_t remaining = segment.length - sentInRecord_;
-        uint64_t count = scaled_ / kByteCost;
-        count = count < remaining ? count : remaining;
-        count = count < kMaxSend ? count : kMaxSend;
-        if (count == 0) {
-            return false;
+    scaled_ = scaled_ < endScaled ? scaled_ : endScaled;
+    while (sentInRecord_ < length) {
+        const uint64_t begun = scaled_ / kByteCost + 1;  // bytes whose slot has begun
+        uint64_t target = begun + kLeadBytes;
+        target = target < length ? target : length;
+        if (target <= sentInRecord_) {
+            break;
         }
+        uint64_t count = target - sentInRecord_;
+        count = count < kMaxSend ? count : kMaxSend;
         const rb::core::Span<uint8_t> part(buffer_, static_cast<std::size_t>(count));
         if (!source_->read(segment.offset + sentInRecord_, part) || !bytes.send(part)) {
-            // The tape does not move, and the refused time is not owed: no burst afterwards.
-            scaled_ = scaled_ < kByteCost ? scaled_ : kByteCost;
+            if (sentInRecord_ < begun) {
+                // Behind the clock: the tape does not move, and the refused time is not owed (no burst
+                // afterwards). Refused bytes that were only ahead of the clock cost no tape time.
+                const uint64_t hold = static_cast<uint64_t>(sentInRecord_) * kByteCost;
+                scaled_ = scaled_ < hold ? scaled_ : hold;
+            }
             return false;
         }
-        scaled_ -= count * kByteCost;
         sentInRecord_ += static_cast<uint32_t>(count);
     }
-    budgetUs_ = scaled_ / segment.baud;  // leftover time carries into the next segment
+    if (scaled_ < endScaled || !bytes.drained()) {
+        return false;  // the record's time has not passed, or its last byte is still on DATA IN
+    }
     scaled_ = 0;
     return true;
 }

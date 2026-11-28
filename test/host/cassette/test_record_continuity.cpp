@@ -156,6 +156,7 @@ CasSegment g_table[16];
 uint8_t g_bank[4096];
 
 struct Deck {
+    Bytes file;  // owned: the source reads it for the whole test
     MemoryTapeSource source;
     FskLoader loader;
     CassettePlayer player{loader};
@@ -164,7 +165,7 @@ struct Deck {
     ModelUart uart;
     uint64_t now = 0;
 
-    explicit Deck(const Bytes& file) : source(Span<const uint8_t>(file.data(), file.size()))
+    explicit Deck(const Bytes& tape) : file(tape), source(Span<const uint8_t>(file.data(), file.size()))
     {
         const CasIndexResult index = CasIndex::build(source, Span<CasSegment>(g_table, 16));
         TEST_ASSERT_EQUAL(static_cast<int>(CasStatus::Ok), static_cast<int>(index.status));

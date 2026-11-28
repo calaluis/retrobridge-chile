@@ -142,6 +142,8 @@ manual del responsable, y una instrucción debe decir de forma explícita cuánd
 el dueño del árbitro, `parked()`, MOTOR, COMMAND, el estado de apagado y los deltas de `frames`,
 `shortFrames`, `stuckLows`, `menuCommands`, `menuRetries` y `err_rx/tx`, con los eventos Take/Release/ToDisk.
 Si la consola no los expone, requiere un commit de diagnóstico acotado con RED→GREEN y revisión aparte.
+**Diseño de esa medición (sin implementar):** [registro de eventos SIO](cinta-data-in-65xe-eventos-sio.md),
+publicado para revisión independiente.
 
 ## Scope
 

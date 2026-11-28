@@ -312,15 +312,28 @@ respecto del inicio de la ventana de 20 ms (−500 µs = ya bajo al abrirse; 0, 
 |---|---|---|---|
 | pulso de 1, 2, 3, 4, 6 y 8 ms, en las 7 fases | devuelve | **pierde en 7 de 7** (trama corta, COMMAND ya alto) | RED esperado |
 | pulso de 10 y 20 ms, en las 7 fases | devuelve | devuelve en 7 de 7 (COMMAND pegado) | GREEN |
-| 10 pulsos de 3 ms cada 5, 10, 20 y 50 ms | devuelve | **pierde los 10** en los cuatro intervalos (cada 5 ms solo 5 llegan a verse como trama corta; el resto cae dentro de una espera) | RED esperado |
-| trama de estado a D1 con sus 5 bytes, por `SioSession::step()` real | devuelve | **pierde**; el paso termina `Ignored`; 0 bytes transmitidos | RED esperado |
+| 10 pulsos de 3 ms cada 5, 10, 20 y 50 ms, secuencia fija | devuelve | **pierde** en los cuatro; emitidos 10 de 10; vistos por la ventana: 5 (cada 5 ms), 10, 10 y 10; todos como trama corta | RED esperado |
+| trama de estado a D1 con sus 5 bytes, por `SioSession::step()` real | devuelve | **pierde**; afirmado: paso `Ignored`, 1 trama corta, 1 lectura aparcada, 0 bytes transmitidos | RED esperado |
 | COMMAND liberado vs. todavía bajo | corta vs. pegado | corta (3 ms) y pegado (1 s) | GREEN |
 | error de recepción con la UART aparcada | no alcanzable | `read()` aparcada nunca falla: 0 `rx_err`, 1 lectura aparcada | GREEN (límite del modelo) |
 | fin de cinta, puertas cerradas, cinta expulsada, apagado visto | devuelve | devuelve en los cuatro | GREEN |
 | control negativo: MOTOR apagado y nada más | conserva la cinta | la conserva | GREEN |
 | control negativo: pulso de 3 ms con MOTOR encendido | conserva la cinta | la conserva | GREEN |
-| tras una devolución segura, trama de estado a D1 por `SioSession::step()` | respondida | `Completed`; 7 bytes: ACK `0x41`, COMPLETE `0x43`, 4 de estado y checksum | GREEN |
+| tras una devolución segura y con el COMMAND anterior ya liberado, trama de estado a D1 por `SioSession::step()` | respondida | `Completed`; afirmado: `Disk`, `parkedNow 0`, exactamente 7 bytes `41 43 00 FF E0 00` y checksum | GREEN |
 | devolución pendiente (`release()` = `Pending`) | UART2 sigue aparcada | aparcada hasta `Done`; luego `Disk` y `parkedNow 0` | GREEN |
+
+*Correcciones de la revisión de `bf04542`:* H1, los 10 pulsos son una secuencia fija escrita antes de
+correr (caída k = primera + k × intervalo, 3 ms cada uno); nunca se reprograman, y se cuentan aparte los
+emitidos, los vistos por la ventana y las tramas cortas. Un «pierde» exige los 10 emitidos. H2, el control
+de respuesta espera a que el COMMAND largo anterior termine y se vea alto antes de programar la trama
+nueva, sin sobrescribir una ventana activa. M1, la trama perdida afirma `Ignored`, trama corta y lectura
+aparcada; no puede contestarse después, porque nunca se leyó.
+
+*Límites añadidos (M2):* la fase −500 µs programa la caída antes de la ventana, pero sin correr el ciclo
+anterior completo. El umbral de 8 a 10 ms depende del reloj y de las esperas simuladas y **no** es una
+especificación física. `givesBack()` recibe el nivel actual de COMMAND; no promete recordar un flanco ya
+terminado. Que el árbitro reaccione a un pulso ya terminado sería un **comportamiento nuevo**, que habría
+que especificar antes de diseñar una corrección.
 
 *Total:* 11 RED esperados, 12 GREEN, 0 fallos inesperados. Resto del host 111/111; `check_layering` y
 `check_notices` OK.

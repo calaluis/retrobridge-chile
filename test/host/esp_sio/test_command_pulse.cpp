@@ -208,21 +208,27 @@ void test_pulse_20ms_is_not_missed() { TEST_ASSERT_EQUAL_INT(0, missesFor(20 * k
 // --- 2. Retries at several intervals. A 3 ms pulse every `interval` ms, 10 of them, scheduled in fake time
 // whatever the loop is doing. Expected: DATA IN given back by the end. No retry count of the real Atari is
 // assumed; 10 is only a bound for the test.
+// Review of bf04542 (H1): the 10 pulses are a fixed schedule, written before the run (fall k at
+// first + k * interval, 3 ms each), never moved. The fake line shows the scheduled pulse that is current or
+// next; a wait that spans a whole pulse means nobody looked during it, it is not rescheduled. Counted
+// apart: pulses emitted (their whole interval elapsed in the run), windows that saw a fall (short frames
+// plus stuck lows), and short frames.
 namespace {
-int64_t g_intervalUs = 0;
-int64_t g_nextFallUs = 0;
-int g_pulsesLeft = 0;
-// Called on every vTaskDelay: once a pulse is over, the next one is put on its own schedule (fall times are
-// fixed in advance, every `interval`; a wait that spans a whole pulse means nobody looked during it).
-void scheduleRetries()
+constexpr int kPulses = 10;
+constexpr int64_t kPulseUs = 3 * kMs;
+int64_t g_falls[kPulses] = {};
+void showScheduledPulse()
 {
     auto& s = fake_idf::state();
-    if (g_pulsesLeft > 0 && s.nowUs >= s.commandLowUntilUs) {
-        s.commandLowFromUs = g_nextFallUs;
-        s.commandLowUntilUs = g_nextFallUs + 3 * kMs;
-        g_nextFallUs += g_intervalUs;
-        --g_pulsesLeft;
+    for (int64_t fall : g_falls) {
+        if (fall + kPulseUs > s.nowUs) {  // current or next
+            s.commandLowFromUs = fall;
+            s.commandLowUntilUs = fall + kPulseUs;
+            return;
+        }
     }
+    s.commandLowFromUs = -1;
+    s.commandLowUntilUs = -1;
 }
 bool retriesGiveBack(int64_t intervalUs)
 {
@@ -232,22 +238,32 @@ bool retriesGiveBack(int64_t intervalUs)
     s.nowUs = 1000 * kMs;
     Rig rig;
     rig.tapeOwnsWithMotorOff();
-    g_intervalUs = intervalUs;
-    g_nextFallUs = s.nowUs + 1 * kMs;
-    g_pulsesLeft = 10;
-    s.commandLowFromUs = -1;
-    s.commandLowUntilUs = -1;
-    s.onDelay = scheduleRetries;
-    scheduleRetries();
-    const int64_t end = s.nowUs + 10 * intervalUs + 50 * kMs;
-    while (s.nowUs < end && !rig.gaveBack()) {
+    const int64_t first = s.nowUs + 1 * kMs;
+    for (int k = 0; k < kPulses; ++k) {
+        g_falls[k] = first + k * intervalUs;
+    }
+    for (int k = 1; k < kPulses; ++k) {
+        TEST_ASSERT_EQUAL_INT64(intervalUs, g_falls[k] - g_falls[k - 1]);  // the cadence asked
+    }
+    s.onDelay = showScheduledPulse;
+    const int64_t lastEnd = g_falls[kPulses - 1] + kPulseUs;
+    while (s.nowUs < lastEnd + 25 * kMs && !rig.gaveBack()) {
+        showScheduledPulse();
         rig.pass();
     }
     s.onDelay = nullptr;
+    int emitted = 0;
+    for (int64_t fall : g_falls) {
+        emitted += fall + kPulseUs <= s.nowUs ? 1 : 0;
+    }
     const rb::sio::SioLineStats st = rig.transport.stats();
-    std::printf("H2|reintentos cada %lld ms|%s|cortas %u, pegado %u\n", static_cast<long long>(intervalUs / kMs),
-                rig.gaveBack() ? "devuelve" : "PIERDE los 10", static_cast<unsigned>(st.shortFrames),
-                static_cast<unsigned>(st.stuckLows));
+    const unsigned seen = static_cast<unsigned>(st.shortFrames + st.stuckLows);
+    std::printf("H2|reintentos cada %lld ms|%s|emitidos %d, vistos por la ventana %u, cortas %u, pegado %u\n",
+                static_cast<long long>(intervalUs / kMs), rig.gaveBack() ? "devuelve" : "PIERDE",
+                emitted, seen, static_cast<unsigned>(st.shortFrames), static_cast<unsigned>(st.stuckLows));
+    if (!rig.gaveBack()) {
+        TEST_ASSERT_EQUAL_INT(kPulses, emitted);  // a miss only counts once all 10 were on the line
+    }
     return rig.gaveBack();
 }
 }  // namespace
@@ -358,6 +374,11 @@ void test_a_status_frame_through_the_session_with_motor_off_gives_back()
     std::printf("H2|trama de estado D1 (5 bytes) por SioSession::step()|paso %d|%s|tx %u bytes\n",
                 static_cast<int>(rig.lastStep), rig.gaveBack() ? "devuelve" : "PIERDE",
                 static_cast<unsigned>(s.written.size()));
+    // Review of bf04542 (M1): how this frame ended. It was never read, so it can never be answered later;
+    // only a command after a safe give-back can be (test below).
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(StepOutcome::Ignored), static_cast<int>(rig.lastStep));
+    TEST_ASSERT_EQUAL_UINT32(1, rig.transport.stats().shortFrames);
+    TEST_ASSERT_EQUAL_UINT32(1, rig.line.writeFailures().readsWhileParked.load());
     TEST_ASSERT_EQUAL_UINT(0, s.written.size());  // never transmit over the tape (R1)
     TEST_ASSERT_TRUE(rig.gaveBack());
 }
@@ -368,23 +389,35 @@ void test_after_give_back_a_later_status_frame_is_answered()
 {
     Rig rig;
     rig.tapeOwnsWithMotorOff();
+    auto& s = fake_idf::state();
     pulseFromNow(1 * kMs, 30 * kMs);  // longer than the window: seen by the arbiter
+    const int64_t longEnd = s.commandLowUntilUs;
     rig.pass(true);
     TEST_ASSERT_TRUE(rig.gaveBack());
-    rig.pass(true);  // release Done -> the disk resumes
+    // Review of bf04542 (H2): the next command only after this one is over. Steps go on until the long
+    // COMMAND is released and seen high; its window is never overwritten while active.
+    for (int i = 0; i < 20 && (s.nowUs < longEnd || !rig.line.commandHigh()); ++i) {
+        rig.pass(true);
+    }
+    TEST_ASSERT_TRUE(s.nowUs >= longEnd);
+    TEST_ASSERT_TRUE(rig.line.commandHigh());
     TEST_ASSERT_EQUAL_INT(static_cast<int>(DataInOwner::Disk), static_cast<int>(rig.arbiter.owner()));
     TEST_ASSERT_EQUAL_UINT32(0, rig.line.writeFailures().parkedNow.load());
-    auto& s = fake_idf::state();
     s.written.clear();
-    (void)scheduleStatusFrame(s.nowUs + 1 * kMs);
+    s.rx.clear();
+    (void)scheduleStatusFrame(s.nowUs + 1 * kMs);  // the previous window ended: nothing is overwritten
     rig.pass(true);
     std::printf("H2|tras la devolucion: trama de estado D1|paso %d|tx %u bytes|primero 0x%02X\n",
                 static_cast<int>(rig.lastStep), static_cast<unsigned>(s.written.size()),
                 s.written.empty() ? 0u : static_cast<unsigned>(s.written[0]));
     TEST_ASSERT_EQUAL_INT(static_cast<int>(StepOutcome::Completed), static_cast<int>(rig.lastStep));
-    TEST_ASSERT_TRUE(s.written.size() >= 2);
-    TEST_ASSERT_EQUAL_HEX8(0x41, s.written[0]);  // ACK
-    TEST_ASSERT_EQUAL_HEX8(0x43, s.written[1]);  // COMPLETE
+    // ACK, COMPLETE, then the status frame of a single-density ATR (720 x 128, as in
+    // test_status_frame_encoder: 00 FF E0 00) and its checksum: exactly 7 bytes.
+    TEST_ASSERT_EQUAL_UINT(7, s.written.size());
+    const uint8_t expected[7] = {0x41, 0x43, 0x00, 0xFF, 0xE0, 0x00, 0x00};
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, s.written.data(), 6);
+    TEST_ASSERT_EQUAL_HEX8(rb::sio::sio_checksum(rb::core::Span<const uint8_t>{s.written.data() + 2, 4}),
+                           s.written[6]);
 }
 
 // --- 7. A release still pending keeps UART2 parked: the disk resumes only after the tape lets go (R1).

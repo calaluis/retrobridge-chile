@@ -124,7 +124,10 @@ hardware puede mostrar se lista aparte y **no** se declara demostrado por el hos
 - **B6.** COMMAND sostenido, que sigue bajo al consultar, también se rige por B7 y D2. Si cayó con
   MOTOR apagado y MOTOR sigue apagado en el paso, devuelve DATA IN, como hoy. Si cayó con MOTOR
   encendido, **no** devuelve, aunque MOTOR esté apagado en el paso. En ese caso prevalece B7 y D2
-  sobre la regla 3 por nivel.
+  sobre la regla 3 por nivel. **Esa misma aserción nunca se reinterpreta más tarde como válida (M2):**
+  mientras siga baja, la cinta se conserva. Solo una **aserción nueva** (COMMAND se libera y vuelve a
+  caer) con MOTOR apagado en la caída y en el paso puede pedir la devolución. Las demás vías (fin de
+  cinta, expulsión, apagado visto y puertas cerradas) siguen independientes y no esperan a COMMAND.
 - **B7 (decisión D2 del responsable).** Una aserción cuenta como COMMAND visto solo si MOTOR estaba
   apagado **en el instante de la aserción y también en el paso** del árbitro que la procesa. Una aserción
   ocurrida con MOTOR encendido no devuelve DATA IN, aunque MOTOR ya esté apagado en el paso (regla 2:
@@ -208,7 +211,10 @@ Todos en el host (H). Los marcados como HW **no** se dan por demostrados en el h
     `test_command_with_motor_off_gives_the_line_back_to_the_disk` (`test_data_in_arbiter.cpp`) pasa de
     un paso con MOTOR encendido a otro con MOTOR apagado y COMMAND bajo, y las muestras por paso no dicen
     qué pasó primero. Con D2, esa prueba conserva su expectativa (`ToDisk`) y se hace explícito que MOTOR
-    se apagó **antes** de caer COMMAND. Nunca se cambia lo que espera.
+    se apagó **antes** de caer COMMAND. Nunca se cambia lo que espera. **M1:** la matriz futura modela
+    **los dos órdenes** por separado. MOTOR apagado y luego COMMAND: `ToDisk`, la expectativa de hoy.
+    COMMAND y luego MOTOR apagado: la cinta conserva DATA IN (B6, B7 y D2). Y una aserción nueva tras
+    liberar COMMAND, con MOTOR apagado en la caída y en el paso: `ToDisk` (M2).
 11. (HW, fuera del host) Ancho real de COMMAND en el 65XE, ruido o falsos flancos en la línea, el
     comportamiento eléctrico de GPIO21, si H2 ocurre físicamente y su relación con «EL HOST NO RESPONDE».
     Cualquier prueba física necesita una autorización expresa aparte.
@@ -242,7 +248,9 @@ Todos en el host (H). Los marcados como HW **no** se dan por demostrados en el h
   existente, **no** demostración de B12 en todas las condiciones: por ejemplo, una reanudación con
   COMMAND todavía bajo. Por eso el criterio 7 se conserva como prueba específica.
 - **suposición tomada** — En `test_command_with_motor_off_gives_the_line_back_to_the_disk`, MOTOR se
-  apagó antes de caer COMMAND. *Base:* su comentario, «the Atari wants the disk». *Riesgo:* con D2, el
+  apagó antes de caer COMMAND. *Base:* su comentario, «the Atari wants the disk», que **no
+  demuestra** el orden: es una suposición del contrato futuro, no un hecho observado ni probado por la
+  prueba actual (M1 de la revisión de `bfc2efa`). *Riesgo:* con D2, el
   árbitro necesita saber cómo estaba MOTOR en la aserción; las entradas de hoy (`DataInInputs`) no lo
   dicen. Cómo obtenerlo es decisión de diseño, después de aprobar la spec.
 - **decisión diferida** — Que el Atari reintente y cuántas veces. *Base:* no se da por real ningún
@@ -275,3 +283,8 @@ la alternativa «no construir» sigue abierta para el responsable.
   prueba dedicada del caso sostenido y dos controles inversos; el criterio 10 fija el orden «MOTOR
   apagado y luego COMMAND» de la prueba existente del árbitro sin cambiar su expectativa. Sigue en
   `draft`; D1 sigue abierta.
+- 2026-11-28 — Revisión independiente de `bfc2efa` (comentario 7235179638): H1 resuelto, sin
+  bloqueantes. Notas no bloqueantes incorporadas con autorización del responsable. M1: la suposición
+  sobre el orden de la prueba existente se declara no demostrada, y el criterio 10 exige modelar los dos
+  órdenes. M2: B6 aclara que una aserción iniciada con MOTOR encendido nunca se revalida tarde; solo una
+  aserción nueva puede pedir la devolución. Sigue en `draft`; D1 sigue abierta.
